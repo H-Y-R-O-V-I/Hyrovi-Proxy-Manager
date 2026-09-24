@@ -142,8 +142,9 @@ const Security = () => {
 								</div>
 							</div>
 							<div className="d-flex flex-wrap align-items-center gap-2">
-								<label className="text-secondary small">Risk</label>
+								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-risk">Risk</label>
 								<input
+									id="hyrovi-sec-auto-risk"
 									className="form-control"
 									style={{ width: 88 }}
 									type="number"
@@ -154,8 +155,9 @@ const Security = () => {
 										updatePolicy.mutate({ autoBlockThreshold: Number(event.target.value) })
 									}
 								/>
-								<label className="text-secondary small">Minutes</label>
+								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-minutes">Minutes</label>
 								<input
+									id="hyrovi-sec-auto-minutes"
 									className="form-control"
 									style={{ width: 100 }}
 									type="number"
@@ -370,7 +372,7 @@ const Security = () => {
 											{event.signals.map((signal) => signal.label).join(", ") || "Normal request"}
 										</td>
 										<td>
-											<button className="btn btn-sm btn-outline-danger" onClick={() => blockFromEvent(event)}>
+											<button type="button" className="btn btn-sm btn-outline-danger" onClick={() => blockFromEvent(event)}>
 												Block IP
 											</button>
 										</td>
@@ -415,6 +417,7 @@ const Security = () => {
 										<td>{formatTime(block.expiresAt)}</td>
 										<td>
 											<button
+												type="button"
 												className="btn btn-sm btn-outline-secondary"
 												disabled={removeBlock.isPending}
 												onClick={() => removeBlock.mutate(block.id)}
