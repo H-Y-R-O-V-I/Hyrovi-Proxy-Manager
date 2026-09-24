@@ -189,6 +189,36 @@ router.post("/detection-rules/import", async (req, res, next) => {
 	}
 });
 
+router.get("/detection-rules/analytics", async (req, res, next) => {
+	try {
+		res.set("Cache-Control", "no-store");
+		res.status(200).send(
+			await internalSecurity.getDetectionRuleAnalytics(res.locals.access, {
+				limit: req.query.limit,
+			}),
+		);
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/detection-rules/simulate", async (req, res, next) => {
+	try {
+		res.set("Cache-Control", "no-store");
+		res.status(200).send(
+			await internalSecurity.getDetectionRuleSimulation(
+				res.locals.access,
+				detectionRuleInput(req.body),
+				{ limit: req.query.limit },
+			),
+		);
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router
 	.route("/detection-rules/:rule_id")
 	.put(async (req, res, next) => {

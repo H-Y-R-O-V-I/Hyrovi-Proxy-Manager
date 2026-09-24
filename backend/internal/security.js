@@ -2141,6 +2141,33 @@ const internalSecurity = {
 		};
 	},
 
+	getDetectionRuleAnalytics: async (access, options = {}) => {
+		await access.can("logs:list");
+		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIMIT, 1000));
+		const [policy, rules] = await Promise.all([
+			readPolicyUnsafe(),
+			internalSecurityDetectionRules.listRules(),
+		]);
+		const events = await loadEventHistory(limit, policy);
+		return {
+			analyzedEvents: events.length,
+			limit,
+			rules: internalSecurityDetectionRules.analyzeRules(rules, events),
+		};
+	},
+
+	getDetectionRuleSimulation: async (access, data, options = {}) => {
+		await access.can("logs:list");
+		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIMIT, 1000));
+		const policy = await readPolicyUnsafe();
+		const events = await loadEventHistory(limit, policy);
+		return {
+			analyzedEvents: events.length,
+			limit,
+			...internalSecurityDetectionRules.simulateRule(data, events),
+		};
+	},
+
 	getEvents: async (access, options = {}) => {
 		await access.can("logs:list");
 		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIMIT);

@@ -115,15 +115,23 @@ Import modes:
 
 The import rejects unsupported versions, invalid matchers, invalid response modes and imports that would exceed the global rule limit.
 
-## Starter templates
+## Analytics and simulation
 
-The admin UI includes conservative starter templates that only prefill the rule form:
+HYROVI Sec can evaluate custom rules against up to 1000 retained security events without changing enforcement state.
 
-- Admin auth denials: `/admin` with HTTP 401/403, Observe, +25 risk;
-- API auth failures: `/api` with HTTP 401/403, Observe, +20 risk;
-- Admin write activity: `/api/admin` with POST/PUT/PATCH/DELETE, Observe, +20 risk.
+Existing-rule analytics report:
 
-Templates are not saved or enabled automatically. The operator can still set a host and review every matcher before clicking Add detection rule.
+- matching retained events;
+- unique source IPs and hosts;
+- first and last observed hit;
+- highest already-observed request risk;
+- a bounded set of representative request samples.
+
+Disabled rules are included. Their counts therefore answer “what would this rule have matched?” without enabling the rule.
+
+The rule form also has a **Simulate** action. Simulation validates the current draft with the same matcher/score rules used for creation, evaluates it against retained events, and returns a bounded sample of matches.
+
+Simulation is strictly read-only: it does not create a rule, change `detection-rules.json`, add risk to stored events, or create rate limits, challenges or blocks.
 
 ## Storage and API
 
@@ -140,11 +148,13 @@ GET    /api/security/detection-rules
 POST   /api/security/detection-rules
 GET    /api/security/detection-rules/export
 POST   /api/security/detection-rules/import
+GET    /api/security/detection-rules/analytics
+POST   /api/security/detection-rules/simulate
 PUT    /api/security/detection-rules/<rule-id>
 DELETE /api/security/detection-rules/<rule-id>
 ```
 
-Read access uses the normal Nginx Proxy Manager `logs:list` permission. Mutations use `users:list`.
+Read access, analytics and simulation use the normal Nginx Proxy Manager `logs:list` permission. Persistent mutations use `users:list`.
 
 The HYROVI Sec page provides create, enable/disable and delete controls. Matching changes affect new live analysis immediately. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
 

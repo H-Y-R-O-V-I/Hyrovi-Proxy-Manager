@@ -249,8 +249,8 @@ const hostMatches = (pattern, host) => {
 	return normalized === pattern;
 };
 
-const ruleMatches = (rule, event) => {
-	if (!rule?.enabled) return false;
+const ruleMatches = (rule, event, ignoreEnabled = false) => {
+	if (!rule || (!ignoreEnabled && !rule.enabled)) return false;
 	const match = rule.match || {};
 	if (!hostMatches(match.host, event.host)) return false;
 	if (match.pathPrefix && !String(event.path || "").startsWith(match.pathPrefix)) return false;
@@ -266,6 +266,46 @@ const ruleMatches = (rule, event) => {
 		return false;
 	}
 	return true;
+};
+
+const summarizeRuleMatches = (rule, events, sampleLimit = 10) => {
+	const matches = (Array.isArray(events) ? events : []).filter((event) => ruleMatches(rule, event, true));
+	return {
+		ruleId: rule.id || null,
+		name: rule.name,
+		enabled: rule.enabled !== false,
+		response: rule.response,
+		score: rule.score,
+		hits: matches.length,
+		uniqueIps: new Set(matches.map((event) => event.ip).filter(Boolean)).size,
+		uniqueHosts: new Set(matches.map((event) => event.host).filter(Boolean)).size,
+		firstHitAt: matches.length > 0 ? matches[matches.length - 1].timestamp || null : null,
+		lastHitAt: matches.length > 0 ? matches[0].timestamp || null : null,
+		maxObservedRisk: matches.reduce((max, event) => Math.max(max, Number(event.risk) || 0), 0),
+		samples: matches.slice(0, clamp(Number.parseInt(sampleLimit, 10) || 10, 1, 20)).map((event) => ({
+			timestamp: event.timestamp || null,
+			requestId: event.requestId || null,
+			host: String(event.host || ""),
+			method: String(event.method || ""),
+			path: String(event.path || ""),
+			status: Number.parseInt(event.status, 10) || 0,
+			ip: String(event.ip || ""),
+			risk: Number(event.risk) || 0,
+			severity: String(event.severity || "normal"),
+		})),
+	};
+};
+
+const analyzeRules = (rules, events) =>
+	(Array.isArray(rules) ? rules : []).map((rule) => summarizeRuleMatches(rule, events, 5));
+
+const simulateRule = (input, events) => {
+	const rule = normalizeRuleInput({ ...input, enabled: true });
+	return {
+		rule: portableRule(rule),
+		...summarizeRuleMatches(rule, events, 20),
+		ruleId: null,
+	};
 };
 
 const matchRules = (rules, event) =>
@@ -298,6 +338,8 @@ const internalSecurityDetectionRules = {
 	deleteRule,
 	exportRules,
 	importRules,
+	analyzeRules,
+	simulateRule,
 	matchRules,
 };
 

@@ -361,6 +361,46 @@ export interface SecurityDetectionRulesImportResult {
 	total: number;
 }
 
+export interface SecurityDetectionRuleHitSample {
+	timestamp: string | null;
+	requestId: string | null;
+	host: string;
+	method: string;
+	path: string;
+	status: number;
+	ip: string;
+	risk: number;
+	severity: string;
+}
+
+export interface SecurityDetectionRuleAnalyticsEntry {
+	ruleId: string | null;
+	name: string;
+	enabled: boolean;
+	response: SecurityDetectionRuleResponse;
+	score: number;
+	hits: number;
+	uniqueIps: number;
+	uniqueHosts: number;
+	firstHitAt: string | null;
+	lastHitAt: string | null;
+	maxObservedRisk: number;
+	samples: SecurityDetectionRuleHitSample[];
+}
+
+export interface SecurityDetectionRuleAnalyticsResponse {
+	analyzedEvents: number;
+	limit: number;
+	rules: SecurityDetectionRuleAnalyticsEntry[];
+}
+
+export interface SecurityDetectionRuleSimulation extends SecurityDetectionRuleAnalyticsEntry {
+	ruleId: null;
+	analyzedEvents: number;
+	limit: number;
+	rule: Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">;
+}
+
 export interface SecurityTrustedDevice {
 	deviceId: string;
 	name: string;
@@ -445,6 +485,17 @@ export async function importSecurityDetectionRules(
 	data: SecurityDetectionRulesExport & { mode: "merge" | "replace" },
 ): Promise<SecurityDetectionRulesImportResult> {
 	return await api.post({ url: "/security/detection-rules/import", data });
+}
+
+export async function getSecurityDetectionRuleAnalytics(limit = 1000): Promise<SecurityDetectionRuleAnalyticsResponse> {
+	return await api.get({ url: "/security/detection-rules/analytics", params: { limit } });
+}
+
+export async function simulateSecurityDetectionRule(
+	data: Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">,
+	limit = 1000,
+): Promise<SecurityDetectionRuleSimulation> {
+	return await api.post({ url: "/security/detection-rules/simulate", params: { limit }, data });
 }
 
 export async function acknowledgeSecurityAlert(id: string): Promise<SecurityAlert> {

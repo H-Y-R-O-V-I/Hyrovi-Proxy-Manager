@@ -35,7 +35,7 @@ The first implementation adds:
 - endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
-- authenticated app/auth security-event ingest and admin visibility;\n- Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;\n- bounded operational security alerts with acknowledgement, deduplication and a separate read-only HYROVI One pull feed;\n- safe custom detection rules with literal host/path/method/status/User-Agent matchers, explainable risk scoring and optional soft-response eligibility;\n- read-only system health/diagnostics with disk pressure, log/archive size and component-state visibility plus low-disk alerting;
+- authenticated app/auth security-event ingest and admin visibility;\n- Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;\n- bounded operational security alerts with acknowledgement, deduplication and a separate read-only HYROVI One pull feed;\n- safe custom detection rules with literal host/path/method/status/User-Agent matchers, explainable risk scoring, optional soft-response eligibility, retained-event hit analytics and read-only draft simulation;\n- read-only system health/diagnostics with disk pressure, log/archive size and component-state visibility plus low-disk alerting;
 - a dedicated HYROVI Sec navigation page.
 
 ### Data minimization
@@ -110,7 +110,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 1. package the authentication-event and signed-device protocol into reusable client SDKs;
 2. connect HYROVI One to the read-only alert feed once its current worktree is clear, then add user-facing notification delivery;
 3. add ASN-aware controls on top of the completed IPv4/IPv6 CIDR controls;
-4. add rule-hit analytics and staged/simulation tooling for custom detections;
+4. add staged rollout controls and richer rule-hit trend analytics on top of the completed retained-event simulation;
 5. add non-browser challenge helpers/SDK support and consider endpoint-specific challenge overrides.
 
 ## Upstream attribution

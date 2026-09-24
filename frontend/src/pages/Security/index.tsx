@@ -18,6 +18,7 @@ import {
 	getSecurityAttackSession,
 	getSecurityBlocks,
 	getSecurityChallenges,
+	getSecurityDetectionRuleAnalytics,
 	getSecurityDetectionRules,
 	getSecurityDiagnostics,
 	getSecurityEventDetail,
@@ -28,6 +29,7 @@ import {
 	getSecurityRateLimits,
 	getSecurityTrustedDevices,
 	importSecurityDetectionRules,
+	simulateSecurityDetectionRule,
 	updateSecurityDetectionRule,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
@@ -256,6 +258,11 @@ const Security = () => {
 		queryFn: getSecurityDetectionRules,
 		refetchInterval: POLL_MS,
 	});
+	const detectionRuleAnalytics = useQuery({
+		queryKey: ["security-detection-rule-analytics"],
+		queryFn: () => getSecurityDetectionRuleAnalytics(1000),
+		refetchInterval: 30_000,
+	});
 	const appEvents = useQuery({
 		queryKey: ["security-app-events"],
 		queryFn: () => getSecurityAppEvents(100),
@@ -313,6 +320,34 @@ const Security = () => {
 		setHostPolicyDrafts(next);
 	}, [hostPolicies.data]);
 
+	const ruleDraft = useMemo(
+		() => ({
+			name: ruleName.trim(),
+			enabled: true,
+			score: ruleScore,
+			response: ruleResponse,
+			match: {
+				host: ruleHost.trim() || null,
+				pathPrefix: rulePathPrefix.trim() || null,
+				pathContains: rulePathContains.trim() || null,
+				methods: ruleMethods.split(",").map((entry) => entry.trim()).filter(Boolean),
+				statuses: ruleStatuses.split(",").map((entry) => Number(entry.trim())).filter((entry) => Number.isInteger(entry) && entry > 0),
+				userAgentContains: ruleUserAgent.trim() || null,
+			},
+		}),
+		[ruleHost, ruleMethods, ruleName, rulePathContains, rulePathPrefix, ruleResponse, ruleScore, ruleStatuses, ruleUserAgent],
+	);
+
+	const ruleDraftValid = Boolean(
+		ruleDraft.name &&
+		(ruleDraft.match.host ||
+			ruleDraft.match.pathPrefix ||
+			ruleDraft.match.pathContains ||
+			ruleDraft.match.methods.length ||
+			ruleDraft.match.statuses.length ||
+			ruleDraft.match.userAgentContains),
+	);
+
 	const refresh = async () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
@@ -322,6 +357,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-alerts"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-detection-rules"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-detection-rule-analytics"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-trusted-devices"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
@@ -365,9 +401,14 @@ const Security = () => {
 		mutationFn: acknowledgeSecurityAlert,
 		onSuccess: refresh,
 	});
+	const simulateDetectionRule = useMutation({
+		mutationFn: () => simulateSecurityDetectionRule(ruleDraft, 1000),
+	});
+
 	const createDetectionRule = useMutation({
 		mutationFn: createSecurityDetectionRule,
 		onSuccess: async () => {
+			simulateDetectionRule.reset();
 			setRuleName("");
 			setRuleScore(25);
 			setRuleResponse("observe");
@@ -1110,36 +1151,51 @@ const Security = () => {
 								<label className="form-label" htmlFor="hyrovi-sec-rule-ua">User-Agent contains</label>
 								<input id="hyrovi-sec-rule-ua" className="form-control font-monospace" value={ruleUserAgent} onChange={(event) => setRuleUserAgent(event.target.value)} placeholder="my-client" />
 							</div>
-							<div className="col-12 d-flex justify-content-end">
+							<div className="col-12 d-flex justify-content-end gap-2">
+								<Button
+									className="btn-outline-secondary"
+									disabled={!ruleDraftValid || simulateDetectionRule.isPending}
+									onClick={() => simulateDetectionRule.mutate()}
+								>
+									Simulate
+								</Button>
 								<Button
 									className="btn-primary"
-									disabled={
-										!ruleName.trim() ||
-										(!ruleHost.trim() && !rulePathPrefix.trim() && !rulePathContains.trim() && !ruleMethods.trim() && !ruleStatuses.trim() && !ruleUserAgent.trim()) ||
-										createDetectionRule.isPending
-									}
-									onClick={() =>
-										createDetectionRule.mutate({
-											name: ruleName.trim(),
-											enabled: true,
-											score: ruleScore,
-											response: ruleResponse,
-											match: {
-												host: ruleHost.trim() || null,
-												pathPrefix: rulePathPrefix.trim() || null,
-												pathContains: rulePathContains.trim() || null,
-												methods: ruleMethods.split(",").map((entry) => entry.trim()).filter(Boolean),
-												statuses: ruleStatuses.split(",").map((entry) => Number(entry.trim())).filter((entry) => Number.isInteger(entry) && entry > 0),
-												userAgentContains: ruleUserAgent.trim() || null,
-											},
-										})
-									}
+									disabled={!ruleDraftValid || createDetectionRule.isPending}
+									onClick={() => createDetectionRule.mutate(ruleDraft)}
 								>
 									Add detection rule
 								</Button>
 							</div>
 						</div>
 						{createDetectionRule.error ? <div className="text-red mt-2">{createDetectionRule.error.message}</div> : null}
+						{simulateDetectionRule.error ? <div className="text-red mt-2">{simulateDetectionRule.error.message}</div> : null}
+						{simulateDetectionRule.data ? (
+							<div className="alert alert-info mt-3 mb-0">
+								<div>
+									<strong>Simulation only — no enforcement.</strong>{" "}
+									{simulateDetectionRule.data.hits} matches in {simulateDetectionRule.data.analyzedEvents} analyzed events ·{" "}
+									{simulateDetectionRule.data.uniqueIps} source IPs · {simulateDetectionRule.data.uniqueHosts} hosts · max observed risk{" "}
+									{simulateDetectionRule.data.maxObservedRisk}
+								</div>
+								{simulateDetectionRule.data.samples.length > 0 ? (
+									<div className="table-responsive mt-2">
+										<table className="table table-sm mb-0">
+											<tbody>
+												{simulateDetectionRule.data.samples.slice(0, 5).map((sample) => (
+													<tr key={`${sample.timestamp}-${sample.requestId || sample.ip}-${sample.path}`}>
+														<td className="text-nowrap">{formatTime(sample.timestamp)}</td>
+														<td className="font-monospace">{sample.method} {sample.host}{sample.path}</td>
+														<td>{sample.status}</td>
+														<td className="font-monospace">{sample.ip}</td>
+													</tr>
+												))}
+											</tbody>
+										</table>
+									</div>
+								) : null}
+							</div>
+						) : null}
 					</div>
 					<div className="card-body border-bottom">
 						<div className="row g-3 align-items-end">
@@ -1190,6 +1246,7 @@ const Security = () => {
 									<th>Response</th>
 									<th>Risk</th>
 									<th>Matchers</th>
+									<th>Recent matches</th>
 									<th>Status</th>
 									<th />
 								</tr>
@@ -1204,12 +1261,22 @@ const Security = () => {
 										rule.match.statuses.length ? `status ${rule.match.statuses.join("/")}` : null,
 										rule.match.userAgentContains ? `UA contains ${rule.match.userAgentContains}` : null,
 									].filter(Boolean);
+									const analytics = detectionRuleAnalytics.data?.rules.find((entry) => entry.ruleId === rule.id);
 									return (
 										<tr key={rule.id}>
 											<td><strong>{rule.name}</strong><div className="text-secondary small font-monospace">{rule.id}</div></td>
 											<td><span className={`badge ${rule.response === "soft" ? "bg-yellow text-dark" : "bg-blue-lt"}`}>{rule.response}</span></td>
 											<td>+{rule.score}</td>
 											<td className="text-secondary small">{matcherParts.join(" · ")}</td>
+											<td>
+												{analytics ? (
+													<>
+														<strong>{analytics.hits}</strong>
+														<div className="text-secondary small">{analytics.uniqueIps} IPs · {analytics.uniqueHosts} hosts</div>
+														<div className="text-secondary small">{analytics.lastHitAt ? `last ${formatTime(analytics.lastHitAt)}` : "no matches"}</div>
+													</>
+												) : "—"}
+											</td>
 											<td><span className={`badge ${rule.enabled ? "bg-green-lt" : "bg-secondary-lt"}`}>{rule.enabled ? "enabled" : "disabled"}</span></td>
 											<td className="text-end">
 												<div className="d-flex gap-1 justify-content-end">
@@ -1225,7 +1292,7 @@ const Security = () => {
 									);
 								})}
 								{!detectionRules.isLoading && (detectionRules.data?.length ?? 0) === 0 ? (
-									<tr><td colSpan={6} className="text-secondary">No custom detection rules configured.</td></tr>
+									<tr><td colSpan={7} className="text-secondary">No custom detection rules configured.</td></tr>
 								) : null}
 							</tbody>
 						</table>
