@@ -69,6 +69,44 @@ A hit appears as an explainable request signal:
 Custom rule: Sensitive admin API (+45)
 ```
 
+## Import and export
+
+The rule UI can export a portable versioned JSON document and import it again.
+
+Portable exports intentionally omit local rule IDs and creation/update timestamps. Imported rules are always normalized and validated again and receive new local metadata.
+
+Current format:
+
+```json
+{
+  "version": 1,
+  "exportedAt": "2026-09-24T18:00:00.000Z",
+  "rules": [
+    {
+      "name": "Sensitive admin API",
+      "enabled": true,
+      "score": 45,
+      "response": "soft",
+      "match": {
+        "host": "one.hyrovi.com",
+        "pathPrefix": "/api/admin",
+        "pathContains": null,
+        "methods": ["POST"],
+        "statuses": [401, 403],
+        "userAgentContains": null
+      }
+    }
+  ]
+}
+```
+
+Import modes:
+
+- `merge`: keeps existing rules and adds only configurations that are not already present;
+- `replace`: validates the complete import first, then replaces the existing rule set with newly generated local rule records.
+
+The import rejects unsupported versions, invalid matchers, invalid response modes and imports that would exceed the global rule limit.
+
 ## Storage and API
 
 Rules are stored in:
@@ -82,6 +120,8 @@ Admin endpoints:
 ```text
 GET    /api/security/detection-rules
 POST   /api/security/detection-rules
+GET    /api/security/detection-rules/export
+POST   /api/security/detection-rules/import
 PUT    /api/security/detection-rules/<rule-id>
 DELETE /api/security/detection-rules/<rule-id>
 ```
@@ -91,21 +131,3 @@ Read access uses the normal Nginx Proxy Manager `logs:list` permission. Mutation
 The HYROVI Sec page provides create, enable/disable and delete controls. Matching changes affect new live analysis immediately. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
 
 If the rule file becomes unreadable or invalid, HYROVI Sec logs the problem and continues built-in detection without custom rules instead of disabling the security monitor.
-
-## Import and export
-
-The HYROVI Sec page can export all custom rules as versioned portable JSON and import them again in either `merge` or `replace` mode.
-
-Export endpoint:
-
-```text
-GET /api/security/detection-rules/export
-```
-
-Import endpoint:
-
-```text
-POST /api/security/detection-rules/import
-```
-
-Exported rule entries intentionally omit local IDs and timestamps. Imports are fully revalidated and always receive new local metadata. Repeated `merge` imports deduplicate identical rule configurations. `replace` validates the entire incoming set before atomically replacing the existing rules.
