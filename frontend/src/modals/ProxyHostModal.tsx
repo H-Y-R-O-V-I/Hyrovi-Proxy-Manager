@@ -63,6 +63,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 			hyroviAutoRateLimitMinutes,
 			hyroviAutoBlockThreshold,
 			hyroviAutoBlockMinutes,
+			hyroviChallengeMinutes,
+			hyroviChallengeDifficulty,
 			hyroviEndpointRules,
 			...proxyHostValues
 		} = values;
@@ -78,6 +80,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 						autoRateLimitMinutes: Number(hyroviAutoRateLimitMinutes),
 						autoBlockThreshold: Number(hyroviAutoBlockThreshold),
 						autoBlockMinutes: Number(hyroviAutoBlockMinutes),
+						challengeMinutes: Number(hyroviChallengeMinutes),
+						challengeDifficulty: Number(hyroviChallengeDifficulty),
 						endpointRules: (Array.isArray(hyroviEndpointRules) ? hyroviEndpointRules : [])
 							.map((rule: any) => ({
 								pathPrefix: String(rule?.pathPrefix || "").trim(),
@@ -145,6 +149,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hyroviAutoRateLimitMinutes: effectiveSecurity?.autoRateLimitMinutes ?? 10,
 							hyroviAutoBlockThreshold: effectiveSecurity?.autoBlockThreshold ?? 95,
 							hyroviAutoBlockMinutes: effectiveSecurity?.autoBlockMinutes ?? 60,
+							hyroviChallengeMinutes: effectiveSecurity?.challengeMinutes ?? 10,
+							hyroviChallengeDifficulty: effectiveSecurity?.challengeDifficulty ?? 14,
 							hyroviEndpointRules: securityHostPolicy.data?.policy?.endpointRules ?? [],
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
@@ -506,6 +512,34 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 											/>
 										</div>
 									</div>
+									<div className="col-md-6">
+										<div className="mb-3">
+											<label className="form-label" htmlFor="hyroviChallengeMinutes">Challenge minutes</label>
+											<Field
+												id="hyroviChallengeMinutes"
+												name="hyroviChallengeMinutes"
+												type="number"
+												min={1}
+												max={120}
+												className="form-control"
+												disabled={values.hyroviSecurityMode === "inherit"}
+											/>
+										</div>
+									</div>
+									<div className="col-md-6">
+										<div className="mb-3">
+											<label className="form-label" htmlFor="hyroviChallengeDifficulty">Challenge PoW bits</label>
+											<Field
+												id="hyroviChallengeDifficulty"
+												name="hyroviChallengeDifficulty"
+												type="number"
+												min={10}
+												max={22}
+												className="form-control"
+												disabled={values.hyroviSecurityMode === "inherit"}
+											/>
+										</div>
+									</div>
 								</div>
 
 								<div className="border-top pt-3 mt-2">
@@ -576,7 +610,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 									<div className="text-secondary small">
 										Current inherited values: soft risk {effectiveSecurity?.autoRateLimitThreshold ?? 50} for{" "}
 										{effectiveSecurity?.autoRateLimitMinutes ?? 10} minutes; hard risk{" "}
-										{effectiveSecurity?.autoBlockThreshold ?? 95} for {effectiveSecurity?.autoBlockMinutes ?? 60} minutes.
+										{effectiveSecurity?.autoBlockThreshold ?? 95} for {effectiveSecurity?.autoBlockMinutes ?? 60} minutes; challenge{" "}
+										{effectiveSecurity?.challengeMinutes ?? 10} minutes at {effectiveSecurity?.challengeDifficulty ?? 14} PoW bits.
 									</div>
 								) : null}
 							</div>
