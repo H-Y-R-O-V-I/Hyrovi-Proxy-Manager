@@ -2,6 +2,7 @@ import express from "express";
 import internalSecurity from "../internal/security.js";
 import internalSecurityAppEvents from "../internal/security_app_events.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
+import internalSecurityDevices from "../internal/security_devices.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
 
@@ -13,11 +14,15 @@ const router = express.Router({
 
 router.post("/app-events/ingest", async (req, res, next) => {
 	try {
-		if (!(await internalSecurityAppEvents.getStatus()).configured) {
+		const verifiedDevice = await internalSecurityDevices.verifySignedRequest({
+			headers: req.headers,
+			body: req.body,
+		});
+		if (!verifiedDevice && !(await internalSecurityAppEvents.getStatus()).configured) {
 			res.status(503).send({
 				error: {
 					code: 503,
-					message: "HYROVI Sec app-event ingest is disabled",
+					message: "HYROVI Sec app-event ingest requires a configured token or trusted signed device",
 				},
 			});
 			return;
@@ -26,8 +31,14 @@ router.post("/app-events/ingest", async (req, res, next) => {
 			authorization: req.headers.authorization,
 			body: req.body,
 			sourceIp: req.ip,
+			verifiedDevice,
 		});
-		res.status(202).send({ accepted: true, id: event.id, timestamp: event.timestamp });
+		res.status(202).send({
+			accepted: true,
+			id: event.id,
+			timestamp: event.timestamp,
+			deviceTrust: event.deviceTrust,
+		});
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
 		next(err);
@@ -91,6 +102,54 @@ router.get("/app-events", async (req, res, next) => {
 			internalSecurityAppEvents.listEvents(req.query.limit),
 		]);
 		res.status(200).send({ ...status, events });
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router
+	.route("/trusted-devices")
+	.get(async (req, res, next) => {
+		try {
+			await res.locals.access.can("logs:list");
+			res.status(200).send(await internalSecurityDevices.listDevices());
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.post(async (req, res, next) => {
+		try {
+			await res.locals.access.can("users:list");
+			res.status(201).send(
+				await internalSecurityDevices.registerDevice({
+					deviceId: req.body?.device_id,
+					name: req.body?.name,
+					publicKey: req.body?.public_key,
+					allowedApps: req.body?.allowed_apps,
+				}),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router.delete("/trusted-devices/:device_id", async (req, res, next) => {
+	try {
+		await res.locals.access.can("users:list");
+		res.status(200).send(await internalSecurityDevices.revokeDevice(req.params.device_id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/trusted-devices/:device_id/reset-sequence", async (req, res, next) => {
+	try {
+		await res.locals.access.can("users:list");
+		res.status(200).send(await internalSecurityDevices.resetSequence(req.params.device_id));
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
 		next(err);

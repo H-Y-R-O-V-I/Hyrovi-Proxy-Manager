@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	createSecurityBlock,
 	createSecurityRateLimit,
+	createSecurityTrustedDevice,
 	deleteSecurityBlock,
 	deleteSecurityChallenge,
 	deleteSecurityHostPolicy,
@@ -18,6 +19,7 @@ import {
 	getSecurityOverview,
 	getSecurityPolicy,
 	getSecurityRateLimits,
+	getSecurityTrustedDevices,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
 	type SecurityAppEventSeverity,
@@ -25,6 +27,8 @@ import {
 	type SecurityHostMode,
 	type SecurityHostPolicyEntry,
 	type SecurityIncidentTimelineKind,
+	resetSecurityTrustedDeviceSequence,
+	revokeSecurityTrustedDevice,
 } from "src/api/backend";
 import { Button, HasPermission } from "src/components";
 import { ADMIN, VIEW } from "src/modules/Permissions";
@@ -128,6 +132,10 @@ const Security = () => {
 	const [reason, setReason] = useState("");
 	const [durationMinutes, setDurationMinutes] = useState(60);
 	const [trustedSourcesText, setTrustedSourcesText] = useState("");
+	const [trustedDeviceId, setTrustedDeviceId] = useState("");
+	const [trustedDeviceName, setTrustedDeviceName] = useState("");
+	const [trustedDeviceApps, setTrustedDeviceApps] = useState("");
+	const [trustedDevicePublicKey, setTrustedDevicePublicKey] = useState("");
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
@@ -147,6 +155,11 @@ const Security = () => {
 	const appEvents = useQuery({
 		queryKey: ["security-app-events"],
 		queryFn: () => getSecurityAppEvents(100),
+		refetchInterval: POLL_MS,
+	});
+	const trustedDevices = useQuery({
+		queryKey: ["security-trusted-devices"],
+		queryFn: getSecurityTrustedDevices,
 		refetchInterval: POLL_MS,
 	});
 
@@ -202,6 +215,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-event-detail"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-trusted-devices"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-challenges"] }),
@@ -238,6 +252,24 @@ const Security = () => {
 	});
 	const removeChallenge = useMutation({
 		mutationFn: deleteSecurityChallenge,
+		onSuccess: refresh,
+	});
+	const registerTrustedDevice = useMutation({
+		mutationFn: createSecurityTrustedDevice,
+		onSuccess: async () => {
+			setTrustedDeviceId("");
+			setTrustedDeviceName("");
+			setTrustedDeviceApps("");
+			setTrustedDevicePublicKey("");
+			await refresh();
+		},
+	});
+	const revokeTrustedDevice = useMutation({
+		mutationFn: revokeSecurityTrustedDevice,
+		onSuccess: refresh,
+	});
+	const resetTrustedDeviceSequence = useMutation({
+		mutationFn: resetSecurityTrustedDeviceSequence,
 		onSuccess: refresh,
 	});
 
@@ -281,6 +313,11 @@ const Security = () => {
 	};
 
 	const topSessions = useMemo(() => overview.data?.attackSessions ?? [], [overview.data]);
+	const activeTrustedDevices = useMemo(
+		() => (trustedDevices.data ?? []).filter((device) => !device.revokedAt),
+		[trustedDevices.data],
+	);
+	const appEventIngestReady = Boolean(appEvents.data?.configured || activeTrustedDevices.length > 0);
 
 	const blockFromEvent = (event: SecurityEvent) => {
 		setIp(event.ip);
@@ -728,14 +765,18 @@ const Security = () => {
 								HYROVI apps can report login, permission, token, session, device and account security events without sending passwords, tokens or arbitrary request bodies.
 							</div>
 						</div>
-						<span className={`badge ${appEvents.data?.configured ? "bg-green-lt" : "bg-yellow text-dark"}`}>
-							{appEvents.data?.configured ? "INGEST READY" : "INGEST DISABLED"}
+						<span className={`badge ${appEventIngestReady ? "bg-green-lt" : "bg-yellow text-dark"}`}>
+							{appEventIngestReady ? "INGEST READY" : "INGEST DISABLED"}
 						</span>
 					</div>
 					{appEvents.data && !appEvents.data.configured ? (
 						<div className="card-body border-bottom">
 							<div className="text-secondary small">
-								Set <code>HYROVI_SEC_INGEST_TOKEN</code> to a secret with at least {appEvents.data.minTokenLength} characters and restart the container. Apps then POST to <code>/api/security/app-events/ingest</code> with <code>Authorization: Bearer …</code>.
+								{activeTrustedDevices.length > 0 ? (
+									<>Shared-token ingest is disabled, but registered Ed25519 devices can still submit signed events.</>
+								) : (
+									<>Register a trusted Ed25519 device below, or set <code>HYROVI_SEC_INGEST_TOKEN</code> to a secret with at least {appEvents.data.minTokenLength} characters and restart the container.</>
+								)}
 							</div>
 						</div>
 					) : null}
@@ -765,7 +806,14 @@ const Security = () => {
 											<td><span className={`badge ${appEventSeverityClass(event.severity)}`}>{event.severity}</span></td>
 											<td className="font-monospace">{event.eventType}</td>
 											<td>{event.app}</td>
-											<td className="text-secondary">{identity.join(" · ") || "—"}</td>
+											<td className="text-secondary">
+												{identity.join(" · ") || "—"}
+												{event.deviceTrust === "verified" ? (
+													<span className="badge bg-green-lt ms-2">verified device</span>
+												) : event.deviceTrust === "reported" ? (
+													<span className="badge bg-secondary-lt ms-2">reported device</span>
+												) : null}
+											</td>
 											<td className="font-monospace">{event.ip || "—"}</td>
 											<td>{event.reason || "—"}</td>
 										</tr>
@@ -773,6 +821,151 @@ const Security = () => {
 								})}
 								{!appEvents.isLoading && (appEvents.data?.events.length ?? 0) === 0 ? (
 									<tr><td colSpan={7} className="text-secondary">No app security events have been received yet.</td></tr>
+								) : null}
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div className="card mb-4">
+					<div className="card-header d-flex align-items-center justify-content-between">
+						<div>
+							<h3 className="card-title">Trusted device identities</h3>
+							<div className="text-secondary small">
+								Registered devices sign each app/auth event with Ed25519. HYROVI Sec stores the public key, fingerprint and replay state; private keys never leave the device.
+							</div>
+						</div>
+						<span className="badge bg-green-lt">{activeTrustedDevices.length} active</span>
+					</div>
+					<div className="card-body border-bottom">
+						<div className="row g-3">
+							<div className="col-12 col-lg-3">
+								<label className="form-label" htmlFor="hyrovi-sec-device-id">Device ID</label>
+								<input
+									id="hyrovi-sec-device-id"
+									className="form-control font-monospace"
+									value={trustedDeviceId}
+									onChange={(event) => setTrustedDeviceId(event.target.value)}
+									placeholder="iphone-leo"
+								/>
+							</div>
+							<div className="col-12 col-lg-3">
+								<label className="form-label" htmlFor="hyrovi-sec-device-name">Name</label>
+								<input
+									id="hyrovi-sec-device-name"
+									className="form-control"
+									value={trustedDeviceName}
+									onChange={(event) => setTrustedDeviceName(event.target.value)}
+									placeholder="Leo iPhone"
+								/>
+							</div>
+							<div className="col-12 col-lg-6">
+								<label className="form-label" htmlFor="hyrovi-sec-device-apps">Allowed apps</label>
+								<input
+									id="hyrovi-sec-device-apps"
+									className="form-control font-monospace"
+									value={trustedDeviceApps}
+									onChange={(event) => setTrustedDeviceApps(event.target.value)}
+									placeholder="hyrovi-one, stoneapp"
+								/>
+								<div className="form-hint">Required. List allowed app IDs separated by commas. Use <code>*</code> only when this device intentionally needs access to every app.</div>
+							</div>
+							<div className="col-12">
+								<label className="form-label" htmlFor="hyrovi-sec-device-key">Ed25519 public key (PEM)</label>
+								<textarea
+									id="hyrovi-sec-device-key"
+									className="form-control font-monospace"
+									rows={4}
+									value={trustedDevicePublicKey}
+									onChange={(event) => setTrustedDevicePublicKey(event.target.value)}
+									placeholder={"-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"}
+								/>
+							</div>
+							<div className="col-12 d-flex justify-content-end">
+								<Button
+									className="btn-primary"
+									disabled={
+										!trustedDeviceId.trim() ||
+										!trustedDevicePublicKey.trim() ||
+										!trustedDeviceApps.trim() ||
+										registerTrustedDevice.isPending
+									}
+									onClick={() =>
+										registerTrustedDevice.mutate({
+											deviceId: trustedDeviceId.trim(),
+											name: trustedDeviceName.trim() || undefined,
+											publicKey: trustedDevicePublicKey.trim(),
+											allowedApps: trustedDeviceApps
+												.split(",")
+												.map((entry) => entry.trim())
+												.filter(Boolean),
+										})
+									}
+								>
+									Register device
+								</Button>
+							</div>
+						</div>
+						{registerTrustedDevice.error ? (
+							<div className="text-red mt-2">{registerTrustedDevice.error.message}</div>
+						) : null}
+					</div>
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>Device</th>
+									<th>Fingerprint</th>
+									<th>Allowed apps</th>
+									<th>Sequence</th>
+									<th>Last seen</th>
+									<th>Status</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{(trustedDevices.data ?? []).map((device) => (
+									<tr key={device.deviceId}>
+										<td>
+											<div>{device.name}</div>
+											<div className="text-secondary small font-monospace">{device.deviceId}</div>
+										</td>
+										<td className="font-monospace small">{device.fingerprint.slice(0, 16)}…</td>
+										<td>{device.allowedApps.join(", ") || "Any app"}</td>
+										<td>{device.lastSequence}</td>
+										<td>
+											<div>{formatTime(device.lastSeenAt)}</div>
+											<div className="text-secondary small">{device.lastApp || "—"}</div>
+										</td>
+										<td>
+											{device.revokedAt ? (
+												<span className="badge bg-red-lt">revoked</span>
+											) : (
+												<span className="badge bg-green-lt">trusted</span>
+											)}
+										</td>
+										<td>
+											<div className="d-flex gap-1">
+												<Button
+													className="btn-outline-secondary"
+													disabled={Boolean(device.revokedAt) || resetTrustedDeviceSequence.isPending}
+													onClick={() => resetTrustedDeviceSequence.mutate(device.deviceId)}
+												>
+													Reset sequence
+												</Button>
+												<Button
+													className="btn-outline-danger"
+													disabled={Boolean(device.revokedAt) || revokeTrustedDevice.isPending}
+													onClick={() => revokeTrustedDevice.mutate(device.deviceId)}
+												>
+													Revoke
+												</Button>
+											</div>
+										</td>
+									</tr>
+								))}
+								{!trustedDevices.isLoading && (trustedDevices.data?.length ?? 0) === 0 ? (
+									<tr><td colSpan={7} className="text-secondary">No trusted devices registered yet.</td></tr>
 								) : null}
 							</tbody>
 						</table>
@@ -987,6 +1180,7 @@ const Security = () => {
 											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.accountIds.length} account(s)</span>
 											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.appSessionIds.length} app session(s)</span>
 											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.deviceIds.length} device(s)</span>
+											<span className="badge bg-green-lt">{incident.data.correlation.entities.verifiedDeviceIds.length} verified device(s)</span>
 										</div>
 									</div>
 									<div className="table-responsive">
@@ -1018,6 +1212,7 @@ const Security = () => {
 																item.accountId ? `account ${item.accountId}` : null,
 																item.appSessionId ? `session ${item.appSessionId}` : null,
 																item.deviceId ? `device ${item.deviceId}` : null,
+																item.deviceTrust === "verified" ? "cryptographically verified" : item.deviceTrust === "reported" ? "device ID reported" : null,
 																item.host ? `host ${item.host}` : null,
 																item.requestId ? `request ${item.requestId}` : null,
 																item.risk !== null ? `risk ${item.risk}` : null,
@@ -1112,6 +1307,11 @@ const Security = () => {
 																event.sessionId ? `session ${event.sessionId}` : null,
 																event.deviceId ? `device ${event.deviceId}` : null,
 															].filter(Boolean).join(" · ") || "—"}
+															{event.deviceTrust === "verified" ? (
+																<span className="badge bg-green-lt ms-2">verified device</span>
+															) : event.deviceTrust === "reported" ? (
+																<span className="badge bg-secondary-lt ms-2">reported device</span>
+															) : null}
 														</td>
 														<td>{event.reason || "—"}</td>
 													</tr>
@@ -1379,6 +1579,11 @@ const Security = () => {
 																event.sessionId ? `session ${event.sessionId}` : null,
 																event.deviceId ? `device ${event.deviceId}` : null,
 															].filter(Boolean).join(" · ") || "—"}
+															{event.deviceTrust === "verified" ? (
+																<span className="badge bg-green-lt ms-2">verified device</span>
+															) : event.deviceTrust === "reported" ? (
+																<span className="badge bg-secondary-lt ms-2">reported device</span>
+															) : null}
 														</td>
 														<td>{event.reason || "—"}</td>
 													</tr>

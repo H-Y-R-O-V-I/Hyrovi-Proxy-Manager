@@ -6,6 +6,7 @@ import { global as logger } from "../logger.js";
 import internalNginx from "./nginx.js";
 import internalSecurityAppEvents from "./security_app_events.js";
 import internalSecurityChallenge from "./security_challenge.js";
+import internalSecurityDevices from "./security_devices.js";
 import deadHostModel from "../models/dead_host.js";
 import proxyHostModel from "../models/proxy_host.js";
 import redirectionHostModel from "../models/redirection_host.js";
@@ -1692,6 +1693,8 @@ const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], chall
 			accountId: null,
 			appSessionId: null,
 			deviceId: null,
+			deviceTrust: null,
+			deviceFingerprint: null,
 			risk: event.risk,
 			status: event.status,
 		})),
@@ -1709,6 +1712,8 @@ const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], chall
 			accountId: event.accountId,
 			appSessionId: event.sessionId,
 			deviceId: event.deviceId,
+			deviceTrust: event.deviceTrust || null,
+			deviceFingerprint: event.deviceFingerprint || null,
 			risk: null,
 			status: null,
 		})),
@@ -1728,6 +1733,8 @@ const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], chall
 				accountId: null,
 				appSessionId: null,
 				deviceId: null,
+				deviceTrust: null,
+				deviceFingerprint: null,
 				risk: null,
 				status: null,
 			})),
@@ -1747,6 +1754,8 @@ const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], chall
 				accountId: null,
 				appSessionId: null,
 				deviceId: null,
+				deviceTrust: null,
+				deviceFingerprint: null,
 				risk: null,
 				status: null,
 			})),
@@ -1764,6 +1773,9 @@ const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], chall
 			accountIds: unique(appEvents.map((event) => event.accountId)),
 			appSessionIds: unique(appEvents.map((event) => event.sessionId)),
 			deviceIds: unique(appEvents.map((event) => event.deviceId)),
+			verifiedDeviceIds: unique(
+				appEvents.filter((event) => event.deviceTrust === "verified").map((event) => event.deviceId),
+			),
 			requestIds: unique(session.timeline.map((event) => event.requestId)),
 		},
 		items,
@@ -1784,6 +1796,7 @@ const internalSecurity = {
 	prepare: async () => {
 		await ensureSecurityDir();
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
+		await internalSecurityDevices.prepare();
 		try {
 			await fs.promises.access(BLOCKS_CONF_FILE);
 		} catch (_) {

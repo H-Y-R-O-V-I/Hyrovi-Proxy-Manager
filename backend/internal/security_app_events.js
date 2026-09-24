@@ -133,7 +133,7 @@ const withMutation = (operation) => {
 	return run;
 };
 
-const normalizeEvent = (input = {}, sourceIp = "") => {
+const normalizeEvent = (input = {}, sourceIp = "", verifiedDevice = null) => {
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
 		throw new errs.ValidationError("App security event must be an object");
 	}
@@ -170,6 +170,8 @@ const normalizeEvent = (input = {}, sourceIp = "") => {
 
 	const normalizedSourceIp = boundedString(sourceIp, 64);
 	const safeSourceIp = normalizedSourceIp && net.isIP(normalizedSourceIp) ? normalizedSourceIp : null;
+	const reportedDeviceId = boundedString(input.device_id ?? input.deviceId, 160);
+	const verifiedDeviceId = boundedString(verifiedDevice?.deviceId, 160);
 
 	return {
 		id: randomUUID(),
@@ -184,7 +186,11 @@ const normalizeEvent = (input = {}, sourceIp = "") => {
 		host: boundedString(input.host, 255),
 		accountId: boundedString(input.account_id ?? input.accountId, 160),
 		sessionId: boundedString(input.session_id ?? input.sessionId, 160),
-		deviceId: boundedString(input.device_id ?? input.deviceId, 160),
+		deviceId: verifiedDeviceId || reportedDeviceId,
+		deviceTrust: verifiedDeviceId ? "verified" : reportedDeviceId ? "reported" : null,
+		deviceName: verifiedDeviceId ? boundedString(verifiedDevice?.name, 120) : null,
+		deviceFingerprint: verifiedDeviceId ? boundedString(verifiedDevice?.fingerprint, 128) : null,
+		deviceSequence: verifiedDeviceId ? Number(verifiedDevice?.sequence) || null : null,
 		reason: boundedString(input.reason, 300),
 	};
 };
@@ -271,9 +277,9 @@ const listEvents = async (limit = 250) => {
 	return events;
 };
 
-const ingest = async ({ authorization, body, sourceIp }) => {
-	assertAuthorized(authorization);
-	const event = normalizeEvent(body, sourceIp);
+const ingest = async ({ authorization, body, sourceIp, verifiedDevice = null }) => {
+	if (!verifiedDevice) assertAuthorized(authorization);
+	const event = normalizeEvent(body, sourceIp, verifiedDevice);
 	return appendEvent(event);
 };
 
@@ -283,6 +289,7 @@ const getStatus = async () => ({
 	retentionDays: await readRetentionDays(),
 	allowedEventTypes: [...ALLOWED_EVENT_TYPES],
 	allowedSeverities: [...ALLOWED_SEVERITIES],
+	signedDeviceAuthSupported: true,
 });
 
 const findCorrelatedEvents = async ({ requestId, requestIds = [], ip, from, to, limit = 100 }) => {

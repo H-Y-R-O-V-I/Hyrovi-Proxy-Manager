@@ -35,7 +35,7 @@ The first implementation adds:
 - endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
-- authenticated app/auth security-event ingest and admin visibility;
+- authenticated app/auth security-event ingest and admin visibility;\n- Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;
 - a dedicated HYROVI Sec navigation page.
 
 ### Data minimization
@@ -89,7 +89,7 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/blocked-ips.conf`
 - `/data/nginx/hyrovi-security/rate-limits.json`
 - `/data/nginx/hyrovi-security/rate-limited-ips.geo`
-- `/data/nginx/hyrovi-security/policy.json`\n- `/data/nginx/hyrovi-security/escalations.json` (persistent soft-limit escalation counters)
+- `/data/nginx/hyrovi-security/policy.json`\n- `/data/nginx/hyrovi-security/escalations.json` (persistent soft-limit escalation counters)\n- `/data/nginx/hyrovi-security/trusted-devices.json` (trusted Ed25519 public keys and app scopes)\n- `/data/nginx/hyrovi-security/trusted-device-state.json` (replay counters and last-seen state)
 - `/data/logs/hyrovi-sec-actions.log` (bounded JSONL response audit history)
 - `/data/nginx/hyrovi-security/events/YYYY-MM-DD.jsonl` (bounded retained security-event archive)
 

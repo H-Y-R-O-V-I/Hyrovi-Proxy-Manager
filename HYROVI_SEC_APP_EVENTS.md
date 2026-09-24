@@ -26,6 +26,37 @@ The admin list endpoint remains protected by normal Nginx Proxy Manager admin pe
 GET /api/security/app-events
 ```
 
+## Trusted signed devices
+
+As an alternative to the shared ingest token, a registered device can authenticate each event with an Ed25519 signature. The private key stays on the device. HYROVI Sec stores the public key, SHA-256 fingerprint, app scope and replay state.
+
+Trusted devices are registered from the HYROVI Sec admin page. Each device must have at least one allowed app. Use `*` only when a device intentionally needs to submit events for every app.
+
+Signed requests use these headers:
+
+```text
+X-Hyrovi-Device-ID: <device id>
+X-Hyrovi-Device-Sequence: <positive monotonic integer>
+X-Hyrovi-Device-Time: <unix time in milliseconds>
+X-Hyrovi-Device-Signature: <base64 Ed25519 signature>
+```
+
+The signature message is UTF-8 text with five newline-separated fields:
+
+```text
+HYROVI-SEC-DEVICE-V1
+<device id>
+<sequence>
+<unix time in milliseconds>
+<SHA-256 hex of canonical JSON event body>
+```
+
+Canonical JSON recursively sorts object keys, preserves array order and omits properties whose value is `undefined`. Signatures are accepted only within a five-minute clock window.
+
+Replay protection is persistent. A sequence must be strictly greater than the previously accepted sequence. An admin sequence reset creates a new reset epoch, so signatures created before that reset remain invalid even though the numeric counter starts again at 1. A revoked device ID can only be registered again with a different Ed25519 key.
+
+If any device-signature header is present, HYROVI Sec treats the request as device-authenticated and fails closed on invalid or incomplete signatures rather than falling back to the shared token.
+
 ## Allowed event types
 
 The initial allowlist is:

@@ -77,6 +77,8 @@ export interface SecurityIncidentTimelineItem {
 	accountId: string | null;
 	appSessionId: string | null;
 	deviceId: string | null;
+	deviceTrust: "verified" | "reported" | null;
+	deviceFingerprint: string | null;
 	risk: number | null;
 	status: number | null;
 }
@@ -88,6 +90,7 @@ export interface SecurityIncidentCorrelation {
 		accountIds: string[];
 		appSessionIds: string[];
 		deviceIds: string[];
+		verifiedDeviceIds: string[];
 		requestIds: string[];
 	};
 	items: SecurityIncidentTimelineItem[];
@@ -223,6 +226,10 @@ export interface SecurityAppEvent {
 	accountId: string | null;
 	sessionId: string | null;
 	deviceId: string | null;
+	deviceTrust: "verified" | "reported" | null;
+	deviceName: string | null;
+	deviceFingerprint: string | null;
+	deviceSequence: number | null;
 	reason: string | null;
 }
 
@@ -232,7 +239,22 @@ export interface SecurityAppEventsResponse {
 	retentionDays: number;
 	allowedEventTypes: string[];
 	allowedSeverities: string[];
+	signedDeviceAuthSupported: boolean;
 	events: SecurityAppEvent[];
+}
+
+export interface SecurityTrustedDevice {
+	deviceId: string;
+	name: string;
+	fingerprint: string;
+	allowedApps: string[];
+	createdAt: string;
+	updatedAt: string;
+	revokedAt: string | null;
+	lastSequence: number;
+	sequenceResetAt: string | null;
+	lastSeenAt: string | null;
+	lastApp: string | null;
 }
 
 export interface SecurityChallenge {
@@ -309,6 +331,27 @@ export async function updateSecurityHostPolicy(
 export async function deleteSecurityHostPolicy(id: number): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/host-policies/${encodeURIComponent(id)}` });
 }
+export async function getSecurityTrustedDevices(): Promise<SecurityTrustedDevice[]> {
+	return await api.get({ url: "/security/trusted-devices" });
+}
+
+export async function createSecurityTrustedDevice(data: {
+	deviceId: string;
+	name?: string;
+	publicKey: string;
+	allowedApps?: string[];
+}): Promise<SecurityTrustedDevice> {
+	return await api.post({ url: "/security/trusted-devices", data });
+}
+
+export async function revokeSecurityTrustedDevice(deviceId: string): Promise<SecurityTrustedDevice> {
+	return await api.del({ url: `/security/trusted-devices/${encodeURIComponent(deviceId)}` });
+}
+
+export async function resetSecurityTrustedDeviceSequence(deviceId: string): Promise<SecurityTrustedDevice> {
+	return await api.post({ url: `/security/trusted-devices/${encodeURIComponent(deviceId)}/reset-sequence` });
+}
+
 export async function getSecurityChallenges(): Promise<SecurityChallenge[]> {
 	return await api.get({ url: "/security/challenges" });
 }
