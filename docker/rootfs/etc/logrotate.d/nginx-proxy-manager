@@ -38,6 +38,7 @@
 
 /data/logs/hyrovi-sec.log {
     su npm npm
+    create 0644
     size 25M
     rotate 8
     missingok
