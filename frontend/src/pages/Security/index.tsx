@@ -7,6 +7,7 @@ import {
 	deleteSecurityBlock,
 	deleteSecurityHostPolicy,
 	deleteSecurityRateLimit,
+	getSecurityAppEvents,
 	getSecurityAttackSession,
 	getSecurityBlocks,
 	getSecurityEventDetail,
@@ -17,6 +18,7 @@ import {
 	getSecurityRateLimits,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
+	type SecurityAppEventSeverity,
 	type SecurityEvent,
 	type SecurityHostMode,
 	type SecurityHostPolicyEntry,
@@ -60,6 +62,21 @@ const severityClass = (severity: SecurityEvent["severity"]) => {
 	}
 };
 
+const appEventSeverityClass = (severity: SecurityAppEventSeverity) => {
+	switch (severity) {
+		case "critical":
+			return "bg-red text-white";
+		case "high":
+			return "bg-orange text-white";
+		case "medium":
+			return "bg-yellow text-dark";
+		case "low":
+			return "bg-azure-lt";
+		default:
+			return "bg-secondary-lt";
+	}
+};
+
 const formatTime = (value: string | null) => {
 	if (!value) return "—";
 	const date = new Date(value);
@@ -86,6 +103,12 @@ const Security = () => {
 	const events = useQuery({
 		queryKey: ["security-events", minRisk],
 		queryFn: () => getSecurityEvents(300, minRisk),
+		refetchInterval: POLL_MS,
+	});
+
+	const appEvents = useQuery({
+		queryKey: ["security-app-events"],
+		queryFn: () => getSecurityAppEvents(100),
 		refetchInterval: POLL_MS,
 	});
 
@@ -135,6 +158,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-event-detail"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
@@ -594,6 +618,65 @@ const Security = () => {
 								<div className="text-secondary small">{overview.data?.activeRateLimits ?? "—"} rate limited</div>
 							</div>
 						</div>
+					</div>
+				</div>
+
+				<div className="card mb-4">
+					<div className="card-header d-flex align-items-center justify-content-between">
+						<div>
+							<h3 className="card-title">App & auth security events</h3>
+							<div className="text-secondary small">
+								HYROVI apps can report login, permission, token, session, device and account security events without sending passwords, tokens or arbitrary request bodies.
+							</div>
+						</div>
+						<span className={`badge ${appEvents.data?.configured ? "bg-green-lt" : "bg-yellow text-dark"}`}>
+							{appEvents.data?.configured ? "INGEST READY" : "INGEST DISABLED"}
+						</span>
+					</div>
+					{appEvents.data && !appEvents.data.configured ? (
+						<div className="card-body border-bottom">
+							<div className="text-secondary small">
+								Set <code>HYROVI_SEC_INGEST_TOKEN</code> to a secret with at least {appEvents.data.minTokenLength} characters and restart the container. Apps then POST to <code>/api/security/app-events/ingest</code> with <code>Authorization: Bearer …</code>.
+							</div>
+						</div>
+					) : null}
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>Time</th>
+									<th>Severity</th>
+									<th>Event</th>
+									<th>App</th>
+									<th>Identity</th>
+									<th>IP</th>
+									<th>Reason</th>
+								</tr>
+							</thead>
+							<tbody>
+								{(appEvents.data?.events ?? []).map((event) => {
+									const identity = [
+										event.accountId ? `account ${event.accountId}` : null,
+										event.sessionId ? `session ${event.sessionId}` : null,
+										event.deviceId ? `device ${event.deviceId}` : null,
+									].filter(Boolean);
+									return (
+										<tr key={event.id}>
+											<td className="text-nowrap">{formatTime(event.timestamp)}</td>
+											<td><span className={`badge ${appEventSeverityClass(event.severity)}`}>{event.severity}</span></td>
+											<td className="font-monospace">{event.eventType}</td>
+											<td>{event.app}</td>
+											<td className="text-secondary">{identity.join(" · ") || "—"}</td>
+											<td className="font-monospace">{event.ip || "—"}</td>
+											<td>{event.reason || "—"}</td>
+										</tr>
+									);
+								})}
+								{!appEvents.isLoading && (appEvents.data?.events.length ?? 0) === 0 ? (
+									<tr><td colSpan={7} className="text-secondary">No app security events have been received yet.</td></tr>
+								) : null}
+							</tbody>
+						</table>
 					</div>
 				</div>
 

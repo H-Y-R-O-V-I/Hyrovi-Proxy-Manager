@@ -143,6 +143,34 @@ export interface SecurityRateLimit {
 	expiresAt: string;
 }
 
+export type SecurityAppEventSeverity = "info" | "low" | "medium" | "high" | "critical";
+
+export interface SecurityAppEvent {
+	id: string;
+	timestamp: string;
+	receivedAt: string;
+	eventType: string;
+	app: string;
+	severity: SecurityAppEventSeverity;
+	ip: string | null;
+	sourceIp: string | null;
+	requestId: string | null;
+	host: string | null;
+	accountId: string | null;
+	sessionId: string | null;
+	deviceId: string | null;
+	reason: string | null;
+}
+
+export interface SecurityAppEventsResponse {
+	configured: boolean;
+	minTokenLength: number;
+	retentionDays: number;
+	allowedEventTypes: string[];
+	allowedSeverities: string[];
+	events: SecurityAppEvent[];
+}
+
 export interface SecurityBlock {
 	id: string;
 	ip: string;
@@ -154,6 +182,10 @@ export interface SecurityBlock {
 
 export async function getSecurityOverview(): Promise<SecurityOverview> {
 	return await api.get({ url: "/security/overview" });
+}
+
+export async function getSecurityAppEvents(limit = 100): Promise<SecurityAppEventsResponse> {
+	return await api.get({ url: "/security/app-events", params: { limit } });
 }
 
 export async function getSecurityEvents(limit = 250, minRisk = 0): Promise<SecurityEvent[]> {

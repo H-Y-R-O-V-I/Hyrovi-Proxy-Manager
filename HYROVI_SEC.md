@@ -31,7 +31,7 @@ The first implementation adds:
 - per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
-- a dedicated HYROVI Sec navigation page.
+- authenticated app/auth security-event ingest and admin visibility;\n- a dedicated HYROVI Sec navigation page.
 
 ### Data minimization
 
@@ -47,7 +47,7 @@ The security log deliberately does **not** store:
 The current event record contains only the minimum useful request metadata: timestamp, request ID, host, method, path without query string, response status, source IP, user-agent, request size, response bytes, request duration and upstream status.
 
 The response-action audit log stores only response lifecycle metadata (time, source IP, response type/action, source/reason, response ID and expiry). It does not add query strings, request bodies, cookies, Authorization headers, API keys/tokens or referrer URLs. The file is bounded and compacted instead of growing indefinitely.
-
+\nApp security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md).\n
 ## Enforcement path
 
 ```text
@@ -102,8 +102,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 
 1. expose per-host policy directly inside the normal Proxy Host editor and add endpoint-specific rules;
 2. richer automatic response rules with cool-downs, escalation chains and browser/API challenges;
-3. authentication-event SDK so apps can report login/session/device events;
-4. trusted device identities based on cryptographic device keys;
+3. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;\n4. trusted device identities based on cryptographic device keys;
 5. correlated attack timelines across hosts, sessions, accounts and devices;
 6. alerting and HYROVI One integration;
 7. IPv4/IPv6 subnet and ASN-aware controls;

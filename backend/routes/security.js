@@ -1,5 +1,6 @@
 import express from "express";
 import internalSecurity from "../internal/security.js";
+import internalSecurityAppEvents from "../internal/security_app_events.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
 
@@ -9,7 +10,44 @@ const router = express.Router({
 	mergeParams: true,
 });
 
+router.post("/app-events/ingest", async (req, res, next) => {
+	try {
+		if (!(await internalSecurityAppEvents.getStatus()).configured) {
+			res.status(503).send({
+				error: {
+					code: 503,
+					message: "HYROVI Sec app-event ingest is disabled",
+				},
+			});
+			return;
+		}
+		const event = await internalSecurityAppEvents.ingest({
+			authorization: req.headers.authorization,
+			body: req.body,
+			sourceIp: req.ip,
+		});
+		res.status(202).send({ accepted: true, id: event.id, timestamp: event.timestamp });
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router.use(jwtdecode());
+
+router.get("/app-events", async (req, res, next) => {
+	try {
+		await res.locals.access.can("logs:list");
+		const [status, events] = await Promise.all([
+			internalSecurityAppEvents.getStatus(),
+			internalSecurityAppEvents.listEvents(req.query.limit),
+		]);
+		res.status(200).send({ ...status, events });
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
 
 router.get("/overview", async (req, res, next) => {
 	try {
