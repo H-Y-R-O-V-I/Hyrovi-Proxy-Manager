@@ -9,6 +9,7 @@ const MAX_RULES = 100;
 const MAX_METHODS = 16;
 const MAX_STATUSES = 32;
 const RESPONSE_MODES = new Set(["observe", "soft"]);
+const RULE_STAGES = new Set(["preview", "active", "paused"]);
 
 let mutationQueue = Promise.resolve();
 
@@ -107,6 +108,28 @@ const normalizeMatch = (value = {}) => {
 	return match;
 };
 
+const getRuleStage = (rule) => {
+	const stage = String(rule?.stage || "").trim().toLowerCase();
+	if (RULE_STAGES.has(stage)) return stage;
+	return rule?.enabled === false ? "paused" : "active";
+};
+
+const normalizeRuleStage = (input = {}, existing = null) => {
+	if (typeof input.stage !== "undefined") {
+		const stage = String(input.stage || "").trim().toLowerCase();
+		if (!RULE_STAGES.has(stage)) {
+			throw new errs.ValidationError("Detection-rule stage must be preview, active or paused");
+		}
+		return stage;
+	}
+
+	if (typeof input.enabled === "boolean") {
+		if (input.enabled) return "active";
+		return existing && getRuleStage(existing) === "preview" ? "preview" : "paused";
+	}
+	if (existing) return getRuleStage(existing);
+	return "preview";
+};
 const normalizeRuleInput = (input = {}, existing = null) => {
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
 		throw new errs.ValidationError("Detection rule must be an object");
@@ -121,11 +144,13 @@ const normalizeRuleInput = (input = {}, existing = null) => {
 	const rawScore = Number.parseInt(input.score ?? existing?.score, 10);
 	const score = clamp(Number.isInteger(rawScore) ? rawScore : 20, 1, 60);
 	const match = normalizeMatch(input.match ?? existing?.match ?? {});
+	const stage = normalizeRuleStage(input, existing);
 
 	return {
 		id: existing?.id || randomUUID(),
 		name,
-		enabled: typeof input.enabled === "boolean" ? input.enabled : existing?.enabled !== false,
+		stage,
+		enabled: stage === "active",
 		score,
 		response,
 		match,
@@ -134,8 +159,15 @@ const normalizeRuleInput = (input = {}, existing = null) => {
 	};
 };
 
+const presentRule = (rule) => {
+	const stage = getRuleStage(rule);
+	return { ...rule, stage, enabled: stage === "active" };
+};
+
 const listRules = async () =>
-	(await readRulesUnsafe()).sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+	(await readRulesUnsafe())
+		.map(presentRule)
+		.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
 const listRulesForAnalysis = async () => {
 	try {
@@ -175,18 +207,22 @@ const deleteRule = (id) =>
 		return { success: true };
 	});
 
-const portableRule = (rule) => ({
-	name: rule.name,
-	enabled: rule.enabled,
-	score: rule.score,
-	response: rule.response,
-	match: rule.match,
-});
+const portableRule = (rule) => {
+	const stage = getRuleStage(rule);
+	return {
+		name: rule.name,
+		stage,
+		enabled: stage === "active",
+		score: rule.score,
+		response: rule.response,
+		match: rule.match,
+	};
+};
 
 const portableRuleKey = (rule) => JSON.stringify(portableRule(rule));
 
 const exportRules = async () => ({
-	version: 1,
+	version: 2,
 	exportedAt: new Date().toISOString(),
 	rules: (await listRules()).map(portableRule),
 });
@@ -196,7 +232,8 @@ const importRules = (payload = {}) =>
 		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 			throw new errs.ValidationError("Detection-rule import payload must be an object");
 		}
-		if (Number.parseInt(payload.version, 10) !== 1) {
+		const version = Number.parseInt(payload.version, 10);
+		if (![1, 2].includes(version)) {
 			throw new errs.ValidationError("Unsupported detection-rule export version");
 		}
 		const mode = String(payload.mode || "merge").trim().toLowerCase();
@@ -249,8 +286,8 @@ const hostMatches = (pattern, host) => {
 	return normalized === pattern;
 };
 
-const ruleMatches = (rule, event, ignoreEnabled = false) => {
-	if (!rule || (!ignoreEnabled && !rule.enabled)) return false;
+const ruleMatches = (rule, event, ignoreStage = false) => {
+	if (!rule || (!ignoreStage && getRuleStage(rule) !== "active")) return false;
 	const match = rule.match || {};
 	if (!hostMatches(match.host, event.host)) return false;
 	if (match.pathPrefix && !String(event.path || "").startsWith(match.pathPrefix)) return false;
@@ -270,13 +307,39 @@ const ruleMatches = (rule, event, ignoreEnabled = false) => {
 
 const summarizeRuleMatches = (rule, events, sampleLimit = 10) => {
 	const matches = (Array.isArray(events) ? events : []).filter((event) => ruleMatches(rule, event, true));
+	const now = Date.now();
+	const hourAgo = now - 60 * 60 * 1000;
+	const dayAgo = now - 24 * 60 * 60 * 1000;
+	const recentHour = matches.filter((event) => {
+		const timestamp = Date.parse(event.timestamp);
+		return Number.isFinite(timestamp) && timestamp >= hourAgo && timestamp <= now;
+	});
+	const recentDay = matches.filter((event) => {
+		const timestamp = Date.parse(event.timestamp);
+		return Number.isFinite(timestamp) && timestamp >= dayAgo && timestamp <= now;
+	});
+	const bucketStart = Math.floor(now / 3_600_000) * 3_600_000 - 23 * 3_600_000;
+	const hourlyHits = Array.from({ length: 24 }, () => 0);
+	for (const event of matches) {
+		const timestamp = Date.parse(event.timestamp);
+		if (!Number.isFinite(timestamp) || timestamp < bucketStart || timestamp > now) continue;
+		const index = Math.floor((timestamp - bucketStart) / 3_600_000);
+		if (index >= 0 && index < hourlyHits.length) hourlyHits[index] += 1;
+	}
+	const stage = getRuleStage(rule);
 	return {
 		ruleId: rule.id || null,
 		name: rule.name,
-		enabled: rule.enabled !== false,
+		stage,
+		enabled: stage === "active",
 		response: rule.response,
 		score: rule.score,
 		hits: matches.length,
+		hitsLastHour: recentHour.length,
+		hitsLast24Hours: recentDay.length,
+		uniqueIpsLast24Hours: new Set(recentDay.map((event) => event.ip).filter(Boolean)).size,
+		hourlyTrendStartAt: new Date(bucketStart).toISOString(),
+		hourlyHits,
 		uniqueIps: new Set(matches.map((event) => event.ip).filter(Boolean)).size,
 		uniqueHosts: new Set(matches.map((event) => event.host).filter(Boolean)).size,
 		firstHitAt: matches.length > 0 ? matches[matches.length - 1].timestamp || null : null,
@@ -300,7 +363,7 @@ const analyzeRules = (rules, events) =>
 	(Array.isArray(rules) ? rules : []).map((rule) => summarizeRuleMatches(rule, events, 5));
 
 const simulateRule = (input, events) => {
-	const rule = normalizeRuleInput({ ...input, enabled: true });
+	const rule = normalizeRuleInput({ ...input, stage: input?.stage || "preview" });
 	return {
 		rule: portableRule(rule),
 		...summarizeRuleMatches(rule, events, 20),

@@ -38,7 +38,7 @@ The first implementation adds:
 - authenticated app/auth security-event ingest and admin visibility;
 - Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;
 - bounded operational security alerts with acknowledgement, deduplication and a separate read-only HYROVI One pull feed;
-- safe custom detection rules with literal host/path/method/status/User-Agent matchers, explainable risk scoring, optional soft-response eligibility, retained-event hit analytics and read-only draft simulation;
+- safe custom detection rules with literal host/path/method/status/User-Agent matchers, preview-first staged rollout, explainable risk scoring, optional soft-response eligibility, retained-event 1h/24h trend analytics and read-only draft simulation;
 - read-only system health/diagnostics with disk pressure, log/archive size and component-state visibility plus low-disk alerting;
 - a dedicated HYROVI Sec navigation page.
 
@@ -144,7 +144,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 1. package the authentication-event and signed-device protocol into reusable client SDKs;
 2. connect HYROVI One to the read-only alert feed once its current worktree is clear, then add user-facing notification delivery;
 3. add ASN-aware controls on top of the completed IPv4/IPv6 CIDR controls;
-4. add staged rollout controls and richer rule-hit trend analytics on top of the completed retained-event simulation;
+4. add rule-health/false-positive review workflows and longer-term trend summaries on top of the completed preview/promote/pause rollout;
 5. expand the completed Node challenge helper into additional client SDKs where needed and consider endpoint-specific challenge overrides.
 
 ## Upstream attribution

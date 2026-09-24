@@ -148,6 +148,7 @@ router.use(jwtdecode());
 
 const detectionRuleInput = (body = {}) => ({
 	name: body?.name,
+	stage: body?.stage,
 	enabled: body?.enabled,
 	score: body?.score,
 	response: body?.response,

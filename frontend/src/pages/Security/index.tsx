@@ -36,6 +36,7 @@ import {
 	type SecurityAlertSeverity,
 	type SecurityAppEventSeverity,
 	type SecurityEvent,
+	type SecurityDetectionRuleStage,
 	type SecurityHostMode,
 	type SecurityHostPolicyEntry,
 	type SecurityIncidentTimelineKind,
@@ -219,6 +220,7 @@ const Security = () => {
 	const [ruleName, setRuleName] = useState("");
 	const [ruleScore, setRuleScore] = useState(25);
 	const [ruleResponse, setRuleResponse] = useState<"observe" | "soft">("observe");
+	const [ruleStage, setRuleStage] = useState<SecurityDetectionRuleStage>("preview");
 	const [ruleHost, setRuleHost] = useState("");
 	const [rulePathPrefix, setRulePathPrefix] = useState("");
 	const [rulePathContains, setRulePathContains] = useState("");
@@ -323,7 +325,8 @@ const Security = () => {
 	const ruleDraft = useMemo(
 		() => ({
 			name: ruleName.trim(),
-			enabled: true,
+			stage: ruleStage,
+			enabled: ruleStage === "active",
 			score: ruleScore,
 			response: ruleResponse,
 			match: {
@@ -335,7 +338,7 @@ const Security = () => {
 				userAgentContains: ruleUserAgent.trim() || null,
 			},
 		}),
-		[ruleHost, ruleMethods, ruleName, rulePathContains, rulePathPrefix, ruleResponse, ruleScore, ruleStatuses, ruleUserAgent],
+		[ruleHost, ruleMethods, ruleName, rulePathContains, rulePathPrefix, ruleResponse, ruleScore, ruleStage, ruleStatuses, ruleUserAgent],
 	);
 
 	const ruleDraftValid = Boolean(
@@ -412,6 +415,7 @@ const Security = () => {
 			setRuleName("");
 			setRuleScore(25);
 			setRuleResponse("observe");
+			setRuleStage("preview");
 			setRuleHost("");
 			setRulePathPrefix("");
 			setRulePathContains("");
@@ -425,9 +429,9 @@ const Security = () => {
 		mutationFn: deleteSecurityDetectionRule,
 		onSuccess: refresh,
 	});
-	const toggleDetectionRule = useMutation({
-		mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-			updateSecurityDetectionRule(id, { enabled }),
+	const setDetectionRuleStage = useMutation({
+		mutationFn: ({ id, stage }: { id: string; stage: SecurityDetectionRuleStage }) =>
+			updateSecurityDetectionRule(id, { stage, enabled: stage === "active" }),
 		onSuccess: refresh,
 	});
 	const exportDetectionRules = useMutation({
@@ -1100,6 +1104,7 @@ const Security = () => {
 										setRuleName(template.name);
 										setRuleScore(template.score);
 										setRuleResponse(template.response);
+										setRuleStage("preview");
 										setRulePathPrefix(template.pathPrefix);
 										setRulePathContains(template.pathContains);
 										setRuleMethods(template.methods);
@@ -1126,6 +1131,19 @@ const Security = () => {
 									<option value="observe">Observe</option>
 									<option value="soft">Soft response</option>
 								</select>
+							</div>
+							<div className="col-6 col-lg-2">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-stage">Rollout</label>
+								<select
+									id="hyrovi-sec-rule-stage"
+									className="form-select"
+									value={ruleStage}
+									onChange={(event) => setRuleStage(event.target.value as SecurityDetectionRuleStage)}
+								>
+									<option value="preview">Preview</option>
+									<option value="active">Active</option>
+								</select>
+								<div className="form-hint">Preview only measures matches; it cannot change live risk or enforcement.</div>
 							</div>
 							<div className="col-12 col-lg-4">
 								<label className="form-label" htmlFor="hyrovi-sec-rule-host">Host</label>
@@ -1164,7 +1182,7 @@ const Security = () => {
 									disabled={!ruleDraftValid || createDetectionRule.isPending}
 									onClick={() => createDetectionRule.mutate(ruleDraft)}
 								>
-									Add detection rule
+									{ruleStage === "preview" ? "Add preview rule" : "Add active rule"}
 								</Button>
 							</div>
 						</div>
@@ -1271,17 +1289,31 @@ const Security = () => {
 											<td>
 												{analytics ? (
 													<>
-														<strong>{analytics.hits}</strong>
-														<div className="text-secondary small">{analytics.uniqueIps} IPs · {analytics.uniqueHosts} hosts</div>
+														<strong>{analytics.hits}</strong> total
+														<div className="text-secondary small">{analytics.hitsLast24Hours} /24h · {analytics.hitsLastHour} /1h</div>
+														<div className="text-secondary small">{analytics.uniqueIpsLast24Hours} IPs /24h · {analytics.uniqueHosts} hosts total</div>
 														<div className="text-secondary small">{analytics.lastHitAt ? `last ${formatTime(analytics.lastHitAt)}` : "no matches"}</div>
 													</>
 												) : "—"}
 											</td>
-											<td><span className={`badge ${rule.enabled ? "bg-green-lt" : "bg-secondary-lt"}`}>{rule.enabled ? "enabled" : "disabled"}</span></td>
+											<td>
+												<span className={`badge ${rule.stage === "active" ? "bg-green-lt" : rule.stage === "preview" ? "bg-azure-lt" : "bg-secondary-lt"}`}>
+													{rule.stage}
+												</span>
+											</td>
 											<td className="text-end">
 												<div className="d-flex gap-1 justify-content-end">
-													<Button className="btn-outline-secondary" disabled={toggleDetectionRule.isPending} onClick={() => toggleDetectionRule.mutate({ id: rule.id, enabled: !rule.enabled })}>
-														{rule.enabled ? "Disable" : "Enable"}
+													<Button
+														className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"}
+														disabled={setDetectionRuleStage.isPending}
+														onClick={() =>
+															setDetectionRuleStage.mutate({
+																id: rule.id,
+																stage: rule.stage === "active" ? "paused" : "active",
+															})
+														}
+													>
+														{rule.stage === "active" ? "Pause" : rule.stage === "preview" ? "Promote" : "Resume"}
 													</Button>
 													<Button className="btn-outline-danger" disabled={removeDetectionRule.isPending} onClick={() => removeDetectionRule.mutate(rule.id)}>
 														Delete

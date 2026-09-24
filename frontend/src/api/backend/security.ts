@@ -326,6 +326,7 @@ export interface SecurityAlertsResponse {
 }
 
 export type SecurityDetectionRuleResponse = "observe" | "soft";
+export type SecurityDetectionRuleStage = "preview" | "active" | "paused";
 
 export interface SecurityDetectionRuleMatch {
 	host: string | null;
@@ -339,6 +340,7 @@ export interface SecurityDetectionRuleMatch {
 export interface SecurityDetectionRule {
 	id: string;
 	name: string;
+	stage: SecurityDetectionRuleStage;
 	enabled: boolean;
 	score: number;
 	response: SecurityDetectionRuleResponse;
@@ -349,7 +351,7 @@ export interface SecurityDetectionRule {
 
 
 export interface SecurityDetectionRulesExport {
-	version: 1;
+	version: 1 | 2;
 	exportedAt: string;
 	rules: Array<Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">>;
 }
@@ -376,10 +378,16 @@ export interface SecurityDetectionRuleHitSample {
 export interface SecurityDetectionRuleAnalyticsEntry {
 	ruleId: string | null;
 	name: string;
+	stage: SecurityDetectionRuleStage;
 	enabled: boolean;
 	response: SecurityDetectionRuleResponse;
 	score: number;
 	hits: number;
+	hitsLastHour: number;
+	hitsLast24Hours: number;
+	uniqueIpsLast24Hours: number;
+	hourlyTrendStartAt: string;
+	hourlyHits: number[];
 	uniqueIps: number;
 	uniqueHosts: number;
 	firstHitAt: string | null;

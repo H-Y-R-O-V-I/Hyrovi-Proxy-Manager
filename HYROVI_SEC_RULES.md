@@ -6,7 +6,17 @@ HYROVI Sec supports bounded custom request-detection rules without arbitrary cod
 
 Custom rules use literal matchers only. They cannot execute JavaScript, shell commands, templates or arbitrary regular expressions.
 
-A rule can run in one of two response modes:
+A rule has a rollout stage and a response mode.
+
+Rollout stages:
+
+- `preview`: stored and evaluated by analytics/simulation, but excluded from live request scoring and enforcement;
+- `active`: participates in live request analysis;
+- `paused`: retained for later reuse and analytics, but excluded from live request scoring and enforcement.
+
+New rules and built-in templates default to `preview`. Promotion to `active` is an explicit operator action. Existing pre-stage rules remain backward compatible: legacy `enabled: true` becomes `active`, while `enabled: false` becomes `paused`.
+
+Response modes apply only while a rule is active:
 
 - `observe`: adds explainable risk to the request and UI only;
 - `soft`: adds explainable risk and can make the request eligible for the normal automatic soft-rate-limit path.
@@ -49,7 +59,8 @@ Example:
 ```json
 {
   "name": "Sensitive admin API",
-  "enabled": true,
+  "stage": "preview",
+  "enabled": false,
   "score": 45,
   "response": "soft",
   "match": {
@@ -73,9 +84,9 @@ Custom rule: Sensitive admin API (+45)
 
 The HYROVI Sec UI includes conservative convenience templates for common patterns such as admin authentication denials, API authentication failures and admin write activity.
 
-Templates do not create or enable a rule by themselves. Selecting a template only pre-fills the normal rule form. The operator can review or narrow the matchers before explicitly creating the rule.
+Templates do not create a rule by themselves. Selecting a template only pre-fills the normal rule form. If saved without changing rollout, the resulting rule is created in `preview` and cannot change live request risk or enforcement.
 
-The built-in templates currently use `observe` response mode. They therefore cannot trigger automatic rate limiting unless the operator deliberately changes the response mode to `soft` before creating the rule.
+The built-in templates currently use `observe` response mode and `preview` rollout by default. A template can affect live traffic only after an operator explicitly promotes it to `active`.
 
 ## Import and export
 
@@ -87,12 +98,13 @@ Current format:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "exportedAt": "2026-09-24T18:00:00.000Z",
   "rules": [
     {
       "name": "Sensitive admin API",
-      "enabled": true,
+      "stage": "preview",
+      "enabled": false,
       "score": 45,
       "response": "soft",
       "match": {
@@ -113,7 +125,9 @@ Import modes:
 - `merge`: keeps existing rules and adds only configurations that are not already present;
 - `replace`: validates the complete import first, then replaces the existing rule set with newly generated local rule records.
 
-The import rejects unsupported versions, invalid matchers, invalid response modes and imports that would exceed the global rule limit.
+Version 2 exports include the rollout `stage`. Version 1 exports remain import-compatible and map their legacy `enabled` flag to `active` or `paused`.
+
+The import rejects unsupported versions, invalid stages, invalid matchers, invalid response modes and imports that would exceed the global rule limit.
 
 ## Analytics and simulation
 
@@ -122,12 +136,14 @@ HYROVI Sec can evaluate custom rules against up to 1000 retained security events
 Existing-rule analytics report:
 
 - matching retained events;
-- unique source IPs and hosts;
+- hits during the last hour and last 24 hours;
+- a 24-bucket hourly hit trend;
+- unique source IPs during the last 24 hours plus total unique IPs and hosts;
 - first and last observed hit;
 - highest already-observed request risk;
 - a bounded set of representative request samples.
 
-Disabled rules are included. Their counts therefore answer “what would this rule have matched?” without enabling the rule.
+Preview and paused rules are included. Their counts therefore answer “what would this rule have matched?” without activating the rule. Future-dated or invalid timestamps are excluded from the recent 1h/24h trend windows.
 
 The rule form also has a **Simulate** action. Simulation validates the current draft with the same matcher/score rules used for creation, evaluates it against retained events, and returns a bounded sample of matches.
 
@@ -156,6 +172,6 @@ DELETE /api/security/detection-rules/<rule-id>
 
 Read access, analytics and simulation use the normal Nginx Proxy Manager `logs:list` permission. Persistent mutations use `users:list`.
 
-The HYROVI Sec page provides create, enable/disable and delete controls. Matching changes affect new live analysis immediately. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
+The HYROVI Sec page provides preview-first creation plus Promote, Pause, Resume and Delete controls. Only `active` rules affect new live analysis. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
 
 If the rule file becomes unreadable or invalid, HYROVI Sec logs the problem and continues built-in detection without custom rules instead of disabling the security monitor.
