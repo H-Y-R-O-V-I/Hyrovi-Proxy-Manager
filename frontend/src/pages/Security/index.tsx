@@ -9,6 +9,7 @@ import {
 	deleteSecurityRateLimit,
 	getSecurityAttackSession,
 	getSecurityBlocks,
+	getSecurityEventDetail,
 	getSecurityEvents,
 	getSecurityHostPolicies,
 	getSecurityOverview,
@@ -73,6 +74,7 @@ const Security = () => {
 	const [durationMinutes, setDurationMinutes] = useState(60);
 	const [trustedSourcesText, setTrustedSourcesText] = useState("");
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
 
 	const overview = useQuery({
@@ -112,6 +114,12 @@ const Security = () => {
 		enabled: Boolean(selectedSessionId),
 		refetchInterval: selectedSessionId ? POLL_MS : false,
 	});
+	const requestDetail = useQuery({
+		queryKey: ["security-event-detail", selectedRequestId],
+		queryFn: () => getSecurityEventDetail(selectedRequestId || ""),
+		enabled: Boolean(selectedRequestId),
+		refetchInterval: selectedRequestId ? POLL_MS : false,
+	});
 	useEffect(() => {
 		if (policy.data) setTrustedSourcesText(policy.data.trustedSources.join("\n"));
 	}, [policy.data]);
@@ -126,6 +134,7 @@ const Security = () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-event-detail"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
@@ -919,6 +928,14 @@ const Security = () => {
 											<div className="d-flex gap-1">
 												<button
 													type="button"
+													className="btn btn-sm btn-outline-primary"
+													disabled={!event.requestId}
+													onClick={() => setSelectedRequestId(event.requestId)}
+												>
+													Details
+												</button>
+												<button
+													type="button"
 													className="btn btn-sm btn-outline-warning"
 													disabled={addRateLimit.isPending}
 													onClick={() => rateLimitFromEvent(event)}
@@ -943,6 +960,115 @@ const Security = () => {
 						</table>
 					</div>
 				</div>
+
+				{selectedRequestId ? (
+					<div className="card mb-4">
+						<div className="card-header d-flex align-items-center justify-content-between">
+							<div>
+								<h3 className="card-title">Request detail</h3>
+								<div className="text-secondary small">
+									{requestDetail.data
+										? `${requestDetail.data.method} ${requestDetail.data.host}${requestDetail.data.path} · risk ${requestDetail.data.risk}`
+										: "Loading request…"}
+								</div>
+							</div>
+							<button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedRequestId(null)}>
+								Close
+							</button>
+						</div>
+						{requestDetail.error ? <div className="card-body text-red">{requestDetail.error.message}</div> : null}
+						{requestDetail.data ? (
+							<>
+								<div className="card-body border-bottom">
+									<div className="row g-3">
+										<div className="col-6 col-lg-2">
+											<div className="text-secondary small">Time</div>
+											<div>{formatTime(requestDetail.data.timestamp)}</div>
+										</div>
+										<div className="col-6 col-lg-2">
+											<div className="text-secondary small">Source</div>
+											<div className="font-monospace">{requestDetail.data.ip}</div>
+										</div>
+										<div className="col-6 col-lg-2">
+											<div className="text-secondary small">Status</div>
+											<div>{requestDetail.data.status || "—"}</div>
+										</div>
+										<div className="col-6 col-lg-2">
+											<div className="text-secondary small">Risk</div>
+											<div><span className={`badge ${severityClass(requestDetail.data.severity)}`}>{requestDetail.data.risk}</span></div>
+										</div>
+										<div className="col-12 col-lg-4">
+											<div className="text-secondary small">Why</div>
+											<div>{requestDetail.data.signals.map((signal) => `${signal.label} (+${signal.score})`).join(", ") || "Normal request"}</div>
+										</div>
+									</div>
+									<div className="mt-3">
+										<div className="text-secondary small">Request ID</div>
+										<div className="font-monospace">{requestDetail.data.requestId || "—"}</div>
+									</div>
+									{requestDetail.data.attackSession ? (
+										<div className="mt-3 d-flex align-items-center gap-2">
+											<span className="text-secondary small">Attack session:</span>
+											<button
+												type="button"
+												className="btn btn-sm btn-outline-primary"
+												onClick={() => setSelectedSessionId(requestDetail.data?.attackSession?.id ?? null)}
+											>
+												Open session · {requestDetail.data.attackSession.requests} requests
+											</button>
+										</div>
+									) : null}
+								</div>
+
+								<div className="table-responsive border-bottom">
+									<table className="table table-vcenter card-table">
+										<thead>
+											<tr>
+												<th>Similar requests</th>
+												<th>Similarity</th>
+												<th>Risk</th>
+												<th>Source</th>
+												<th>Status</th>
+											</tr>
+										</thead>
+										<tbody>
+											{requestDetail.data.similarRequests.map((event) => (
+												<tr key={event.requestId || `${event.timestamp}-${event.ip}-${event.path}`}>
+													<td>
+														<div className="text-nowrap">{formatTime(event.timestamp)}</div>
+														<div><strong>{event.method}</strong> {event.host}</div>
+														<div className="font-monospace text-secondary">{event.path}</div>
+													</td>
+													<td>{event.similarityScore}</td>
+													<td><span className={`badge ${severityClass(event.severity)}`}>{event.risk}</span></td>
+													<td className="font-monospace">{event.ip}</td>
+													<td>{event.status || "—"}</td>
+												</tr>
+											))}
+											{requestDetail.data.similarRequests.length === 0 ? (
+												<tr><td colSpan={5} className="text-secondary">No similar requests in the retained analysis window.</td></tr>
+											) : null}
+										</tbody>
+									</table>
+								</div>
+
+								<div className="card-body">
+									<div className="text-secondary small mb-1">Response state</div>
+									<div>
+										{requestDetail.data.activeResponses.length > 0
+											? requestDetail.data.activeResponses
+												.map((response) => `${response.type === "block" ? "Block" : "Rate limit"} until ${formatTime(response.expiresAt)}`)
+												.join(" · ")
+											: "No active response"}
+									</div>
+									<div className="text-secondary small mt-2">
+										{requestDetail.data.responseHistory.length} recorded response lifecycle action(s) for this source.
+									</div>
+								</div>
+							</>
+						) : null}
+					</div>
+				) : null}
 
 				<div className="card mb-4">
 					<div className="card-header">

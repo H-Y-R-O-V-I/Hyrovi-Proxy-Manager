@@ -1226,6 +1226,44 @@ const attackSessionDetail = (session, blocks = [], rateLimits = []) => {
 	};
 };
 
+const eventSimilarityScore = (source, candidate) => {
+	let score = 0;
+	if (source.ip === candidate.ip) score += 4;
+	if (source.host === candidate.host) score += 2;
+	if (source.path === candidate.path) score += 4;
+	if (source.method === candidate.method) score += 1;
+	if (source.status === candidate.status) score += 1;
+	const sourceSignals = new Set(source.signals.map((signal) => signal.id));
+	for (const signal of candidate.signals) {
+		if (sourceSignals.has(signal.id)) score += 2;
+	}
+	return score;
+};
+
+const similarSecurityEvents = (source, events) =>
+	events
+		.filter((candidate) => eventIdentity(candidate) !== eventIdentity(source))
+		.map((candidate) => ({ ...candidate, similarityScore: eventSimilarityScore(source, candidate) }))
+		.filter((candidate) => candidate.similarityScore >= 4)
+		.sort((left, right) => {
+			if (right.similarityScore !== left.similarityScore) return right.similarityScore - left.similarityScore;
+			const leftTime = parseTimestamp(left.timestamp)?.getTime() || 0;
+			const rightTime = parseTimestamp(right.timestamp)?.getTime() || 0;
+			return rightTime - leftTime;
+		})
+		.slice(0, 20);
+
+const activeResponsesForIp = (ip, blocks, rateLimits) => [
+	...blocks.filter((entry) => entry.ip === ip).map((entry) => ({ type: "block", ...entry })),
+	...rateLimits.filter((entry) => entry.ip === ip).map((entry) => ({ type: "rate_limit", ...entry })),
+];
+
+const responseHistoryForIp = (ip, actions) =>
+	actions
+		.filter((entry) => entry.ip === ip)
+		.sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
+		.slice(-100);
+
 const getEnabledHosts = (model) =>
 	model
 		.query()
@@ -1382,6 +1420,36 @@ const internalSecurity = {
 				.filter((entry) => entry.ip === session.ip)
 				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 				.slice(-100),
+		};
+	},
+
+	getEventDetail: async (access, requestId) => {
+		await access.can("logs:list");
+		const id = String(requestId || "").trim();
+		if (!id) throw new errs.ValidationError("Request ID is required");
+
+		const [blocks, rateLimits, actions, policy] = await Promise.all([
+			purgeExpired(),
+			purgeExpiredRateLimits(),
+			loadSecurityActions(1000),
+			readPolicyUnsafe(),
+		]);
+		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
+		const hostPolicyContext = await getHostPolicyContext(policy);
+		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
+		const event = events.find((entry) => entry.requestId === id);
+		if (!event) throw new errs.ItemNotFoundError(id);
+
+		const session = buildAttackSessions(events).find((entry) =>
+			entry.timeline.some((item) => eventIdentity(item) === eventIdentity(event)),
+		);
+
+		return {
+			...event,
+			similarRequests: similarSecurityEvents(event, events),
+			attackSession: session ? attackSessionSummary(session, blocks, rateLimits) : null,
+			activeResponses: activeResponsesForIp(event.ip, blocks, rateLimits),
+			responseHistory: responseHistoryForIp(event.ip, actions),
 		};
 	},
 

@@ -70,6 +70,20 @@ export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 	timeline: SecurityEvent[];
 }
 
+export interface SecuritySimilarEvent extends SecurityEvent {
+	similarityScore: number;
+}
+
+export interface SecurityEventDetail extends SecurityEvent {
+	similarRequests: SecuritySimilarEvent[];
+	attackSession: SecurityAttackSession | null;
+	activeResponses: Array<
+		| (SecurityBlock & { type: "block" })
+		| (SecurityRateLimit & { type: "rate_limit" })
+	>;
+	responseHistory: SecurityResponseHistoryEntry[];
+}
+
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
 
 export interface SecurityHostPolicy {
@@ -146,6 +160,10 @@ export async function getSecurityEvents(limit = 250, minRisk = 0): Promise<Secur
 		url: "/security/events",
 		params: { limit, minRisk },
 	});
+}
+
+export async function getSecurityEventDetail(requestId: string): Promise<SecurityEventDetail> {
+	return await api.get({ url: `/security/events/${encodeURIComponent(requestId)}` });
 }
 
 export async function getSecurityAttackSession(id: string): Promise<SecurityAttackSessionDetail> {

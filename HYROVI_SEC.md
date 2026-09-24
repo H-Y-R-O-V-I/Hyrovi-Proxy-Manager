@@ -22,6 +22,7 @@ The first implementation adds:
 - bounded response-action history for rate-limit/block start, removal and expiry;
 - bounded daily security-event archive with configurable retention/minimum risk, independent of the rolling live nginx log window;
 - critical/suspicious request inspection plus drill-down incident detail in the admin UI;
+- per-request drill-down with explainable risk, similar-request matching, attack-session correlation and response state/history;
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;
