@@ -913,6 +913,50 @@ const Security = () => {
 									</div>
 								</div>
 
+								<div className="border-bottom">
+									<div className="card-body pb-2">
+										<h4 className="mb-1">Correlated app & auth events</h4>
+										<div className="text-secondary small">
+											Matched by proxy request ID, or by source IP inside the incident time window.
+										</div>
+									</div>
+									<div className="table-responsive">
+										<table className="table table-vcenter card-table">
+											<thead>
+												<tr>
+													<th>Time</th>
+													<th>Severity</th>
+													<th>Event</th>
+													<th>App</th>
+													<th>Identity</th>
+													<th>Reason</th>
+												</tr>
+											</thead>
+											<tbody>
+												{incident.data.appEvents.map((event) => (
+													<tr key={event.id}>
+														<td className="text-nowrap">{formatTime(event.timestamp)}</td>
+														<td><span className={`badge ${appEventSeverityClass(event.severity)}`}>{event.severity}</span></td>
+														<td className="font-monospace">{event.eventType}</td>
+														<td>{event.app}</td>
+														<td className="text-secondary">
+															{[
+																event.accountId ? `account ${event.accountId}` : null,
+																event.sessionId ? `session ${event.sessionId}` : null,
+																event.deviceId ? `device ${event.deviceId}` : null,
+															].filter(Boolean).join(" · ") || "—"}
+														</td>
+														<td>{event.reason || "—"}</td>
+													</tr>
+												))}
+												{incident.data.appEvents.length === 0 ? (
+													<tr><td colSpan={6} className="text-secondary">No correlated app security events for this incident.</td></tr>
+												) : null}
+											</tbody>
+										</table>
+									</div>
+								</div>
+
 								<div className="table-responsive border-bottom">
 									<table className="table table-vcenter card-table">
 										<thead>
@@ -1120,6 +1164,50 @@ const Security = () => {
 											</button>
 										</div>
 									) : null}
+								</div>
+
+								<div className="border-bottom">
+									<div className="card-body pb-2">
+										<h4 className="mb-1">Correlated app & auth events</h4>
+										<div className="text-secondary small">
+											Exact request-ID matches are preferred; same-source events within ±5 minutes are also shown.
+										</div>
+									</div>
+									<div className="table-responsive">
+										<table className="table table-vcenter card-table">
+											<thead>
+												<tr>
+													<th>Time</th>
+													<th>Severity</th>
+													<th>Event</th>
+													<th>App</th>
+													<th>Identity</th>
+													<th>Reason</th>
+												</tr>
+											</thead>
+											<tbody>
+												{requestDetail.data.appEvents.map((event) => (
+													<tr key={event.id}>
+														<td className="text-nowrap">{formatTime(event.timestamp)}</td>
+														<td><span className={`badge ${appEventSeverityClass(event.severity)}`}>{event.severity}</span></td>
+														<td className="font-monospace">{event.eventType}</td>
+														<td>{event.app}</td>
+														<td className="text-secondary">
+															{[
+																event.accountId ? `account ${event.accountId}` : null,
+																event.sessionId ? `session ${event.sessionId}` : null,
+																event.deviceId ? `device ${event.deviceId}` : null,
+															].filter(Boolean).join(" · ") || "—"}
+														</td>
+														<td>{event.reason || "—"}</td>
+													</tr>
+												))}
+												{requestDetail.data.appEvents.length === 0 ? (
+													<tr><td colSpan={6} className="text-secondary">No correlated app security events for this request.</td></tr>
+												) : null}
+											</tbody>
+										</table>
+									</div>
 								</div>
 
 								<div className="table-responsive border-bottom">

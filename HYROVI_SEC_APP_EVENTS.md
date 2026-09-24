@@ -85,6 +85,25 @@ Example:
 
 The response is `202 Accepted` with the generated event ID and normalized timestamp.
 
+## Proxy correlation
+
+HYROVI Proxy Manager forwards the Nginx request ID to upstream applications as:
+
+```text
+X-Hyrovi-Request-ID: <nginx request id>
+```
+
+HYROVI apps should copy that value into the app-event `request_id` field when the security event is associated with the current HTTP request. Request detail then correlates an exact request-ID match even if the application does not report a client IP.
+
+For events without a request ID, HYROVI Sec can still correlate a reported client IP inside a bounded time window:
+
+- request detail: same IP within ±5 minutes;
+- attack-session detail: same IP within the session time window plus 60 seconds on each side.
+
+Attack-session correlation also checks all proxy request IDs in the session timeline.
+
+Existing generated custom-location configs are upgraded through the `instrumentation-v3` marker so the request-ID header is added without manually re-saving every Proxy Host.
+
 ## Storage and retention
 
 Events are stored as bounded daily JSONL files under:
@@ -95,4 +114,4 @@ Events are stored as bounded daily JSONL files under:
 
 Each daily file is compacted when it reaches roughly 4 MiB. File retention follows the HYROVI Sec event-retention policy (default 14 days, configurable from 1 to 90 days).
 
-The API accepts timestamps up to five minutes in the future and up to 90 days in the past. This prevents malformed clients from creating indefinitely retained future-dated files.
+Timestamp parsing has an absolute safety bound of five minutes in the future and 90 days in the past. Persistence is stricter: an event older than the currently configured HYROVI Sec retention window is rejected instead of recreating an already-expired daily archive file.

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import errs from "../lib/error.js";
 import { global as logger } from "../logger.js";
 import internalNginx from "./nginx.js";
+import internalSecurityAppEvents from "./security_app_events.js";
 import deadHostModel from "../models/dead_host.js";
 import proxyHostModel from "../models/proxy_host.js";
 import redirectionHostModel from "../models/redirection_host.js";
@@ -16,7 +17,7 @@ const BLOCKS_CONF_FILE = `${SECURITY_DIR}/blocked-ips.conf`;
 const RATE_LIMITS_FILE = `${SECURITY_DIR}/rate-limits.json`;
 const RATE_LIMIT_GEO_FILE = `${SECURITY_DIR}/rate-limited-ips.geo`;
 const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
-const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v2`;
+const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v3`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
@@ -1426,12 +1427,22 @@ const internalSecurity = {
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const session = buildAttackSessions(events).find((entry) => entry.id === sessionId);
 		if (!session) throw new errs.ItemNotFoundError(sessionId);
+		const firstSeenMs = parseTimestamp(session.firstSeen)?.getTime() || Date.now();
+		const lastSeenMs = parseTimestamp(session.lastSeen)?.getTime() || firstSeenMs;
+		const appEvents = await internalSecurityAppEvents.findCorrelatedEvents({
+			requestIds: session.timeline.map((event) => event.requestId).filter(Boolean),
+			ip: session.ip,
+			from: new Date(firstSeenMs - 60_000).toISOString(),
+			to: new Date(lastSeenMs + 60_000).toISOString(),
+			limit: 100,
+		});
 		return {
 			...attackSessionDetail(session, blocks, rateLimits),
 			responseHistory: actions
 				.filter((entry) => entry.ip === session.ip)
 				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 				.slice(-100),
+			appEvents,
 		};
 	},
 
@@ -1455,6 +1466,14 @@ const internalSecurity = {
 		const session = buildAttackSessions(events).find((entry) =>
 			entry.timeline.some((item) => eventIdentity(item) === eventIdentity(event)),
 		);
+		const eventTimeMs = parseTimestamp(event.timestamp)?.getTime() || Date.now();
+		const appEvents = await internalSecurityAppEvents.findCorrelatedEvents({
+			requestId: event.requestId,
+			ip: event.ip,
+			from: new Date(eventTimeMs - 5 * 60_000).toISOString(),
+			to: new Date(eventTimeMs + 5 * 60_000).toISOString(),
+			limit: 100,
+		});
 
 		return {
 			...event,
@@ -1462,6 +1481,7 @@ const internalSecurity = {
 			attackSession: session ? attackSessionSummary(session, blocks, rateLimits) : null,
 			activeResponses: activeResponsesForIp(event.ip, blocks, rateLimits),
 			responseHistory: responseHistoryForIp(event.ip, actions),
+			appEvents,
 		};
 	},
 

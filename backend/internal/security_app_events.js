@@ -285,13 +285,19 @@ const getStatus = async () => ({
 	allowedSeverities: [...ALLOWED_SEVERITIES],
 });
 
-const findCorrelatedEvents = async ({ requestId, ip, from, to, limit = 100 }) => {
+const findCorrelatedEvents = async ({ requestId, requestIds = [], ip, from, to, limit = 100 }) => {
 	const events = await listEvents(MAX_LIST_LIMIT);
 	const fromMs = from ? new Date(from).getTime() : null;
 	const toMs = to ? new Date(to).getTime() : null;
+	const requestIdSet = new Set(
+		(Array.isArray(requestIds) ? requestIds : [])
+			.map((value) => boundedString(value, 160))
+			.filter(Boolean),
+	);
 	return events
 		.filter((event) => {
 			if (requestId && event.requestId === requestId) return true;
+			if (event.requestId && requestIdSet.has(event.requestId)) return true;
 			if (!ip || event.ip !== ip) return false;
 			const time = new Date(event.timestamp).getTime();
 			if (!Number.isFinite(time)) return false;

@@ -67,6 +67,7 @@ export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 		| (SecurityRateLimit & { type: "rate_limit" })
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];
+	appEvents: SecurityAppEvent[];
 	timeline: SecurityEvent[];
 }
 
@@ -82,6 +83,7 @@ export interface SecurityEventDetail extends SecurityEvent {
 		| (SecurityRateLimit & { type: "rate_limit" })
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];
+	appEvents: SecurityAppEvent[];
 }
 
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";

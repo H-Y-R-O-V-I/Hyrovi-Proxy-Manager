@@ -48,7 +48,7 @@ The security log deliberately does **not** store:
 The current event record contains only the minimum useful request metadata: timestamp, request ID, host, method, path without query string, response status, source IP, user-agent, request size, response bytes, request duration and upstream status.
 
 The response-action audit log stores only response lifecycle metadata (time, source IP, response type/action, source/reason, response ID and expiry). It does not add query strings, request bodies, cookies, Authorization headers, API keys/tokens or referrer URLs. The file is bounded and compacted instead of growing indefinitely.
-\nApp security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md).\n
+\nApp security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md). Upstream HYROVI apps also receive `X-Hyrovi-Request-ID`, enabling exact proxy↔app event correlation without storing additional request content.\n
 ## Enforcement path
 
 ```text
@@ -89,7 +89,7 @@ HYROVI Sec owns:
 
 Event archive defaults are intentionally storage-conscious: 14 days, minimum risk 20, with each daily file compacted when it reaches roughly 8 MiB. Normal/live requests still remain visible from the rolling nginx security log; the retained archive is for security-relevant history. Retention can be configured from 1 to 90 days and archive minimum risk from 0 to 100.
 
-Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v2` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
+Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v3` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
 
 Automatic response defaults remain conservative: global soft restriction starts at risk 50 for 10 minutes, while hard blocking starts at risk 95 for 60 minutes. `Strict` host mode defaults to a lower soft threshold (45) and hard threshold (90). Thresholds alone are not enough: the event must also contain recognized attack/reconnaissance signals, and private/loopback or trusted sources are excluded.
 
