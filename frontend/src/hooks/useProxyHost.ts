@@ -52,7 +52,7 @@ type ProxyHostMutationInput = Omit<ProxyHost, "id"> & {
 	hyroviSecurityPolicy?: SecurityHostPolicy | null;
 };
 
-type ProxyHostRollback = (() => void) | undefined;
+type ProxyHostRollback = () => void;
 
 const useSetProxyHost = () => {
 	const queryClient = useQueryClient();
@@ -78,7 +78,7 @@ const useSetProxyHost = () => {
 		},
 		onMutate: (values: ProxyHostMutationInput) => {
 			if (!values.id) {
-				return;
+				return () => undefined;
 			}
 			const { hyroviSecurityPolicy: _, ...proxyHostValues } = values;
 			const previousObject = queryClient.getQueryData(["proxy-host", values.id]);
@@ -88,7 +88,7 @@ const useSetProxyHost = () => {
 			}));
 			return () => queryClient.setQueryData(["proxy-host", values.id], previousObject);
 		},
-		onError: (_, __, rollback: ProxyHostRollback) => rollback?.(),
+		onError: (_, __, rollback: ProxyHostRollback) => rollback(),
 		onSuccess: async ({ id }: ProxyHost) => {
 			queryClient.invalidateQueries({ queryKey: ["proxy-host", id] });
 			queryClient.invalidateQueries({ queryKey: ["proxy-hosts"] });
