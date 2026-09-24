@@ -107,6 +107,8 @@ A non-browser client should:
 
 Invalid counter formats are rejected before consuming a verification attempt. Successful verification removes the active challenge, so the same proof cannot be replayed against later requests.
 
+A dependency-free Node 22+ helper is included at [clients/hyrovi-sec-challenge-node.mjs](clients/hyrovi-sec-challenge-node.mjs). It clones replayable requests before the first fetch, solves/verifies the challenge, retries once, never copies application secrets into its verification request, and rejects challenge endpoints that leave the challenged origin. Usage is documented in [clients/README.md](clients/README.md).
+
 ## Response-state storage
 
 HYROVI Sec owns:
@@ -143,7 +145,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 2. connect HYROVI One to the read-only alert feed once its current worktree is clear, then add user-facing notification delivery;
 3. add ASN-aware controls on top of the completed IPv4/IPv6 CIDR controls;
 4. add staged rollout controls and richer rule-hit trend analytics on top of the completed retained-event simulation;
-5. package the completed non-browser challenge protocol into reusable client helpers/SDKs and consider endpoint-specific challenge overrides.
+5. expand the completed Node challenge helper into additional client SDKs where needed and consider endpoint-specific challenge overrides.
 
 ## Upstream attribution
 

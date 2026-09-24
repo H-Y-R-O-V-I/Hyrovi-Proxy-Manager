@@ -49,6 +49,10 @@ jobs:
       - name: Validate API schema
         run: yarn validate-schema
 
+      - name: HYROVI Sec challenge client
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/test-hyrovi-challenge-client.mjs
+
   frontend:
     name: Frontend lint and build
     runs-on: ubuntu-latest
