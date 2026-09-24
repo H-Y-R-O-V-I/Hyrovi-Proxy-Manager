@@ -94,6 +94,40 @@ router
 		}
 	});
 router
+	.route("/rate-limits")
+	.get(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurity.listRateLimits(res.locals.access));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.post(async (req, res, next) => {
+		try {
+			res.status(201).send(
+				await internalSecurity.rateLimitIp(res.locals.access, {
+					ip: req.body?.ip,
+					durationMinutes: req.body?.duration_minutes,
+					reason: req.body?.reason,
+					source: "manual",
+				}),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router.delete("/rate-limits/:id", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.unrateLimitIp(res.locals.access, req.params.id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+router
 	.route("/blocks")
 	.get(async (req, res, next) => {
 		try {

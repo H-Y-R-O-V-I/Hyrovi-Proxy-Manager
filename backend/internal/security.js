@@ -12,7 +12,9 @@ const SECURITY_LOG_FILE = "/data/logs/hyrovi-sec.log";
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const BLOCKS_FILE = `${SECURITY_DIR}/blocks.json`;
 const BLOCKS_CONF_FILE = `${SECURITY_DIR}/blocked-ips.conf`;
-const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v1`;
+const RATE_LIMITS_FILE = `${SECURITY_DIR}/rate-limits.json`;
+const RATE_LIMIT_GEO_FILE = `${SECURITY_DIR}/rate-limited-ips.geo`;
+const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v2`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 250;
@@ -34,7 +36,7 @@ const MAX_HOST_POLICIES = 500;
 const processedEventIds = new Set();
 const processedEventOrder = [];
 let monitorPrimed = false;
-let blockMutationQueue = Promise.resolve();
+let securityConfigMutationQueue = Promise.resolve();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -326,6 +328,16 @@ const activeBlocks = (blocks) => {
 	return blocks.filter((block) => !block.expiresAt || new Date(block.expiresAt).getTime() > now);
 };
 
+const readRateLimitsUnsafe = async () => {
+	try {
+		const data = JSON.parse(await fs.promises.readFile(RATE_LIMITS_FILE, "utf8"));
+		return Array.isArray(data) ? data : [];
+	} catch (err) {
+		if (err.code === "ENOENT") return [];
+		throw err;
+	}
+};
+
 const ensureSecurityDir = async () => {
 	await fs.promises.mkdir(SECURITY_DIR, { recursive: true });
 };
@@ -343,9 +355,9 @@ const writeTextAtomic = async (path, value) => {
 
 const writeJsonAtomic = (path, value) => writeTextAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 
-const withBlockMutation = (operation) => {
-	const run = blockMutationQueue.then(operation, operation);
-	blockMutationQueue = run.catch(() => undefined);
+const withSecurityConfigMutation = (operation) => {
+	const run = securityConfigMutationQueue.then(operation, operation);
+	securityConfigMutationQueue = run.catch(() => undefined);
 	return run;
 };
 
@@ -484,7 +496,7 @@ const purgeExpiredUnsafe = async () => {
 	return active;
 };
 
-const purgeExpired = () => withBlockMutation(purgeExpiredUnsafe);
+const purgeExpired = () => withSecurityConfigMutation(purgeExpiredUnsafe);
 
 const synchronizeBlockConfigUnsafe = async () => {
 	const blocks = await readBlocksUnsafe();
@@ -497,6 +509,107 @@ const synchronizeBlockConfigUnsafe = async () => {
 	return active;
 };
 
+const renderRateLimitGeo = (entries) => {
+	const lines = [
+		"# Managed by HYROVI Sec. Do not edit manually.",
+		"# Only exact source IPs listed here receive a rate-limit key.",
+	];
+	for (const entry of activeBlocks(entries)) {
+		if (!net.isIP(entry.ip)) continue;
+		lines.push(`# ${entry.id}`);
+		lines.push(`${entry.ip} 1;`);
+	}
+	return `${lines.join("\n")}\n`;
+};
+
+const applyRateLimitConfig = async (entries) => {
+	await ensureSecurityDir();
+	let previous = "";
+	try {
+		previous = await fs.promises.readFile(RATE_LIMIT_GEO_FILE, "utf8");
+	} catch (err) {
+		if (err.code !== "ENOENT") throw err;
+	}
+
+	const next = renderRateLimitGeo(entries);
+	if (previous === next) return false;
+	await writeTextAtomic(RATE_LIMIT_GEO_FILE, next);
+
+	try {
+		await internalNginx.reload();
+	} catch (err) {
+		await writeTextAtomic(RATE_LIMIT_GEO_FILE, previous);
+		try {
+			await internalNginx.reload();
+		} catch (_) {
+			// Preserve the original validation/reload error.
+		}
+		throw err;
+	}
+	return true;
+};
+
+const commitRateLimitState = async (previousEntries, nextEntries) => {
+	await applyRateLimitConfig(nextEntries);
+	try {
+		await writeJsonAtomic(RATE_LIMITS_FILE, nextEntries);
+	} catch (err) {
+		try {
+			await applyRateLimitConfig(previousEntries);
+		} catch (rollbackErr) {
+			logger.error(
+				`HYROVI Sec could not roll back Nginx rate-limit config after state persistence failed: ${rollbackErr.message}`,
+			);
+		}
+		throw err;
+	}
+};
+
+const purgeExpiredRateLimitsUnsafe = async () => {
+	const entries = await readRateLimitsUnsafe();
+	const active = activeBlocks(entries);
+	if (active.length === entries.length) return active;
+	await commitRateLimitState(entries, active);
+	return active;
+};
+
+const purgeExpiredRateLimits = () => withSecurityConfigMutation(purgeExpiredRateLimitsUnsafe);
+
+const synchronizeRateLimitConfigUnsafe = async () => {
+	const entries = await readRateLimitsUnsafe();
+	const active = activeBlocks(entries);
+	if (active.length !== entries.length) {
+		await commitRateLimitState(entries, active);
+	} else {
+		await applyRateLimitConfig(active);
+	}
+	return active;
+};
+
+const createRateLimitRecord = ({ ip, reason, source, durationMinutes }) => {
+	const now = new Date();
+	return {
+		id: randomUUID(),
+		ip,
+		reason: String(reason || "HYROVI Sec rate limit").trim().slice(0, 300),
+		source: source || "manual",
+		createdAt: now.toISOString(),
+		expiresAt: new Date(now.getTime() + durationMinutes * 60_000).toISOString(),
+	};
+};
+
+const addRateLimitUnsafe = async ({ ip, reason, source, durationMinutes }) => {
+	if (!net.isIP(ip)) throw new errs.ValidationError("Invalid IP address");
+	const minutes = clamp(Number.parseInt(durationMinutes, 10) || 10, 1, 43_200);
+	const entries = await purgeExpiredRateLimitsUnsafe();
+	const existing = entries.find((entry) => entry.ip === ip);
+	if (existing) return existing;
+
+	const entry = createRateLimitRecord({ ip, reason, source, durationMinutes: minutes });
+	const next = [...entries, entry];
+	await commitRateLimitState(entries, next);
+	return entry;
+};
 const createBlockRecord = ({ ip, reason, source, durationMinutes }) => {
 	const now = new Date();
 	return {
@@ -606,7 +719,7 @@ const monitorThreats = async () => {
 	if (!policy.autoBlockEnabled) return;
 	const hostPolicyContext = await getHostPolicyContext(policy);
 
-	await withBlockMutation(async () => {
+	await withSecurityConfigMutation(async () => {
 		const blocks = await purgeExpiredUnsafe();
 		const blockedIps = new Set(blocks.map((block) => block.ip));
 		const additions = [];
@@ -660,7 +773,10 @@ const internalSecurity = {
 		// blocks.json is the durable source of truth. Reconcile the generated deny
 		// include on every backend start so an interrupted write/reload sequence
 		// cannot leave Nginx enforcing a stale block set.
-		await withBlockMutation(synchronizeBlockConfigUnsafe);
+		await withSecurityConfigMutation(async () => {
+			await synchronizeBlockConfigUnsafe();
+			await synchronizeRateLimitConfigUnsafe();
+		});
 
 		try {
 			await fs.promises.access(INSTRUMENTATION_MARKER);
@@ -694,11 +810,15 @@ const internalSecurity = {
 	initTimer: () => {
 		const purge = () =>
 			purgeExpired().catch((err) => logger.error("HYROVI Sec block expiry failed:", err.message));
+		const purgeRateLimits = () =>
+			purgeExpiredRateLimits().catch((err) => logger.error("HYROVI Sec rate-limit expiry failed:", err.message));
 		const monitor = () =>
 			monitorThreats().catch((err) => logger.error("HYROVI Sec monitor failed:", err.message));
 		purge();
+		purgeRateLimits();
 		monitor();
 		setInterval(purge, 60_000).unref();
+		setInterval(purgeRateLimits, 60_000).unref();
 		setInterval(monitor, MONITOR_INTERVAL_MS).unref();
 	},
 
@@ -713,7 +833,12 @@ const internalSecurity = {
 
 	getOverview: async (access) => {
 		await access.can("logs:list");
-		const [rawEvents, blocks, policy] = await Promise.all([loadEvents(1000), purgeExpired(), readPolicyUnsafe()]);
+		const [rawEvents, blocks, rateLimits, policy] = await Promise.all([
+			loadEvents(1000),
+			purgeExpired(),
+			purgeExpiredRateLimits(),
+			readPolicyUnsafe(),
+		]);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const suspicious = events.filter((event) => event.risk >= 40);
@@ -764,6 +889,7 @@ const internalSecurity = {
 			suspicious: suspicious.length,
 			critical: critical.length,
 			activeBlocks: blocks.length,
+			activeRateLimits: rateLimits.length,
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,
@@ -874,6 +1000,33 @@ const internalSecurity = {
 		await writePolicyUnsafe({ ...current, hostPolicies });
 		return { success: true };
 	},
+	listRateLimits: async (access) => {
+		await access.can("logs:list");
+		return purgeExpiredRateLimits();
+	},
+
+	rateLimitIp: async (access, data) => {
+		await access.can("users:list");
+		return withSecurityConfigMutation(() =>
+			addRateLimitUnsafe({
+				ip: String(data.ip || "").trim(),
+				durationMinutes: data.durationMinutes,
+				reason: data.reason || "Manual HYROVI Sec rate limit",
+				source: data.source || "manual",
+			}),
+		);
+	},
+
+	unrateLimitIp: async (access, id) => {
+		await access.can("users:list");
+		return withSecurityConfigMutation(async () => {
+			const entries = await purgeExpiredRateLimitsUnsafe();
+			const next = entries.filter((entry) => entry.id !== id);
+			if (next.length === entries.length) throw new errs.ItemNotFoundError(id);
+			await commitRateLimitState(entries, next);
+			return { success: true };
+		});
+	},
 	listBlocks: async (access) => {
 		await access.can("logs:list");
 		return purgeExpired();
@@ -881,7 +1034,7 @@ const internalSecurity = {
 
 	blockIp: async (access, data) => {
 		await access.can("users:list");
-		return withBlockMutation(() =>
+		return withSecurityConfigMutation(() =>
 			addBlockUnsafe({
 				ip: String(data.ip || "").trim(),
 				durationMinutes: data.durationMinutes,
@@ -893,7 +1046,7 @@ const internalSecurity = {
 
 	unblockIp: async (access, id) => {
 		await access.can("users:list");
-		return withBlockMutation(async () => {
+		return withSecurityConfigMutation(async () => {
 			const blocks = await purgeExpiredUnsafe();
 			const next = blocks.filter((block) => block.id !== id);
 			if (next.length === blocks.length) throw new errs.ItemNotFoundError(id);

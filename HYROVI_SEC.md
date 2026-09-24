@@ -20,15 +20,15 @@ The first implementation adds:
 - event-relative 60-second burst analysis so historical risk explanations remain stable;
 - attack-session aggregation by source IP;
 - critical/suspicious request inspection in the admin UI;
-- manual timed IPv4/IPv6 blocks;
+- manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable risk threshold and block duration;
 - conservative automatic blocking only for high-confidence public source IPs;
 - protection against automatically blocking RFC1918/link-local/loopback source addresses;
 - trusted exact IP/CIDR sources that remain observable but are excluded from automatic blocking;
 - per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific auto-block threshold/duration;
-- block rollback if Nginx validation/reload fails;
-- automatic expiry of timed blocks;
+- transactional rollback if Nginx validation/reload or durable response-state persistence fails;
+- automatic expiry of timed rate limits and blocks;
 - a dedicated HYROVI Sec navigation page.
 
 ### Data minimization
@@ -51,7 +51,9 @@ Client
   |
   v
 Nginx / HYROVI Proxy Manager
-  |---- HYROVI Sec deny include -> block before upstream
+  |---- HYROVI Sec deny include -> hard block before upstream
+  |
+  |---- HYROVI Sec rate-limit geo -> 5 r/s, burst 20, HTTP 429 when exceeded
   |
   |---- structured security event -> /data/logs/hyrovi-sec.log
   |
@@ -62,21 +64,23 @@ Backend security engine
   |---- bounded log tail
   |---- explainable risk signals
   |---- attack session aggregation
-  |---- block-list management
+  |---- timed soft-restriction + block-list management
   |
   v
 Admin UI / HYROVI Sec
 ```
 
-## Block storage
+## Response-state storage
 
 HYROVI Sec owns:
 
 - `/data/nginx/hyrovi-security/blocks.json`
 - `/data/nginx/hyrovi-security/blocked-ips.conf`
+- `/data/nginx/hyrovi-security/rate-limits.json`
+- `/data/nginx/hyrovi-security/rate-limited-ips.geo`
 - `/data/nginx/hyrovi-security/policy.json`
 
-Block config changes are serialized and written atomically. Nginx is validated/reloaded before the new block state is considered successful. If durable state persistence fails, the previous Nginx block config is restored. On backend startup, `blocks.json` is reconciled back into the generated deny include so interrupted updates cannot leave stale enforcement behind.
+Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v2` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
 
 ## Next security phases
 
@@ -86,7 +90,7 @@ Block config changes are serialized and written atomically. Nginx is validated/r
 4. trusted device identities based on cryptographic device keys;
 5. durable event store and retention controls instead of a bounded log window;
 6. correlated attack timelines across hosts, sessions, accounts and devices;
-7. rate limiting/challenges before hard blocking;
+7. automatic soft-restriction escalation and browser/API challenges before hard blocking;
 8. alerting and HYROVI One integration;
 9. IPv4/IPv6 subnet and ASN-aware controls;
 10. emergency bypass/recovery controls.

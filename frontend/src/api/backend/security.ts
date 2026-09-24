@@ -69,11 +69,21 @@ export interface SecurityOverview {
 	suspicious: number;
 	critical: number;
 	activeBlocks: number;
+	activeRateLimits: number;
 	automation: SecurityPolicy & {
 		mode: "observe" | "enforce";
 		monitorIntervalMs: number;
 	};
 	attackSessions: SecurityAttackSession[];
+}
+
+export interface SecurityRateLimit {
+	id: string;
+	ip: string;
+	reason: string;
+	source: string;
+	createdAt: string;
+	expiresAt: string;
 }
 
 export interface SecurityBlock {
@@ -117,6 +127,22 @@ export async function updateSecurityHostPolicy(
 
 export async function deleteSecurityHostPolicy(id: number): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/host-policies/${encodeURIComponent(id)}` });
+}
+export async function getSecurityRateLimits(): Promise<SecurityRateLimit[]> {
+	return await api.get({ url: "/security/rate-limits" });
+}
+
+export async function createSecurityRateLimit(data: {
+	ip: string;
+	durationMinutes?: number;
+	reason?: string;
+	source?: string;
+}): Promise<SecurityRateLimit> {
+	return await api.post({ url: "/security/rate-limits", data });
+}
+
+export async function deleteSecurityRateLimit(id: string): Promise<{ success: boolean }> {
+	return await api.del({ url: `/security/rate-limits/${encodeURIComponent(id)}` });
 }
 export async function getSecurityBlocks(): Promise<SecurityBlock[]> {
 	return await api.get({ url: "/security/blocks" });

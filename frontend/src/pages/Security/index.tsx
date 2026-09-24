@@ -3,13 +3,16 @@ import { IconBan, IconRefresh, IconShield } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import {
 	createSecurityBlock,
+	createSecurityRateLimit,
 	deleteSecurityBlock,
 	deleteSecurityHostPolicy,
+	deleteSecurityRateLimit,
 	getSecurityBlocks,
 	getSecurityEvents,
 	getSecurityHostPolicies,
 	getSecurityOverview,
 	getSecurityPolicy,
+	getSecurityRateLimits,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
 	type SecurityEvent,
@@ -83,6 +86,11 @@ const Security = () => {
 		queryFn: getSecurityBlocks,
 		refetchInterval: POLL_MS,
 	});
+	const rateLimits = useQuery({
+		queryKey: ["security-rate-limits"],
+		queryFn: getSecurityRateLimits,
+		refetchInterval: POLL_MS,
+	});
 
 	const policy = useQuery({
 		queryKey: ["security-policy"],
@@ -107,6 +115,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
 		]);
@@ -123,6 +132,19 @@ const Security = () => {
 
 	const removeBlock = useMutation({
 		mutationFn: deleteSecurityBlock,
+		onSuccess: refresh,
+	});
+	const addRateLimit = useMutation({
+		mutationFn: createSecurityRateLimit,
+		onSuccess: async () => {
+			setIp("");
+			setReason("");
+			await refresh();
+		},
+	});
+
+	const removeRateLimit = useMutation({
+		mutationFn: deleteSecurityRateLimit,
 		onSuccess: refresh,
 	});
 
@@ -173,6 +195,17 @@ const Security = () => {
 				: "HYROVI Sec suspicious request",
 		);
 		window.scrollTo({ top: 0, behavior: "smooth" });
+	};
+	const rateLimitFromEvent = (event: SecurityEvent) => {
+		addRateLimit.mutate({
+			ip: event.ip,
+			durationMinutes: 10,
+			reason:
+				event.signals.length > 0
+					? `HYROVI Sec soft restriction: ${event.signals.map((signal) => signal.label).join(", ")}`
+					: "HYROVI Sec suspicious request",
+			source: "dashboard-event",
+		});
 	};
 
 	return (
@@ -420,6 +453,7 @@ const Security = () => {
 							<div className="card-body">
 								<div className="text-secondary">Active blocks</div>
 								<div className="h2 mb-0">{overview.data?.activeBlocks ?? "—"}</div>
+								<div className="text-secondary small">{overview.data?.activeRateLimits ?? "—"} rate limited</div>
 							</div>
 						</div>
 					</div>
@@ -428,16 +462,18 @@ const Security = () => {
 				<div className="card mb-4">
 					<div className="card-header">
 						<div>
-							<h3 className="card-title">Block an IP</h3>
+							<h3 className="card-title">Restrict an IP</h3>
 							<div className="text-secondary small">
-								The block is validated with nginx before it becomes active.
+								Use a soft rate limit first when possible. Both rate limits and hard blocks are validated with nginx before becoming active.
 							</div>
 						</div>
 					</div>
 					<div className="card-body">
 						<div className="row g-2">
 							<div className="col-12 col-md-3">
+								<label className="visually-hidden" htmlFor="hyrovi-sec-restrict-ip">IP address</label>
 								<input
+									id="hyrovi-sec-restrict-ip"
 									className="form-control"
 									placeholder="IPv4 or IPv6"
 									value={ip}
@@ -445,7 +481,9 @@ const Security = () => {
 								/>
 							</div>
 							<div className="col-6 col-md-2">
+								<label className="visually-hidden" htmlFor="hyrovi-sec-restrict-minutes">Duration in minutes</label>
 								<input
+									id="hyrovi-sec-restrict-minutes"
 									className="form-control"
 									type="number"
 									min={1}
@@ -454,17 +492,33 @@ const Security = () => {
 									onChange={(event) => setDurationMinutes(Number(event.target.value))}
 								/>
 							</div>
-							<div className="col-6 col-md-5">
+							<div className="col-6 col-md-4">
+								<label className="visually-hidden" htmlFor="hyrovi-sec-restrict-reason">Reason</label>
 								<input
+									id="hyrovi-sec-restrict-reason"
 									className="form-control"
 									placeholder="Reason"
 									value={reason}
 									onChange={(event) => setReason(event.target.value)}
 								/>
 							</div>
-							<div className="col-12 col-md-2 d-grid">
+							<div className="col-12 col-md-3 d-flex gap-2">
 								<Button
-									className="btn-danger"
+									className="btn-outline-warning flex-fill"
+									disabled={!ip || addRateLimit.isPending}
+									onClick={() =>
+										addRateLimit.mutate({
+											ip,
+											durationMinutes,
+											reason: reason || "Manual HYROVI Sec rate limit",
+											source: "dashboard",
+										})
+									}
+								>
+									Rate limit
+								</Button>
+								<Button
+									className="btn-danger flex-fill"
 									disabled={!ip || addBlock.isPending}
 									onClick={() =>
 										addBlock.mutate({
@@ -480,6 +534,7 @@ const Security = () => {
 								</Button>
 							</div>
 						</div>
+						{addRateLimit.error ? <div className="text-red mt-2">{addRateLimit.error.message}</div> : null}
 						{addBlock.error ? <div className="text-red mt-2">{addBlock.error.message}</div> : null}
 					</div>
 				</div>
@@ -581,9 +636,19 @@ const Security = () => {
 											{event.signals.map((signal) => signal.label).join(", ") || "Normal request"}
 										</td>
 										<td>
-											<button type="button" className="btn btn-sm btn-outline-danger" onClick={() => blockFromEvent(event)}>
-												Block IP
-											</button>
+											<div className="d-flex gap-1">
+												<button
+													type="button"
+													className="btn btn-sm btn-outline-warning"
+													disabled={addRateLimit.isPending}
+													onClick={() => rateLimitFromEvent(event)}
+												>
+													Rate limit 10m
+												</button>
+												<button type="button" className="btn btn-sm btn-outline-danger" onClick={() => blockFromEvent(event)}>
+													Block IP
+												</button>
+											</div>
 										</td>
 									</tr>
 								))}
@@ -599,6 +664,54 @@ const Security = () => {
 					</div>
 				</div>
 
+				<div className="card mb-4">
+					<div className="card-header">
+						<div>
+							<h3 className="card-title">Active rate limits</h3>
+							<div className="text-secondary small">Soft restriction: 5 requests/second with burst 20, returned as HTTP 429 when exceeded.</div>
+						</div>
+					</div>
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>IP</th>
+									<th>Reason</th>
+									<th>Source</th>
+									<th>Expires</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{(rateLimits.data ?? []).map((entry) => (
+									<tr key={entry.id}>
+										<td className="font-monospace">{entry.ip}</td>
+										<td>{entry.reason}</td>
+										<td>{entry.source}</td>
+										<td>{formatTime(entry.expiresAt)}</td>
+										<td>
+											<button
+												type="button"
+												className="btn btn-sm btn-outline-secondary"
+												disabled={removeRateLimit.isPending}
+												onClick={() => removeRateLimit.mutate(entry.id)}
+											>
+												Remove
+											</button>
+										</td>
+									</tr>
+								))}
+								{!rateLimits.isLoading && (rateLimits.data?.length ?? 0) === 0 ? (
+									<tr>
+										<td colSpan={5} className="text-secondary">
+											No active rate limits.
+										</td>
+									</tr>
+								) : null}
+							</tbody>
+						</table>
+					</div>
+				</div>
 				<div className="card">
 					<div className="card-header">
 						<div className="d-flex align-items-center gap-2">
