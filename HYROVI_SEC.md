@@ -31,7 +31,8 @@ The first implementation adds:
 - per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
-- authenticated app/auth security-event ingest and admin visibility;\n- a dedicated HYROVI Sec navigation page.
+- authenticated app/auth security-event ingest and admin visibility;
+- a dedicated HYROVI Sec navigation page.
 
 ### Data minimization
 
@@ -102,7 +103,8 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 
 1. expose per-host policy directly inside the normal Proxy Host editor and add endpoint-specific rules;
 2. richer automatic response rules with cool-downs, escalation chains and browser/API challenges;
-3. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;\n4. trusted device identities based on cryptographic device keys;
+3. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;
+4. trusted device identities based on cryptographic device keys;
 5. correlated attack timelines across hosts, sessions, accounts and devices;
 6. alerting and HYROVI One integration;
 7. IPv4/IPv6 subnet and ASN-aware controls;

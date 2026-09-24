@@ -216,6 +216,11 @@ const appendEvent = async (event) =>
 	withMutation(async () => {
 		await fs.promises.mkdir(APP_EVENTS_DIR, { recursive: true });
 		const retentionDays = await readRetentionDays();
+		const eventTime = new Date(event.timestamp).getTime();
+		const retentionCutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+		if (!Number.isFinite(eventTime) || eventTime < retentionCutoff) {
+			throw new errs.ValidationError("App security event timestamp is outside the configured retention window");
+		}
 		await purgeExpiredFiles(retentionDays);
 
 		const filePath = `${APP_EVENTS_DIR}/${archiveDate(event)}.jsonl`;
