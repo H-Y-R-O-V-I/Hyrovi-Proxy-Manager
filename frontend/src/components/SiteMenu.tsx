@@ -27,6 +27,7 @@ import {
 
 interface MenuItem {
 	label: string;
+	labelText?: string;
 	icon?: React.ElementType;
 	to?: string;
 	items?: MenuItem[];
@@ -39,6 +40,13 @@ const menuItems: MenuItem[] = [
 		to: "/",
 		icon: IconHome,
 		label: "dashboard",
+	},
+	{
+		to: "/security",
+		icon: IconShield,
+		label: "hyrovi-sec",
+		labelText: "HYROVI Sec",
+		permissionSection: ADMIN,
 	},
 	{
 		icon: IconDeviceDesktop,
@@ -128,7 +136,7 @@ const getMenuItem = (item: MenuItem, onClick?: () => void) => {
 						{item.icon && React.createElement(item.icon, { height: 24, width: 24 })}
 					</span>
 					<span className="nav-link-title">
-						<T id={item.label} />
+						{item.labelText || <T id={item.label} />}
 					</span>
 				</NavLink>
 			</li>
@@ -157,7 +165,7 @@ const getMenuDropown = (item: MenuItem, onClick?: () => void) => {
 						<IconDeviceDesktop height={24} width={24} />
 					</span>
 					<span className="nav-link-title">
-						<T id={item.label} />
+						{item.labelText || <T id={item.label} />}
 					</span>
 				</a>
 				<div className="dropdown-menu">

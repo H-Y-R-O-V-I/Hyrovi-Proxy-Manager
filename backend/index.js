@@ -3,6 +3,7 @@
 import app from "./app.js";
 import internalCertificate from "./internal/certificate.js";
 import internalIpRanges from "./internal/ip_ranges.js";
+import internalSecurity from "./internal/security.js";
 import { global as logger } from "./logger.js";
 import { migrateUp } from "./migrate.js";
 import { getCompiledSchema } from "./schema/index.js";
@@ -24,9 +25,15 @@ async function appStart() {
 				logger.error("IP Ranges fetch failed, continuing anyway:", err.message);
 			});
 		})
+		.then(() =>
+			internalSecurity.prepare().catch((err) => {
+				logger.error("HYROVI Sec instrumentation failed; proxy manager will continue:", err.message);
+			}),
+		)
 		.then(() => {
 			internalCertificate.initTimer();
 			internalIpRanges.initTimer();
+			internalSecurity.initTimer();
 
 			const server = app.listen(3000, () => {
 				logger.info(`Backend PID ${process.pid} listening on port 3000 ...`);

@@ -52,6 +52,9 @@ if [ -f /data/keys.json ]; then
 	chown "$PUID:$PGID" /data/keys.json
 fi
 
+# HYROVI Sec must be writable even when /data already has the correct owner.
+chown -R "$PUID:$PGID" /data/nginx/hyrovi-security
+
 if [ "$(is_true "${SKIP_CERTBOT_OWNERSHIP:-}")" = '1' ]; then
 	log_info 'Skipping ownership change of certbot directories'
 else

@@ -1,3 +1,9 @@
+# HYROVI Proxy Manager
+
+> HYROVI-owned fork of Nginx Proxy Manager with integrated **HYROVI Sec** request telemetry, threat analysis and response controls. Normal proxy-manager functionality remains part of the product. See [HYROVI_SEC.md](HYROVI_SEC.md) for the security architecture and current implementation.
+>
+> Upstream project and history are preserved; this fork remains under the included MIT license.
+
 <p align="center">
 	<img src="https://nginxproxymanager.com/github.png">
 	<br><br>

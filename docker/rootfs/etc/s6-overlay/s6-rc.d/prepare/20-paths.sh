@@ -27,6 +27,7 @@ mkdir -p \
 	/data/nginx/stream \
 	/data/nginx/dead_host \
 	/data/nginx/temp \
+	/data/nginx/hyrovi-security \
 	/data/letsencrypt-acme-challenge \
 	/run/nginx \
 	/tmp/nginx/body \
@@ -36,6 +37,7 @@ mkdir -p \
 	/var/cache/nginx/proxy_temp
 
 touch /var/log/nginx/error.log || true
+touch /data/nginx/hyrovi-security/blocked-ips.conf || true
 chmod 777 /var/log/nginx/error.log || true
 chmod -R 777 /var/cache/nginx || true
 chmod 644 /etc/logrotate.d/nginx-proxy-manager
