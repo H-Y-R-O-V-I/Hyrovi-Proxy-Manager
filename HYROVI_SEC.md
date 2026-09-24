@@ -73,7 +73,7 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/blocked-ips.conf`
 - `/data/nginx/hyrovi-security/policy.json`
 
-Block config changes are written atomically. Nginx is validated/reloaded before the new block state is considered successful. On failure the previous config is restored.
+Block config changes are serialized and written atomically. Nginx is validated/reloaded before the new block state is considered successful. If durable state persistence fails, the previous Nginx block config is restored. On backend startup, `blocks.json` is reconciled back into the generated deny include so interrupted updates cannot leave stale enforcement behind.
 
 ## Next security phases
 

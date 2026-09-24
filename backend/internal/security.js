@@ -29,6 +29,7 @@ const DEFAULT_POLICY = Object.freeze({
 const processedEventIds = new Set();
 const processedEventOrder = [];
 let monitorPrimed = false;
+let blockMutationQueue = Promise.resolve();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -206,10 +207,23 @@ const ensureSecurityDir = async () => {
 	await fs.promises.mkdir(SECURITY_DIR, { recursive: true });
 };
 
-const writeJsonAtomic = async (path, value) => {
-	const tmp = `${path}.tmp-${process.pid}`;
-	await fs.promises.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-	await fs.promises.rename(tmp, path);
+const writeTextAtomic = async (path, value) => {
+	const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+	try {
+		await fs.promises.writeFile(tmp, value, "utf8");
+		await fs.promises.rename(tmp, path);
+	} catch (err) {
+		await fs.promises.unlink(tmp).catch(() => undefined);
+		throw err;
+	}
+};
+
+const writeJsonAtomic = (path, value) => writeTextAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
+
+const withBlockMutation = (operation) => {
+	const run = blockMutationQueue.then(operation, operation);
+	blockMutationQueue = run.catch(() => undefined);
+	return run;
 };
 
 const normalizePolicy = (value = {}) => ({
@@ -300,14 +314,14 @@ const applyBlockConfig = async (blocks) => {
 	}
 
 	const next = renderBlockConfig(blocks);
-	const tmp = `${BLOCKS_CONF_FILE}.tmp-${process.pid}`;
-	await fs.promises.writeFile(tmp, next, "utf8");
-	await fs.promises.rename(tmp, BLOCKS_CONF_FILE);
+	if (previous === next) return false;
+
+	await writeTextAtomic(BLOCKS_CONF_FILE, next);
 
 	try {
 		await internalNginx.reload();
 	} catch (err) {
-		await fs.promises.writeFile(BLOCKS_CONF_FILE, previous, "utf8");
+		await writeTextAtomic(BLOCKS_CONF_FILE, previous);
 		try {
 			await internalNginx.reload();
 		} catch (_) {
@@ -315,14 +329,44 @@ const applyBlockConfig = async (blocks) => {
 		}
 		throw err;
 	}
+
+	return true;
 };
 
-const purgeExpired = async () => {
+const commitBlockState = async (previousBlocks, nextBlocks) => {
+	await applyBlockConfig(nextBlocks);
+	try {
+		await writeJsonAtomic(BLOCKS_FILE, nextBlocks);
+	} catch (err) {
+		try {
+			await applyBlockConfig(previousBlocks);
+		} catch (rollbackErr) {
+			logger.error(
+				`HYROVI Sec could not roll back Nginx block config after state persistence failed: ${rollbackErr.message}`,
+			);
+		}
+		throw err;
+	}
+};
+
+const purgeExpiredUnsafe = async () => {
 	const blocks = await readBlocksUnsafe();
 	const active = activeBlocks(blocks);
 	if (active.length === blocks.length) return active;
-	await applyBlockConfig(active);
-	await writeJsonAtomic(BLOCKS_FILE, active);
+	await commitBlockState(blocks, active);
+	return active;
+};
+
+const purgeExpired = () => withBlockMutation(purgeExpiredUnsafe);
+
+const synchronizeBlockConfigUnsafe = async () => {
+	const blocks = await readBlocksUnsafe();
+	const active = activeBlocks(blocks);
+	if (active.length !== blocks.length) {
+		await commitBlockState(blocks, active);
+	} else {
+		await applyBlockConfig(active);
+	}
 	return active;
 };
 
@@ -341,14 +385,13 @@ const createBlockRecord = ({ ip, reason, source, durationMinutes }) => {
 const addBlockUnsafe = async ({ ip, reason, source, durationMinutes }) => {
 	if (!net.isIP(ip)) throw new errs.ValidationError("Invalid IP address");
 	const minutes = clamp(Number.parseInt(durationMinutes, 10) || 60, 1, 43_200);
-	const blocks = await purgeExpired();
+	const blocks = await purgeExpiredUnsafe();
 	const existing = blocks.find((block) => block.ip === ip);
 	if (existing) return existing;
 
 	const block = createBlockRecord({ ip, reason, source, durationMinutes: minutes });
 	const next = [...blocks, block];
-	await applyBlockConfig(next);
-	await writeJsonAtomic(BLOCKS_FILE, next);
+	await commitBlockState(blocks, next);
 	return block;
 };
 
@@ -369,28 +412,29 @@ const monitorThreats = async () => {
 	const policy = await readPolicyUnsafe();
 	if (!policy.autoBlockEnabled) return;
 
-	const blocks = await purgeExpired();
-	const blockedIps = new Set(blocks.map((block) => block.ip));
-	const additions = [];
-	for (const event of fresh) {
-		if (blockedIps.has(event.ip) || !eventIsAutoBlockCandidate(event, policy)) continue;
-		const block = createBlockRecord({
-			ip: event.ip,
-			durationMinutes: policy.autoBlockMinutes,
-			source: "auto-response",
-			reason: `Auto response: risk ${event.risk}; ${event.signals.map((signal) => signal.id).join(", ")}`,
-		});
-		additions.push(block);
-		blockedIps.add(event.ip);
-	}
+	await withBlockMutation(async () => {
+		const blocks = await purgeExpiredUnsafe();
+		const blockedIps = new Set(blocks.map((block) => block.ip));
+		const additions = [];
+		for (const event of fresh) {
+			if (blockedIps.has(event.ip) || !eventIsAutoBlockCandidate(event, policy)) continue;
+			const block = createBlockRecord({
+				ip: event.ip,
+				durationMinutes: policy.autoBlockMinutes,
+				source: "auto-response",
+				reason: `Auto response: risk ${event.risk}; ${event.signals.map((signal) => signal.id).join(", ")}`,
+			});
+			additions.push(block);
+			blockedIps.add(event.ip);
+		}
 
-	if (additions.length === 0) return;
-	const next = [...blocks, ...additions];
-	await applyBlockConfig(next);
-	await writeJsonAtomic(BLOCKS_FILE, next);
-	for (const block of additions) {
-		logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
-	}
+		if (additions.length === 0) return;
+		const next = [...blocks, ...additions];
+		await commitBlockState(blocks, next);
+		for (const block of additions) {
+			logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
+		}
+	});
 };
 
 const getEnabledHosts = (model) =>
@@ -416,6 +460,11 @@ const internalSecurity = {
 		} catch (_) {
 			await writePolicyUnsafe(DEFAULT_POLICY);
 		}
+
+		// blocks.json is the durable source of truth. Reconcile the generated deny
+		// include on every backend start so an interrupted write/reload sequence
+		// cannot leave Nginx enforcing a stale block set.
+		await withBlockMutation(synchronizeBlockConfigUnsafe);
 
 		try {
 			await fs.promises.access(INSTRUMENTATION_MARKER);
@@ -551,22 +600,25 @@ const internalSecurity = {
 
 	blockIp: async (access, data) => {
 		await access.can("users:list");
-		return addBlockUnsafe({
-			ip: String(data.ip || "").trim(),
-			durationMinutes: data.durationMinutes,
-			reason: data.reason || "Manual HYROVI Sec block",
-			source: data.source || "manual",
-		});
+		return withBlockMutation(() =>
+			addBlockUnsafe({
+				ip: String(data.ip || "").trim(),
+				durationMinutes: data.durationMinutes,
+				reason: data.reason || "Manual HYROVI Sec block",
+				source: data.source || "manual",
+			}),
+		);
 	},
 
 	unblockIp: async (access, id) => {
 		await access.can("users:list");
-		const blocks = await purgeExpired();
-		const next = blocks.filter((block) => block.id !== id);
-		if (next.length === blocks.length) throw new errs.ItemNotFoundError(id);
-		await applyBlockConfig(next);
-		await writeJsonAtomic(BLOCKS_FILE, next);
-		return { success: true };
+		return withBlockMutation(async () => {
+			const blocks = await purgeExpiredUnsafe();
+			const next = blocks.filter((block) => block.id !== id);
+			if (next.length === blocks.length) throw new errs.ItemNotFoundError(id);
+			await commitBlockState(blocks, next);
+			return { success: true };
+		});
 	},
 };
 
