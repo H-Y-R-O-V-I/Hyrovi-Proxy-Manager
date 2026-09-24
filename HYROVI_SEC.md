@@ -21,8 +21,7 @@ The first implementation adds:
 - attack-session aggregation by source IP with stable bounded-window IDs, host summaries, top request patterns and incident timelines;
 - bounded response-action history for rate-limit/block start, removal and expiry;
 - bounded daily security-event archive with configurable retention/minimum risk, independent of the rolling live nginx log window;
-- critical/suspicious request inspection plus drill-down incident detail in the admin UI;
-- per-request drill-down with explainable risk, similar-request matching, attack-session correlation and response state/history;
+- critical/suspicious request inspection with per-request drill-down, similar-request correlation, linked attack sessions and incident detail in the admin UI;
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;
@@ -78,34 +77,3 @@ Admin UI / HYROVI Sec
 ## Response-state storage
 
 HYROVI Sec owns:
-
-- `/data/nginx/hyrovi-security/blocks.json`
-- `/data/nginx/hyrovi-security/blocked-ips.conf`
-- `/data/nginx/hyrovi-security/rate-limits.json`
-- `/data/nginx/hyrovi-security/rate-limited-ips.geo`
-- `/data/nginx/hyrovi-security/policy.json`
-- `/data/logs/hyrovi-sec-actions.log` (bounded JSONL response audit history)
-- `/data/nginx/hyrovi-security/events/YYYY-MM-DD.jsonl` (bounded retained security-event archive)
-
-Event archive defaults are intentionally storage-conscious: 14 days, minimum risk 20, with each daily file compacted when it reaches roughly 8 MiB. Normal/live requests still remain visible from the rolling nginx security log; the retained archive is for security-relevant history. Retention can be configured from 1 to 90 days and archive minimum risk from 0 to 100.
-
-Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v2` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
-
-Automatic response defaults remain conservative: global soft restriction starts at risk 50 for 10 minutes, while hard blocking starts at risk 95 for 60 minutes. `Strict` host mode defaults to a lower soft threshold (45) and hard threshold (90). Thresholds alone are not enough: the event must also contain recognized attack/reconnaissance signals, and private/loopback or trusted sources are excluded.
-
-## Next security phases
-
-1. expose per-host policy directly inside the normal Proxy Host editor and add endpoint-specific rules;
-2. richer automatic response rules with cool-downs and escalation chains;
-3. authentication-event SDK so apps can report login/session/device events;
-4. trusted device identities based on cryptographic device keys;
-5. durable event store and retention controls instead of a bounded log window;
-6. correlated attack timelines across hosts, sessions, accounts and devices;
-7. automatic soft-restriction escalation and browser/API challenges before hard blocking;
-8. alerting and HYROVI One integration;
-9. IPv4/IPv6 subnet and ASN-aware controls;
-10. emergency bypass/recovery controls.
-
-## Upstream attribution
-
-This project is based on Nginx Proxy Manager and retains its MIT license and upstream history. HYROVI-specific code is developed in this fork while keeping the upstream remote available for controlled synchronization.

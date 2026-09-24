@@ -1029,6 +1029,7 @@ const Security = () => {
 												<th>Risk</th>
 												<th>Source</th>
 												<th>Status</th>
+												<th />
 											</tr>
 										</thead>
 										<tbody>
@@ -1043,10 +1044,20 @@ const Security = () => {
 													<td><span className={`badge ${severityClass(event.severity)}`}>{event.risk}</span></td>
 													<td className="font-monospace">{event.ip}</td>
 													<td>{event.status || "—"}</td>
+													<td>
+														<button
+															type="button"
+															className="btn btn-sm btn-outline-primary"
+															disabled={!event.requestId}
+															onClick={() => setSelectedRequestId(event.requestId)}
+														>
+															Open
+														</button>
+													</td>
 												</tr>
 											))}
 											{requestDetail.data.similarRequests.length === 0 ? (
-												<tr><td colSpan={5} className="text-secondary">No similar requests in the retained analysis window.</td></tr>
+												<tr><td colSpan={6} className="text-secondary">No similar requests in the retained analysis window.</td></tr>
 											) : null}
 										</tbody>
 									</table>
