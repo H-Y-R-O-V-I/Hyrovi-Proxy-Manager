@@ -1,6 +1,7 @@
 import express from "express";
 import internalSecurity from "../internal/security.js";
 import internalSecurityAppEvents from "../internal/security_app_events.js";
+import internalSecurityChallenge from "../internal/security_challenge.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
 
@@ -27,6 +28,53 @@ router.post("/app-events/ingest", async (req, res, next) => {
 			sourceIp: req.ip,
 		});
 		res.status(202).send({ accepted: true, id: event.id, timestamp: event.timestamp });
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.all("/challenge/page", async (req, res, next) => {
+	try {
+		const context = internalSecurityChallenge.proxyContext(req.headers);
+		const challenge = await internalSecurityChallenge.getChallengeForIp(context.ip);
+		if (!challenge) {
+			res.status(404).send({ error: { code: 404, message: "Not Found" } });
+			return;
+		}
+
+		res.set("Cache-Control", "no-store");
+		const wantsHtml = context.accept.includes("text/html");
+		if (!wantsHtml) {
+			res.set("Retry-After", "3");
+			res.status(429).send({ challenge });
+			return;
+		}
+
+		res.set({
+			"Content-Type": "text/html; charset=utf-8",
+			"Content-Security-Policy":
+				"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+			"Referrer-Policy": "no-referrer",
+			"X-Content-Type-Options": "nosniff",
+		});
+		res.status(200).send(internalSecurityChallenge.renderHtml(challenge, context.originalUri));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/challenge/verify", async (req, res, next) => {
+	try {
+		const context = internalSecurityChallenge.proxyContext(req.headers);
+		const result = await internalSecurityChallenge.verify({
+			ip: context.ip,
+			id: req.body?.id,
+			counter: req.body?.counter,
+		});
+		res.set("Cache-Control", "no-store");
+		res.status(result.verified ? 200 : 400).send(result);
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
 		next(err);
@@ -181,6 +229,26 @@ router
 			next(err);
 		}
 	});
+router
+	.route("/challenges")
+	.get(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurity.listChallenges(res.locals.access));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router.delete("/challenges/:id", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.removeChallenge(res.locals.access, req.params.id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router
 	.route("/rate-limits")
 	.get(async (req, res, next) => {

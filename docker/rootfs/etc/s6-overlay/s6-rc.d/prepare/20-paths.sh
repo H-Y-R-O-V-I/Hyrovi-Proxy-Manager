@@ -39,12 +39,14 @@ mkdir -p \
 touch /var/log/nginx/error.log || true
 touch /data/nginx/hyrovi-security/blocked-ips.conf || true
 touch /data/nginx/hyrovi-security/rate-limited-ips.geo || true
+touch /data/nginx/hyrovi-security/challenged-ips.geo || true
 
 case "${HYROVI_SEC_EMERGENCY_BYPASS,,}" in
 	1|true|yes|on)
 		log_info 'HYROVI Sec emergency bypass is active; clearing generated enforcement configs before Nginx starts.'
 		printf '%s\n' '# HYROVI Sec emergency bypass active. Stored block state is preserved in blocks.json.' > /data/nginx/hyrovi-security/blocked-ips.conf
 		printf '%s\n' '# HYROVI Sec emergency bypass active. Stored rate-limit state is preserved in rate-limits.json.' > /data/nginx/hyrovi-security/rate-limited-ips.geo
+		printf '%s\n' '# HYROVI Sec emergency bypass active. Stored challenge state is preserved in challenges.json.' > /data/nginx/hyrovi-security/challenged-ips.geo
 		;;
 esac
 

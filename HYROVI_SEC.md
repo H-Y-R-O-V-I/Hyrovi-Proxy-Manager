@@ -25,10 +25,13 @@ The first implementation adds:
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;
-- conservative automatic response for public sources: suspicious attack signals are soft-limited first, repeated separated attack strikes can escalate to a hard block, and single-event hard blocks still require high-confidence signals;\n- persistent soft-limit escalation state with configurable strike threshold, escalation window and strike cooldown;
+- conservative automatic response for public sources: suspicious attack signals are soft-limited first, repeated separated attack strikes escalate through an adaptive browser/API proof-of-work challenge before hard blocking, and single-event high-confidence attacks also receive that challenge first on Proxy Hosts;
+- persistent soft-limit escalation state with configurable strike threshold, escalation window and strike cooldown;
+- adaptive SHA-256 proof-of-work challenges with a 30-second hard-block grace period, bounded verification attempts, expiry, emergency bypass support and authenticated admin visibility/removal;
 - protection against automatically blocking RFC1918/link-local/loopback source addresses;
 - trusted exact IP/CIDR sources that remain observable but are excluded from automatic rate limits and blocking;
-- per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations, configurable directly inside the normal Proxy Host editor;\n- endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
+- per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations, configurable directly inside the normal Proxy Host editor;
+- endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
 - authenticated app/auth security-event ingest and admin visibility;
@@ -91,26 +94,25 @@ HYROVI Sec owns:
 
 Event archive defaults are intentionally storage-conscious: 14 days, minimum risk 20, with each daily file compacted when it reaches roughly 8 MiB. Normal/live requests still remain visible from the rolling nginx security log; the retained archive is for security-relevant history. Retention can be configured from 1 to 90 days and archive minimum risk from 0 to 100.
 
-Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v3` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
+Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v4` upgrade marker so upgraded installations receive the rate-limit and adaptive-challenge hooks without manually re-saving hosts.
 
-Automatic response defaults remain conservative: global soft restriction starts at risk 50 for 10 minutes, while single-event hard blocking starts at risk 95 for 60 minutes. `Strict` host mode defaults to a lower soft threshold (45) and hard threshold (90). During an active soft restriction, three additional recognized attack strikes inside a 15-minute window escalate to a hard block, with a 60-second cooldown between counted strikes so one short burst cannot instantly consume the strike budget. Thresholds alone are not enough: events must contain recognized attack/reconnaissance signals, and private/loopback or trusted sources are excluded.
+Automatic response defaults remain conservative: global soft restriction starts at risk 50 for 10 minutes, while the high-confidence threshold is risk 95. `Strict` host mode defaults to a lower soft threshold (45) and high-confidence threshold (90). During an active automatic soft restriction, three additional recognized attack strikes inside a 15-minute window escalate to an adaptive challenge, with a 60-second cooldown between counted strikes so one short burst cannot instantly consume the strike budget. A high-confidence attack on a Proxy Host also enters the challenge stage first. The challenged source receives at least a 30-second grace period to solve the proof; a later qualifying attack can then hard-block it for the configured block duration. If challenge creation fails, HYROVI Sec falls back to the hard-block path. Thresholds alone are not enough: events must contain recognized attack/reconnaissance signals, and private/loopback or trusted sources are excluded.
 
 ## Emergency recovery
 
-Set `HYROVI_SEC_EMERGENCY_BYPASS=true` on the container and restart it if HYROVI Sec enforcement ever blocks legitimate administrative access. The s6 prepare phase clears only the generated deny/rate-limit files before Nginx starts, while `blocks.json` and `rate-limits.json` remain intact. The backend continues observing/archiving traffic but does not create automatic enforcement actions while the bypass is active.
+Set `HYROVI_SEC_EMERGENCY_BYPASS=true` on the container and restart it if HYROVI Sec enforcement ever blocks legitimate administrative access. The s6 prepare phase clears only the generated deny/rate-limit/challenge files before Nginx starts, while `blocks.json`, `rate-limits.json` and `challenges.json` remain intact. The backend continues observing/archiving traffic but does not create automatic enforcement actions while the bypass is active.
 
 The admin UI shows a prominent `BYPASS` warning when this mode is active. To restore enforcement, remove the environment variable (or set it to false) and restart the container; unexpired persisted response state is then regenerated into Nginx.
 
 ## Next security phases
 
-1. add endpoint-specific security rules inside each Proxy Host;
-2. richer automatic response rules with cool-downs, escalation chains and browser/API challenges;
-3. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;
-4. trusted device identities based on cryptographic device keys;
-5. correlated attack timelines across hosts, sessions, accounts and devices;
-6. alerting and HYROVI One integration;
-7. IPv4/IPv6 subnet and ASN-aware controls;
-8. custom detection/rule management with safe validation and explainable matches.
+1. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;
+2. trusted device identities based on cryptographic device keys;
+3. correlated attack timelines across hosts, sessions, accounts and devices;
+4. alerting and HYROVI One integration;
+5. IPv4/IPv6 subnet and ASN-aware controls;
+6. custom detection/rule management with safe validation and explainable matches;
+7. optional challenge tuning per host/endpoint and non-browser client helpers.
 
 ## Upstream attribution
 

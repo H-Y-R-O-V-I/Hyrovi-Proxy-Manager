@@ -5,11 +5,13 @@ import {
 	createSecurityBlock,
 	createSecurityRateLimit,
 	deleteSecurityBlock,
+	deleteSecurityChallenge,
 	deleteSecurityHostPolicy,
 	deleteSecurityRateLimit,
 	getSecurityAppEvents,
 	getSecurityAttackSession,
 	getSecurityBlocks,
+	getSecurityChallenges,
 	getSecurityEventDetail,
 	getSecurityEvents,
 	getSecurityHostPolicies,
@@ -122,6 +124,11 @@ const Security = () => {
 		queryFn: getSecurityRateLimits,
 		refetchInterval: POLL_MS,
 	});
+	const challenges = useQuery({
+		queryKey: ["security-challenges"],
+		queryFn: getSecurityChallenges,
+		refetchInterval: POLL_MS,
+	});
 
 	const policy = useQuery({
 		queryKey: ["security-policy"],
@@ -161,6 +168,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-challenges"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
 		]);
@@ -190,6 +198,10 @@ const Security = () => {
 
 	const removeRateLimit = useMutation({
 		mutationFn: deleteSecurityRateLimit,
+		onSuccess: refresh,
+	});
+	const removeChallenge = useMutation({
+		mutationFn: deleteSecurityChallenge,
 		onSuccess: refresh,
 	});
 
@@ -1351,6 +1363,61 @@ const Security = () => {
 						) : null}
 					</div>
 				) : null}
+
+				<div className="card mb-4">
+					<div className="card-header">
+						<div>
+							<h3 className="card-title">Active adaptive challenges</h3>
+							<div className="text-secondary small">
+								Browser/API proof-of-work challenges inserted before a source is escalated to a hard block.
+							</div>
+						</div>
+					</div>
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>IP</th>
+									<th>Reason</th>
+									<th>Source</th>
+									<th>Difficulty</th>
+									<th>Attempts</th>
+									<th>Expires</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{(challenges.data ?? []).map((challenge) => (
+									<tr key={challenge.id}>
+										<td className="font-monospace">{challenge.ip}</td>
+										<td>{challenge.reason}</td>
+										<td>{challenge.source}</td>
+										<td>{challenge.difficulty} bits</td>
+										<td>{challenge.attempts}/{challenge.maxAttempts}</td>
+										<td>{formatTime(challenge.expiresAt)}</td>
+										<td>
+											<button
+												type="button"
+												className="btn btn-sm btn-outline-secondary"
+												disabled={removeChallenge.isPending}
+												onClick={() => removeChallenge.mutate(challenge.id)}
+											>
+												Clear
+											</button>
+										</td>
+									</tr>
+								))}
+								{!challenges.isLoading && (challenges.data?.length ?? 0) === 0 ? (
+									<tr>
+										<td colSpan={7} className="text-secondary">
+											No active adaptive challenges.
+										</td>
+									</tr>
+								) : null}
+							</tbody>
+						</table>
+					</div>
+				</div>
 
 				<div className="card mb-4">
 					<div className="card-header">

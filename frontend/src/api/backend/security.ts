@@ -200,6 +200,18 @@ export interface SecurityAppEventsResponse {
 	events: SecurityAppEvent[];
 }
 
+export interface SecurityChallenge {
+	id: string;
+	ip: string;
+	difficulty: number;
+	attempts: number;
+	maxAttempts: number;
+	reason: string;
+	source: string;
+	createdAt: string;
+	expiresAt: string;
+}
+
 export interface SecurityBlock {
 	id: string;
 	ip: string;
@@ -262,6 +274,14 @@ export async function updateSecurityHostPolicy(
 export async function deleteSecurityHostPolicy(id: number): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/host-policies/${encodeURIComponent(id)}` });
 }
+export async function getSecurityChallenges(): Promise<SecurityChallenge[]> {
+	return await api.get({ url: "/security/challenges" });
+}
+
+export async function deleteSecurityChallenge(id: string): Promise<{ success: boolean }> {
+	return await api.del({ url: `/security/challenges/${encodeURIComponent(id)}` });
+}
+
 export async function getSecurityRateLimits(): Promise<SecurityRateLimit[]> {
 	return await api.get({ url: "/security/rate-limits" });
 }
