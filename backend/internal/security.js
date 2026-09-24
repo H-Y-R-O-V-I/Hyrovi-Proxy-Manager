@@ -120,8 +120,13 @@ const readTail = async (filePath, maxBytes = MAX_SCAN_BYTES) => {
 		if (!stat.size) return "";
 		const size = Math.min(stat.size, maxBytes);
 		const buffer = Buffer.alloc(size);
-		await handle.read(buffer, 0, size, stat.size - size);
-		let text = buffer.toString("utf8");
+		let offset = 0;
+		while (offset < size) {
+			const { bytesRead } = await handle.read(buffer, offset, size - offset, stat.size - size + offset);
+			if (bytesRead === 0) break;
+			offset += bytesRead;
+		}
+		let text = buffer.subarray(0, offset).toString("utf8");
 		if (stat.size > size) {
 			const firstNewline = text.indexOf("\n");
 			text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
