@@ -1439,7 +1439,7 @@ const monitorThreats = async () => {
 		}
 
 		if (rateLimitAdditions.length > 0) {
-			await commitRateLimitState(rateLiits, [...rateLimits, ...rateLimitAdditions]);
+			await commitRateLimitState(rateLimits, [...rateLimits, ...rateLimitAdditions]);
 			for (const entry of rateLimitAdditions) {
 				await recordResponseAction("rate_limit", "started", entry);
 				logger.warn(`HYROVI Sec auto-rate-limited ${entry.ip} until ${entry.expiresAt}: ${entry.reason}`);
