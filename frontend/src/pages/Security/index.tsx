@@ -45,6 +45,42 @@ import { ADMIN, VIEW } from "src/modules/Permissions";
 
 const POLL_MS = 5000;
 
+const DETECTION_RULE_TEMPLATES = [
+	{
+		label: "Admin auth denials",
+		name: "Admin auth denials",
+		score: 25,
+		response: "observe" as const,
+		pathPrefix: "/admin",
+		pathContains: "",
+		methods: "",
+		statuses: "401, 403",
+		userAgent: "",
+	},
+	{
+		label: "API auth failures",
+		name: "API auth failures",
+		score: 20,
+		response: "observe" as const,
+		pathPrefix: "/api",
+		pathContains: "",
+		methods: "",
+		statuses: "401, 403",
+		userAgent: "",
+	},
+	{
+		label: "Admin write activity",
+		name: "Admin write activity",
+		score: 20,
+		response: "observe" as const,
+		pathPrefix: "/api/admin",
+		pathContains: "",
+		methods: "POST, PUT, PATCH, DELETE",
+		statuses: "",
+		userAgent: "",
+	},
+] as const;
+
 type HostPolicyDraft = {
 	mode: "inherit" | SecurityHostMode;
 	autoRateLimitThreshold: number;
@@ -977,6 +1013,26 @@ const Security = () => {
 						<span className="badge bg-azure-lt">{detectionRules.data?.length ?? 0} rules</span>
 					</div>
 					<div className="card-body border-bottom">
+						<div className="d-flex flex-wrap gap-2 mb-3">
+							{DETECTION_RULE_TEMPLATES.map((template) => (
+								<Button
+									key={template.label}
+									className="btn-outline-secondary"
+									onClick={() => {
+										setRuleName(template.name);
+										setRuleScore(template.score);
+										setRuleResponse(template.response);
+										setRulePathPrefix(template.pathPrefix);
+										setRulePathContains(template.pathContains);
+										setRuleMethods(template.methods);
+										setRuleStatuses(template.statuses);
+										setRuleUserAgent(template.userAgent);
+									}}
+								>
+									Use template: {template.label}
+								</Button>
+							))}
+						</div>
 						<div className="row g-3">
 							<div className="col-12 col-lg-4">
 								<label className="form-label" htmlFor="hyrovi-sec-rule-name">Name</label>

@@ -69,6 +69,14 @@ A hit appears as an explainable request signal:
 Custom rule: Sensitive admin API (+45)
 ```
 
+## Rule templates
+
+The HYROVI Sec UI includes conservative convenience templates for common patterns such as admin authentication denials, API authentication failures and admin write activity.
+
+Templates do not create or enable a rule by themselves. Selecting a template only pre-fills the normal rule form. The operator can review or narrow the matchers before explicitly creating the rule.
+
+The built-in templates currently use `observe` response mode. They therefore cannot trigger automatic rate limiting unless the operator deliberately changes the response mode to `soft` before creating the rule.
+
 ## Import and export
 
 The rule UI can export a portable versioned JSON document and import it again.
@@ -106,6 +114,16 @@ Import modes:
 - `replace`: validates the complete import first, then replaces the existing rule set with newly generated local rule records.
 
 The import rejects unsupported versions, invalid matchers, invalid response modes and imports that would exceed the global rule limit.
+
+## Starter templates
+
+The admin UI includes conservative starter templates that only prefill the rule form:
+
+- Admin auth denials: `/admin` with HTTP 401/403, Observe, +25 risk;
+- API auth failures: `/api` with HTTP 401/403, Observe, +20 risk;
+- Admin write activity: `/api/admin` with POST/PUT/PATCH/DELETE, Observe, +20 risk.
+
+Templates are not saved or enabled automatically. The operator can still set a host and review every matcher before clicking Add detection rule.
 
 ## Storage and API
 
