@@ -26,7 +26,10 @@ const DEFAULT_POLICY = Object.freeze({
 	autoBlockThreshold: 95,
 	autoBlockMinutes: 60,
 	trustedSources: [],
+	hostPolicies: {},
 });
+const HOST_POLICY_MODES = new Set(["off", "observe", "protect", "strict"]);
+const MAX_HOST_POLICIES = 500;
 
 const processedEventIds = new Set();
 const processedEventOrder = [];
@@ -78,6 +81,28 @@ const isTrustedSource = (ip, trustedSources = []) => {
 
 	return blockList.check(ip, type);
 };
+const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
+	const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	const mode = HOST_POLICY_MODES.has(source.mode) ? source.mode : "observe";
+	const defaultThreshold = mode === "strict" ? Math.min(globalPolicy.autoBlockThreshold || 95, 90) : globalPolicy.autoBlockThreshold || 95;
+	return {
+		mode,
+		autoBlockThreshold: clamp(Number.parseInt(source.autoBlockThreshold, 10) || defaultThreshold, 80, 100),
+		autoBlockMinutes: clamp(Number.parseInt(source.autoBlockMinutes, 10) || globalPolicy.autoBlockMinutes || 60, 1, 43_200),
+	};
+};
+
+const normalizeHostPolicies = (value, globalPolicy) => {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const result = {};
+	for (const [hostId, hostPolicy] of Object.entries(value).slice(0, MAX_HOST_POLICIES)) {
+		if (!/^\d+$/.test(hostId) || Number(hostId) < 1) continue;
+		result[hostId] = normalizeHostPolicy(hostPolicy, globalPolicy);
+	}
+	return result;
+};
+
+const normalizeHostname = (value) => String(value || "").trim().toLowerCase().replace(/\.$/, "");
 
 const safeJsonParse = (line) => {
 	try {
@@ -319,12 +344,15 @@ const withBlockMutation = (operation) => {
 	return run;
 };
 
-const normalizePolicy = (value = {}) => ({
-	autoBlockEnabled: value.autoBlockEnabled === true,
-	autoBlockThreshold: clamp(Number.parseInt(value.autoBlockThreshold, 10) || DEFAULT_POLICY.autoBlockThreshold, 80, 100),
-	autoBlockMinutes: clamp(Number.parseInt(value.autoBlockMinutes, 10) || DEFAULT_POLICY.autoBlockMinutes, 1, 43_200),
-	trustedSources: normalizeTrustedSources(value.trustedSources),
-});
+const normalizePolicy = (value = {}) => {
+	const normalized = {
+		autoBlockEnabled: value.autoBlockEnabled === true,
+		autoBlockThreshold: clamp(Number.parseInt(value.autoBlockThreshold, 10) || DEFAULT_POLICY.autoBlockThreshold, 80, 100),
+		autoBlockMinutes: clamp(Number.parseInt(value.autoBlockMinutes, 10) || DEFAULT_POLICY.autoBlockMinutes, 1, 43_200),
+		trustedSources: normalizeTrustedSources(value.trustedSources),
+	};
+	return { ...normalized, hostPolicies: normalizeHostPolicies(value.hostPolicies, normalized) };
+};
 
 const readPolicyUnsafe = async () => {
 	try {
@@ -489,6 +517,72 @@ const addBlockUnsafe = async ({ ip, reason, source, durationMinutes }) => {
 	return block;
 };
 
+const listProxyHostsForSecurity = () =>
+	proxyHostModel
+		.query()
+		.select("id", "domain_names", "enabled")
+		.where("is_deleted", 0)
+		.orderBy("id", "ASC");
+
+const createHostPolicyContext = (policy, hosts = []) => {
+	const exact = new Map();
+	const wildcards = [];
+	const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
+	const globalEffective = {
+		proxyHostId: null,
+		mode: globalMode,
+		autoBlockEnabled: policy.autoBlockEnabled,
+		autoBlockThreshold: policy.autoBlockThreshold,
+		autoBlockMinutes: policy.autoBlockMinutes,
+		inherited: true,
+	};
+
+	for (const host of hosts) {
+		const explicit = policy.hostPolicies[String(host.id)] || null;
+		const hostEffective = explicit
+			? {
+					proxyHostId: host.id,
+					...explicit,
+					autoBlockEnabled: policy.autoBlockEnabled && ["protect", "strict"].includes(explicit.mode),
+					inherited: false,
+				}
+			: { ...globalEffective, proxyHostId: host.id };
+
+		for (const domain of host.domain_names || []) {
+			const normalized = normalizeHostname(domain);
+			if (!normalized) continue;
+			if (normalized.startsWith("*.")) {
+				wildcards.push({ suffix: normalized.slice(1), effective: hostEffective });
+			} else {
+				exact.set(normalized, hostEffective);
+			}
+		}
+	}
+
+	wildcards.sort((left, right) => right.suffix.length - left.suffix.length);
+	return {
+		resolve: (hostname) => {
+			const normalized = normalizeHostname(hostname);
+			const direct = exact.get(normalized);
+			if (direct) return direct;
+			const wildcard = wildcards.find((entry) => normalized.endsWith(entry.suffix) && normalized !== entry.suffix.slice(1));
+			return wildcard?.effective || globalEffective;
+		},
+	};
+};
+
+const getHostPolicyContext = async (policy) => {
+	if (Object.keys(policy.hostPolicies).length === 0) return createHostPolicyContext(policy);
+	return createHostPolicyContext(policy, await listProxyHostsForSecurity());
+};
+
+const decorateEventsWithHostPolicy = (events, context) =>
+	events
+		.map((event) => {
+			const effective = context.resolve(event.host);
+			return { ...event, proxyHostId: effective.proxyHostId, securityMode: effective.mode };
+		})
+		.filter((event) => event.securityMode !== "off");
 const monitorThreats = async () => {
 	const events = await loadEvents(750);
 	if (!monitorPrimed) {
@@ -505,18 +599,21 @@ const monitorThreats = async () => {
 
 	const policy = await readPolicyUnsafe();
 	if (!policy.autoBlockEnabled) return;
+	const hostPolicyContext = await getHostPolicyContext(policy);
 
 	await withBlockMutation(async () => {
 		const blocks = await purgeExpiredUnsafe();
 		const blockedIps = new Set(blocks.map((block) => block.ip));
 		const additions = [];
 		for (const event of fresh) {
-			if (blockedIps.has(event.ip) || !eventIsAutoBlockCandidate(event, policy)) continue;
+			const effective = hostPolicyContext.resolve(event.host);
+			const candidatePolicy = { ...policy, autoBlockThreshold: effective.autoBlockThreshold };
+			if (!effective.autoBlockEnabled || blockedIps.has(event.ip) || !eventIsAutoBlockCandidate(event, candidatePolicy)) continue;
 			const block = createBlockRecord({
 				ip: event.ip,
-				durationMinutes: policy.autoBlockMinutes,
+				durationMinutes: effective.autoBlockMinutes,
 				source: "auto-response",
-				reason: `Auto response: risk ${event.risk}; ${event.signals.map((signal) => signal.id).join(", ")}`,
+				reason: `Auto response (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals.map((signal) => signal.id).join(", ")}`,
 			});
 			additions.push(block);
 			blockedIps.add(event.ip);
@@ -604,14 +701,16 @@ const internalSecurity = {
 		await access.can("logs:list");
 		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIMIT);
 		const minRisk = clamp(Number.parseInt(options.minRisk, 10) || 0, 0, 100);
-		const events = await loadEvents(limit);
-		return events.filter((event) => event.risk >= minRisk);
+		const [events, policy] = await Promise.all([loadEvents(limit), readPolicyUnsafe()]);
+		const hostPolicyContext = await getHostPolicyContext(policy);
+		return decorateEventsWithHostPolicy(events, hostPolicyContext).filter((event) => event.risk >= minRisk);
 	},
 
 	getOverview: async (access) => {
 		await access.can("logs:list");
-		const events = await loadEvents(1000);
-		const [blocks, policy] = await Promise.all([purgeExpired(), readPolicyUnsafe()]);
+		const [rawEvents, blocks, policy] = await Promise.all([loadEvents(1000), purgeExpired(), readPolicyUnsafe()]);
+		const hostPolicyContext = await getHostPolicyContext(policy);
+		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const suspicious = events.filter((event) => event.risk >= 40);
 		const critical = events.filter((event) => event.risk >= 80);
 		const sessionsByIp = new Map();
@@ -696,6 +795,80 @@ const internalSecurity = {
 		});
 	},
 
+	listHostPolicies: async (access) => {
+		await access.can("logs:list");
+		const [hosts, policy] = await Promise.all([listProxyHostsForSecurity(), readPolicyUnsafe()]);
+		const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
+		return hosts.map((host) => {
+			const explicit = policy.hostPolicies[String(host.id)] || null;
+			return {
+				id: host.id,
+				domainNames: host.domain_names || [],
+				enabled: host.enabled,
+				policy: explicit,
+				effective: explicit || {
+					mode: globalMode,
+					autoBlockThreshold: policy.autoBlockThreshold,
+					autoBlockMinutes: policy.autoBlockMinutes,
+				},
+			};
+		});
+	},
+
+	updateHostPolicy: async (access, hostId, data) => {
+		await access.can("users:list");
+		const id = Number.parseInt(hostId, 10);
+		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
+		const host = await proxyHostModel.query().select("id").where("is_deleted", 0).andWhere("id", id).first();
+		if (!host?.id) throw new errs.ItemNotFoundError(id);
+		if (typeof data.mode !== "undefined" && !HOST_POLICY_MODES.has(data.mode)) {
+			throw new errs.ValidationError("Security mode must be off, observe, protect or strict");
+		}
+		if (typeof data.autoBlockThreshold !== "undefined") {
+			const threshold = Number.parseInt(data.autoBlockThreshold, 10);
+			if (!Number.isInteger(threshold) || threshold < 80 || threshold > 100) {
+				throw new errs.ValidationError("Auto-block threshold must be between 80 and 100");
+			}
+		}
+		if (typeof data.autoBlockMinutes !== "undefined") {
+			const minutes = Number.parseInt(data.autoBlockMinutes, 10);
+			if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43_200) {
+				throw new errs.ValidationError("Auto-block duration must be between 1 and 43200 minutes");
+			}
+		}
+
+		const current = await readPolicyUnsafe();
+		if (Object.keys(current.hostPolicies).length >= MAX_HOST_POLICIES && !current.hostPolicies[String(id)]) {
+			throw new errs.ValidationError(`Host policies are limited to ${MAX_HOST_POLICIES} entries`);
+		}
+		const existing = current.hostPolicies[String(id)] || {
+			mode: "observe",
+			autoBlockThreshold: current.autoBlockThreshold,
+			autoBlockMinutes: current.autoBlockMinutes,
+		};
+		const draft = { ...existing, ...data };
+		if (!current.hostPolicies[String(id)] && data.mode === "strict" && typeof data.autoBlockThreshold === "undefined") {
+			delete draft.autoBlockThreshold;
+		}
+		const nextHostPolicy = normalizeHostPolicy(draft, current);
+		const updated = await writePolicyUnsafe({
+			...current,
+			hostPolicies: { ...current.hostPolicies, [String(id)]: nextHostPolicy },
+		});
+		return updated.hostPolicies[String(id)];
+	},
+
+	deleteHostPolicy: async (access, hostId) => {
+		await access.can("users:list");
+		const id = Number.parseInt(hostId, 10);
+		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
+		const current = await readPolicyUnsafe();
+		if (!current.hostPolicies[String(id)]) return { success: true };
+		const hostPolicies = { ...current.hostPolicies };
+		delete hostPolicies[String(id)];
+		await writePolicyUnsafe({ ...current, hostPolicies });
+		return { success: true };
+	},
 	listBlocks: async (access) => {
 		await access.can("logs:list");
 		return purgeExpired();

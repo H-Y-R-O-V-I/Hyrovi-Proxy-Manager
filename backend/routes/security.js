@@ -60,6 +60,39 @@ router
 		}
 	});
 
+router.get("/host-policies", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.listHostPolicies(res.locals.access));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router
+	.route("/host-policies/:host_id")
+	.put(async (req, res, next) => {
+		try {
+			res.status(200).send(
+				await internalSecurity.updateHostPolicy(res.locals.access, req.params.host_id, {
+					mode: req.body?.mode,
+					autoBlockThreshold: req.body?.auto_block_threshold,
+					autoBlockMinutes: req.body?.auto_block_minutes,
+				}),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.delete(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurity.deleteHostPolicy(res.locals.access, req.params.host_id));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
 router
 	.route("/blocks")
 	.get(async (req, res, next) => {
