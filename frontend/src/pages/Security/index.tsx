@@ -318,6 +318,43 @@ const Security = () => {
 						</div>
 						<hr className="my-3" />
 						<div className="row g-3 align-items-end">
+							<div className="col-12 col-lg-6">
+								<div className="form-label mb-1">Security event archive</div>
+								<div className="text-secondary small">
+									Keeps security-relevant events after the live nginx log window rolls over. Daily files are bounded and automatically removed after the retention period.
+								</div>
+							</div>
+							<div className="col-6 col-lg-3">
+								<label className="form-label" htmlFor="hyrovi-sec-event-retention">Retention days</label>
+								<input
+									id="hyrovi-sec-event-retention"
+									className="form-control"
+									type="number"
+									min={1}
+									max={90}
+									defaultValue={policy.data?.eventRetentionDays ?? 14}
+									onBlur={(event) =>
+										updatePolicy.mutate({ eventRetentionDays: Number(event.target.value) })
+									}
+								/>
+							</div>
+							<div className="col-6 col-lg-3">
+								<label className="form-label" htmlFor="hyrovi-sec-event-archive-risk">Archive min risk</label>
+								<input
+									id="hyrovi-sec-event-archive-risk"
+									className="form-control"
+									type="number"
+									min={0}
+									max={100}
+									defaultValue={policy.data?.eventArchiveMinRisk ?? 20}
+									onBlur={(event) =>
+										updatePolicy.mutate({ eventArchiveMinRisk: Number(event.target.value) })
+									}
+								/>
+							</div>
+						</div>
+						<hr className="my-3" />
+						<div className="row g-3 align-items-end">
 							<div className="col-12 col-lg-9">
 								<label className="form-label" htmlFor="hyrovi-sec-trusted-sources">
 									Trusted sources

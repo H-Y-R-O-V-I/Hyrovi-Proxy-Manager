@@ -20,6 +20,7 @@ The first implementation adds:
 - event-relative 60-second burst analysis so historical risk explanations remain stable;
 - attack-session aggregation by source IP with stable bounded-window IDs, host summaries, top request patterns and incident timelines;
 - bounded response-action history for rate-limit/block start, removal and expiry;
+- bounded daily security-event archive with configurable retention/minimum risk, independent of the rolling live nginx log window;
 - critical/suspicious request inspection plus drill-down incident detail in the admin UI;
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
@@ -83,6 +84,9 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/rate-limited-ips.geo`
 - `/data/nginx/hyrovi-security/policy.json`
 - `/data/logs/hyrovi-sec-actions.log` (bounded JSONL response audit history)
+- `/data/nginx/hyrovi-security/events/YYYY-MM-DD.jsonl` (bounded retained security-event archive)
+
+Event archive defaults are intentionally storage-conscious: 14 days, minimum risk 20, with each daily file compacted when it reaches roughly 8 MiB. Normal/live requests still remain visible from the rolling nginx security log; the retained archive is for security-relevant history. Retention can be configured from 1 to 90 days and archive minimum risk from 0 to 100.
 
 Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v2` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
 

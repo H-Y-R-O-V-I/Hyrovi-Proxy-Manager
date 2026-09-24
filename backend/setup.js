@@ -128,11 +128,17 @@ const setupCertbotPlugins = async () => {
 };
 
 /**
- * Starts a timer to call run the logrotation binary every two days
+ * Starts a timer to run logrotate regularly. Most NPM rules are still weekly or
+ * size-gated; the shorter check interval keeps the HYROVI Sec telemetry log
+ * bounded during request bursts and attacks.
  * @returns {Promise}
  */
 const setupLogrotation = () => {
-	const intervalTimeout = 1000 * 60 * 60 * 24 * 2; // 2 days
+	const configuredInterval = Number.parseInt(process.env.LOGROTATE_INTERVAL_MS, 10);
+	const intervalTimeout = Math.max(
+		Number.isFinite(configuredInterval) ? configuredInterval : 15 * 60 * 1000,
+		60 * 1000,
+	);
 
 	const runLogrotate = async () => {
 		try {

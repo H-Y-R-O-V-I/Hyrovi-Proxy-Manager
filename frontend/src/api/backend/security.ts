@@ -93,6 +93,8 @@ export interface SecurityPolicy {
 	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
+	eventRetentionDays: number;
+	eventArchiveMinRisk: number;
 	trustedSources: string[];
 	hostPolicies: Record<string, SecurityHostPolicy>;
 }
@@ -102,6 +104,8 @@ export interface SecurityOverview {
 		analyzedRequests: number;
 		maxBytes: number;
 		sessionWindowMs: number;
+		eventRetentionDays: number;
+		eventArchiveMinRisk: number;
 	};
 	requests: number;
 	suspicious: number;

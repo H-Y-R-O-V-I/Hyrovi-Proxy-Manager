@@ -15,6 +15,7 @@ const BLOCKS_FILE = `${SECURITY_DIR}/blocks.json`;
 const BLOCKS_CONF_FILE = `${SECURITY_DIR}/blocked-ips.conf`;
 const RATE_LIMITS_FILE = `${SECURITY_DIR}/rate-limits.json`;
 const RATE_LIMIT_GEO_FILE = `${SECURITY_DIR}/rate-limited-ips.geo`;
+const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
 const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v2`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
@@ -25,12 +26,17 @@ const SESSION_WINDOW_MS = 5 * 60 * 1000;
 const REQUEST_CONTEXT_WINDOW_MS = 60_000;
 const MONITOR_INTERVAL_MS = 5_000;
 const PROCESSED_EVENT_LIMIT = 5_000;
+const ARCHIVED_EVENT_ID_LIMIT = 10_000;
+const MAX_ARCHIVE_SCAN_BYTES_PER_DAY = 512 * 1024;
+const MAX_ARCHIVE_FILE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_POLICY = Object.freeze({
 	autoBlockEnabled: false,
 	autoRateLimitThreshold: 50,
 	autoRateLimitMinutes: 10,
 	autoBlockThreshold: 95,
 	autoBlockMinutes: 60,
+	eventRetentionDays: 14,
+	eventArchiveMinRisk: 20,
 	trustedSources: [],
 	hostPolicies: {},
 });
@@ -39,8 +45,11 @@ const MAX_HOST_POLICIES = 500;
 
 const processedEventIds = new Set();
 const processedEventOrder = [];
+const archivedEventIds = new Set();
+const archivedEventOrder = [];
 let monitorPrimed = false;
 let securityConfigMutationQueue = Promise.resolve();
+let eventArchiveMutationQueue = Promise.resolve();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -167,6 +176,17 @@ const readTail = async (filePath, maxBytes = MAX_SCAN_BYTES) => {
 	} finally {
 		if (handle) await handle.close();
 	}
+};
+
+const readSecurityEventWindow = async () => {
+	const current = await readTail(SECURITY_LOG_FILE, MAX_SCAN_BYTES);
+	const currentBytes = Buffer.byteLength(current, "utf8");
+	if (currentBytes >= MAX_SCAN_BYTES) return current;
+
+	const previous = await readTail(`${SECURITY_LOG_FILE}.1`, MAX_SCAN_BYTES - currentBytes);
+	if (!previous) return current;
+	if (!current) return previous;
+	return `${previous.replace(/\n$/, "")}\n${current}`;
 };
 
 const parseTimestamp = (value) => {
@@ -325,8 +345,8 @@ const enrichEvents = (events) => {
 	});
 };
 
-const loadEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
-	const text = await readTail(SECURITY_LOG_FILE);
+const loadLiveEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
+	const text = await readSecurityEventWindow();
 	if (!text) return [];
 	const parsed = text
 		.split("\n")
@@ -338,6 +358,171 @@ const loadEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
 
 	const enriched = enrichEvents(parsed);
 	return enriched.slice(-clamp(limit, 1, MAX_EVENT_LIMIT)).reverse();
+};
+
+const rememberArchivedEvent = (event) => {
+	const id = eventIdentity(event);
+	if (archivedEventIds.has(id)) return false;
+	archivedEventIds.add(id);
+	archivedEventOrder.push(id);
+	while (archivedEventOrder.length > ARCHIVED_EVENT_ID_LIMIT) {
+		archivedEventIds.delete(archivedEventOrder.shift());
+	}
+	return true;
+};
+
+const archiveDateKey = (event) => {
+	const date = parseTimestamp(event.timestamp);
+	return (date || new Date()).toISOString().slice(0, 10);
+};
+
+const archivedEventRecord = (event) => ({
+	timestamp: event.timestamp,
+	requestId: event.requestId,
+	host: event.host,
+	method: event.method,
+	path: event.path,
+	status: event.status,
+	ip: event.ip,
+	userAgent: event.userAgent,
+	requestLength: event.requestLength,
+	bytesSent: event.bytesSent,
+	requestTime: event.requestTime,
+	upstreamStatus: event.upstreamStatus,
+	risk: event.risk,
+	severity: event.severity,
+	signals: event.signals,
+});
+
+const withEventArchiveMutation = (operation) => {
+	const run = eventArchiveMutationQueue.then(operation, operation);
+	eventArchiveMutationQueue = run.catch(() => undefined);
+	return run;
+};
+
+const persistArchivedEvents = async (events, policy) =>
+	withEventArchiveMutation(async () => {
+		const seen = new Set();
+		const candidates = events
+			.filter((event) => event.risk >= policy.eventArchiveMinRisk)
+			.filter((event) => {
+				const id = eventIdentity(event);
+				if (archivedEventIds.has(id) || seen.has(id)) return false;
+				seen.add(id);
+				return true;
+			})
+			.sort((left, right) => {
+				const leftTime = parseTimestamp(left.timestamp)?.getTime() || 0;
+				const rightTime = parseTimestamp(right.timestamp)?.getTime() || 0;
+				return leftTime - rightTime;
+			});
+		if (candidates.length === 0) return 0;
+
+		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
+		const byDay = new Map();
+		for (const event of candidates) {
+			const key = archiveDateKey(event);
+			const list = byDay.get(key) || [];
+			list.push(event);
+			byDay.set(key, list);
+		}
+
+		let persisted = 0;
+		for (const [day, dayEvents] of byDay) {
+			const filePath = `${EVENT_ARCHIVE_DIR}/${day}.jsonl`;
+			try {
+				const stat = await fs.promises.stat(filePath);
+				if (stat.size >= MAX_ARCHIVE_FILE_BYTES) {
+					const compacted = await readTail(filePath, Math.floor(MAX_ARCHIVE_FILE_BYTES / 2));
+					await writeTextAtomic(filePath, compacted);
+				}
+			} catch (err) {
+				if (err.code !== "ENOENT") throw err;
+			}
+
+			const payload = dayEvents.map((event) => JSON.stringify(archivedEventRecord(event))).join("\n");
+			await fs.promises.appendFile(filePath, `${payload}\n`, "utf8");
+			for (const event of dayEvents) rememberArchivedEvent(event);
+			persisted += dayEvents.length;
+		}
+		return persisted;
+	});
+
+const persistArchivedEventsBestEffort = async (events, policy) => {
+	try {
+		return await persistArchivedEvents(events, policy);
+	} catch (err) {
+		logger.error(`HYROVI Sec event archive write failed; protection will continue: ${err.message}`);
+		return 0;
+	}
+};
+
+const listArchiveFiles = async (retentionDays) => {
+	try {
+		const entries = await fs.promises.readdir(EVENT_ARCHIVE_DIR, { withFileTypes: true });
+		return entries
+			.filter((entry) => entry.isFile() && /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name))
+			.map((entry) => entry.name)
+			.sort()
+			.reverse()
+			.slice(0, retentionDays + 1);
+	} catch (err) {
+		if (err.code === "ENOENT") return [];
+		throw err;
+	}
+};
+
+const loadArchivedEvents = async (limit, retentionDays) => {
+	const files = await listArchiveFiles(retentionDays);
+	const result = [];
+	for (const file of files) {
+		const text = await readTail(`${EVENT_ARCHIVE_DIR}/${file}`, MAX_ARCHIVE_SCAN_BYTES_PER_DAY);
+		for (const line of text.split("\n").filter(Boolean).reverse()) {
+			const event = safeJsonParse(line);
+			if (!event?.ip || !event?.host || !Array.isArray(event.signals)) continue;
+			result.push(event);
+			if (result.length >= limit) return result;
+		}
+	}
+	return result;
+};
+
+const purgeArchivedEvents = async (retentionDays) =>
+	withEventArchiveMutation(async () => {
+		let entries;
+		try {
+			entries = await fs.promises.readdir(EVENT_ARCHIVE_DIR, { withFileTypes: true });
+		} catch (err) {
+			if (err.code === "ENOENT") return 0;
+			throw err;
+		}
+		const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+		let removed = 0;
+		for (const entry of entries) {
+			if (!entry.isFile() || !/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name)) continue;
+			const timestamp = Date.parse(`${entry.name.slice(0, 10)}T23:59:59.999Z`);
+			if (!Number.isFinite(timestamp) || timestamp >= cutoff) continue;
+			await fs.promises.unlink(`${EVENT_ARCHIVE_DIR}/${entry.name}`);
+			removed += 1;
+		}
+		return removed;
+	});
+
+const loadEventHistory = async (limit, policy) => {
+	const [live, archived] = await Promise.all([
+		loadLiveEvents(limit),
+		loadArchivedEvents(limit, policy.eventRetentionDays),
+	]);
+	const byId = new Map();
+	for (const event of archived) byId.set(eventIdentity(event), event);
+	for (const event of live) byId.set(eventIdentity(event), event);
+	return [...byId.values()]
+		.sort((left, right) => {
+			const leftTime = parseTimestamp(left.timestamp)?.getTime() || 0;
+			const rightTime = parseTimestamp(right.timestamp)?.getTime() || 0;
+			return rightTime - leftTime;
+		})
+		.slice(0, limit);
 };
 
 const readBlocksUnsafe = async () => {
@@ -433,6 +618,8 @@ const withSecurityConfigMutation = (operation) => {
 };
 
 const normalizePolicy = (value = {}) => {
+	const retentionDays = Number.parseInt(value.eventRetentionDays, 10);
+	const archiveMinRisk = Number.parseInt(value.eventArchiveMinRisk, 10);
 	const normalized = {
 		autoBlockEnabled: value.autoBlockEnabled === true,
 		autoRateLimitThreshold: clamp(
@@ -447,11 +634,20 @@ const normalizePolicy = (value = {}) => {
 		),
 		autoBlockThreshold: clamp(Number.parseInt(value.autoBlockThreshold, 10) || DEFAULT_POLICY.autoBlockThreshold, 80, 100),
 		autoBlockMinutes: clamp(Number.parseInt(value.autoBlockMinutes, 10) || DEFAULT_POLICY.autoBlockMinutes, 1, 43_200),
+		eventRetentionDays: clamp(
+			Number.isInteger(retentionDays) ? retentionDays : DEFAULT_POLICY.eventRetentionDays,
+			1,
+			90,
+		),
+		eventArchiveMinRisk: clamp(
+			Number.isInteger(archiveMinRisk) ? archiveMinRisk : DEFAULT_POLICY.eventArchiveMinRisk,
+			0,
+			100,
+		),
 		trustedSources: normalizeTrustedSources(value.trustedSources),
 	};
 	return { ...normalized, hostPolicies: normalizeHostPolicies(value.hostPolicies, normalized) };
 };
-
 const readPolicyUnsafe = async () => {
 	try {
 		return normalizePolicy(JSON.parse(await fs.promises.readFile(POLICY_FILE, "utf8")));
@@ -822,8 +1018,10 @@ const decorateEventsWithHostPolicy = (events, context) =>
 		})
 		.filter((event) => event.securityMode !== "off");
 const monitorThreats = async () => {
-	const events = await loadEvents(750);
+	const events = await loadLiveEvents(MAX_EVENT_LIMIT);
+	const policy = await readPolicyUnsafe();
 	if (!monitorPrimed) {
+		await persistArchivedEventsBestEffort(events, policy);
 		for (const event of events) rememberEvent(event);
 		monitorPrimed = true;
 		return;
@@ -834,8 +1032,8 @@ const monitorThreats = async () => {
 		if (rememberEvent(event)) fresh.push(event);
 	}
 	if (fresh.length === 0) return;
+	await persistArchivedEventsBestEffort(fresh, policy);
 
-	const policy = await readPolicyUnsafe();
 	if (!policy.autoBlockEnabled) return;
 	const hostPolicyContext = await getHostPolicyContext(policy);
 
@@ -1041,6 +1239,7 @@ const getEnabledHosts = (model) =>
 const internalSecurity = {
 	prepare: async () => {
 		await ensureSecurityDir();
+		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
 		try {
 			await fs.promises.access(BLOCKS_CONF_FILE);
 		} catch (_) {
@@ -1050,6 +1249,12 @@ const internalSecurity = {
 			await fs.promises.access(POLICY_FILE);
 		} catch (_) {
 			await writePolicyUnsafe(DEFAULT_POLICY);
+		}
+
+		const startupPolicy = await readPolicyUnsafe();
+		await purgeArchivedEvents(startupPolicy.eventRetentionDays);
+		for (const event of await loadArchivedEvents(ARCHIVED_EVENT_ID_LIMIT, startupPolicy.eventRetentionDays)) {
+			rememberArchivedEvent(event);
 		}
 
 		// blocks.json is the durable source of truth. Reconcile the generated deny
@@ -1096,11 +1301,17 @@ const internalSecurity = {
 			purgeExpiredRateLimits().catch((err) => logger.error("HYROVI Sec rate-limit expiry failed:", err.message));
 		const monitor = () =>
 			monitorThreats().catch((err) => logger.error("HYROVI Sec monitor failed:", err.message));
+		const purgeArchive = () =>
+			readPolicyUnsafe()
+				.then((policy) => purgeArchivedEvents(policy.eventRetentionDays))
+				.catch((err) => logger.error("HYROVI Sec event retention failed:", err.message));
 		purge();
 		purgeRateLimits();
+		purgeArchive();
 		monitor();
 		setInterval(purge, 60_000).unref();
 		setInterval(purgeRateLimits, 60_000).unref();
+		setInterval(purgeArchive, 60 * 60_000).unref();
 		setInterval(monitor, MONITOR_INTERVAL_MS).unref();
 	},
 
@@ -1108,19 +1319,19 @@ const internalSecurity = {
 		await access.can("logs:list");
 		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIMIT);
 		const minRisk = clamp(Number.parseInt(options.minRisk, 10) || 0, 0, 100);
-		const [events, policy] = await Promise.all([loadEvents(limit), readPolicyUnsafe()]);
+		const policy = await readPolicyUnsafe();
+		const events = await loadEventHistory(limit, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		return decorateEventsWithHostPolicy(events, hostPolicyContext).filter((event) => event.risk >= minRisk);
 	},
-
 	getOverview: async (access) => {
 		await access.can("logs:list");
-		const [rawEvents, blocks, rateLimits, policy] = await Promise.all([
-			loadEvents(MAX_EVENT_LIMIT),
+		const [blocks, rateLimits, policy] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
 			readPolicyUnsafe(),
 		]);
+		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const suspicious = events.filter((event) => event.risk >= 40);
@@ -1131,7 +1342,13 @@ const internalSecurity = {
 			.slice(0, 20);
 
 		return {
-			window: { analyzedRequests: events.length, maxBytes: MAX_SCAN_BYTES, sessionWindowMs: SESSION_WINDOW_MS },
+			window: {
+				analyzedRequests: events.length,
+				maxBytes: MAX_SCAN_BYTES,
+				sessionWindowMs: SESSION_WINDOW_MS,
+				eventRetentionDays: policy.eventRetentionDays,
+				eventArchiveMinRisk: policy.eventArchiveMinRisk,
+			},
 			requests: events.length,
 			suspicious: suspicious.length,
 			critical: critical.length,
@@ -1148,13 +1365,13 @@ const internalSecurity = {
 
 	getAttackSession: async (access, sessionId) => {
 		await access.can("logs:list");
-		const [rawEvents, blocks, rateLimits, actions, policy] = await Promise.all([
-			loadEvents(MAX_EVENT_LIMIT),
+		const [blocks, rateLimits, actions, policy] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
 			loadSecurityActions(1000),
 			readPolicyUnsafe(),
 		]);
+		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const session = buildAttackSessions(events).find((entry) => entry.id === sessionId);
@@ -1197,6 +1414,8 @@ const internalSecurity = {
 				? { autoBlockThreshold: data.autoBlockThreshold }
 				: {}),
 			...(typeof data.autoBlockMinutes !== "undefined" ? { autoBlockMinutes: data.autoBlockMinutes } : {}),
+			...(typeof data.eventRetentionDays !== "undefined" ? { eventRetentionDays: data.eventRetentionDays } : {}),
+			...(typeof data.eventArchiveMinRisk !== "undefined" ? { eventArchiveMinRisk: data.eventArchiveMinRisk } : {}),
 			...(typeof data.trustedSources !== "undefined" ? { trustedSources: data.trustedSources } : {}),
 		});
 	},
