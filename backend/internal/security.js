@@ -9,6 +9,7 @@ import proxyHostModel from "../models/proxy_host.js";
 import redirectionHostModel from "../models/redirection_host.js";
 
 const SECURITY_LOG_FILE = "/data/logs/hyrovi-sec.log";
+const SECURITY_ACTION_LOG_FILE = "/data/logs/hyrovi-sec-actions.log";
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const BLOCKS_FILE = `${SECURITY_DIR}/blocks.json`;
 const BLOCKS_CONF_FILE = `${SECURITY_DIR}/blocked-ips.conf`;
@@ -17,6 +18,7 @@ const RATE_LIMIT_GEO_FILE = `${SECURITY_DIR}/rate-limited-ips.geo`;
 const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v2`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
+const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 250;
 const MAX_EVENT_LIMIT = 2000;
 const SESSION_WINDOW_MS = 5 * 60 * 1000;
@@ -380,6 +382,50 @@ const writeTextAtomic = async (path, value) => {
 
 const writeJsonAtomic = (path, value) => writeTextAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 
+const loadSecurityActions = async (limit = 500) => {
+	const text = await readTail(SECURITY_ACTION_LOG_FILE, MAX_ACTION_LOG_BYTES);
+	if (!text) return [];
+	return text
+		.split("\n")
+		.filter(Boolean)
+		.map(safeJsonParse)
+		.filter(Boolean)
+		.slice(-clamp(limit, 1, 2000));
+};
+
+const appendSecurityAction = async (entry) => {
+	await fs.promises.mkdir("/data/logs", { recursive: true });
+	try {
+		const stat = await fs.promises.stat(SECURITY_ACTION_LOG_FILE);
+		if (stat.size > MAX_ACTION_LOG_BYTES) {
+			const compacted = await readTail(SECURITY_ACTION_LOG_FILE, Math.floor(MAX_ACTION_LOG_BYTES / 2));
+			await writeTextAtomic(SECURITY_ACTION_LOG_FILE, compacted);
+		}
+	} catch (err) {
+		if (err.code !== "ENOENT") throw err;
+	}
+	await fs.promises.appendFile(SECURITY_ACTION_LOG_FILE, `${JSON.stringify(entry)}\n`, "utf8");
+};
+
+const recordResponseAction = async (type, action, record) => {
+	try {
+		await appendSecurityAction({
+			id: randomUUID(),
+			at: new Date().toISOString(),
+			type,
+			action,
+			responseId: record.id,
+			ip: record.ip,
+			source: record.source || "hyrovi-sec",
+			reason: String(record.reason || "").slice(0, 300),
+			createdAt: record.createdAt || null,
+			expiresAt: record.expiresAt || null,
+		});
+	} catch (err) {
+		logger.error(`HYROVI Sec response audit write failed: ${err.message}`);
+	}
+};
+
 const withSecurityConfigMutation = (operation) => {
 	const run = securityConfigMutationQueue.then(operation, operation);
 	securityConfigMutationQueue = run.catch(() => undefined);
@@ -556,7 +602,10 @@ const purgeExpiredUnsafe = async () => {
 	const blocks = await readBlocksUnsafe();
 	const active = activeBlocks(blocks);
 	if (active.length === blocks.length) return active;
+	const activeIds = new Set(active.map((block) => block.id));
+	const expired = blocks.filter((block) => !activeIds.has(block.id));
 	await commitBlockState(blocks, active);
+	for (const block of expired) await recordResponseAction("block", "expired", block);
 	return active;
 };
 
@@ -633,7 +682,10 @@ const purgeExpiredRateLimitsUnsafe = async () => {
 	const entries = await readRateLimitsUnsafe();
 	const active = activeBlocks(entries);
 	if (active.length === entries.length) return active;
+	const activeIds = new Set(active.map((entry) => entry.id));
+	const expired = entries.filter((entry) => !activeIds.has(entry.id));
 	await commitRateLimitState(entries, active);
+	for (const entry of expired) await recordResponseAction("rate_limit", "expired", entry);
 	return active;
 };
 
@@ -672,6 +724,7 @@ const addRateLimitUnsafe = async ({ ip, reason, source, durationMinutes }) => {
 	const entry = createRateLimitRecord({ ip, reason, source, durationMinutes: minutes });
 	const next = [...entries, entry];
 	await commitRateLimitState(entries, next);
+	await recordResponseAction("rate_limit", "started", entry);
 	return entry;
 };
 const createBlockRecord = ({ ip, reason, source, durationMinutes }) => {
@@ -696,6 +749,7 @@ const addBlockUnsafe = async ({ ip, reason, source, durationMinutes }) => {
 	const block = createBlockRecord({ ip, reason, source, durationMinutes: minutes });
 	const next = [...blocks, block];
 	await commitBlockState(blocks, next);
+	await recordResponseAction("block", "started", block);
 	return block;
 };
 
@@ -837,6 +891,7 @@ const monitorThreats = async () => {
 		if (rateLimitAdditions.length > 0) {
 			await commitRateLimitState(rateLimits, [...rateLimits, ...rateLimitAdditions]);
 			for (const entry of rateLimitAdditions) {
+				await recordResponseAction("rate_limit", "started", entry);
 				logger.warn(`HYROVI Sec auto-rate-limited ${entry.ip} until ${entry.expiresAt}: ${entry.reason}`);
 			}
 		}
@@ -844,6 +899,7 @@ const monitorThreats = async () => {
 		if (blockAdditions.length > 0) {
 			await commitBlockState(blocks, [...blocks, ...blockAdditions]);
 			for (const block of blockAdditions) {
+				await recordResponseAction("block", "started", block);
 				logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
 			}
 		}
@@ -1092,17 +1148,24 @@ const internalSecurity = {
 
 	getAttackSession: async (access, sessionId) => {
 		await access.can("logs:list");
-		const [rawEvents, blocks, rateLimits, policy] = await Promise.all([
+		const [rawEvents, blocks, rateLimits, actions, policy] = await Promise.all([
 			loadEvents(MAX_EVENT_LIMIT),
 			purgeExpired(),
 			purgeExpiredRateLimits(),
+			loadSecurityActions(1000),
 			readPolicyUnsafe(),
 		]);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const session = buildAttackSessions(events).find((entry) => entry.id === sessionId);
 		if (!session) throw new errs.ItemNotFoundError(sessionId);
-		return attackSessionDetail(session, blocks, rateLimits);
+		return {
+			...attackSessionDetail(session, blocks, rateLimits),
+			responseHistory: actions
+				.filter((entry) => entry.ip === session.ip)
+				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
+				.slice(-100),
+		};
 	},
 
 	getPolicy: async (access) => {
@@ -1250,9 +1313,11 @@ const internalSecurity = {
 		await access.can("users:list");
 		return withSecurityConfigMutation(async () => {
 			const entries = await purgeExpiredRateLimitsUnsafe();
+			const removed = entries.find((entry) => entry.id === id);
 			const next = entries.filter((entry) => entry.id !== id);
-			if (next.length === entries.length) throw new errs.ItemNotFoundError(id);
+			if (!removed) throw new errs.ItemNotFoundError(id);
 			await commitRateLimitState(entries, next);
+			await recordResponseAction("rate_limit", "removed", removed);
 			return { success: true };
 		});
 	},
@@ -1277,9 +1342,11 @@ const internalSecurity = {
 		await access.can("users:list");
 		return withSecurityConfigMutation(async () => {
 			const blocks = await purgeExpiredUnsafe();
+			const removed = blocks.find((block) => block.id === id);
 			const next = blocks.filter((block) => block.id !== id);
-			if (next.length === blocks.length) throw new errs.ItemNotFoundError(id);
+			if (!removed) throw new errs.ItemNotFoundError(id);
 			await commitBlockState(blocks, next);
+			await recordResponseAction("block", "removed", removed);
 			return { success: true };
 		});
 	},

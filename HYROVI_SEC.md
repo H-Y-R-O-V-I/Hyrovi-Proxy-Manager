@@ -19,6 +19,7 @@ The first implementation adds:
 - risk scoring and explainable signals;
 - event-relative 60-second burst analysis so historical risk explanations remain stable;
 - attack-session aggregation by source IP with stable bounded-window IDs, host summaries, top request patterns and incident timelines;
+- bounded response-action history for rate-limit/block start, removal and expiry;
 - critical/suspicious request inspection plus drill-down incident detail in the admin UI;
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
@@ -43,6 +44,8 @@ The security log deliberately does **not** store:
 - referrer URLs.
 
 The current event record contains only the minimum useful request metadata: timestamp, request ID, host, method, path without query string, response status, source IP, user-agent, request size, response bytes, request duration and upstream status.
+
+The response-action audit log stores only response lifecycle metadata (time, source IP, response type/action, source/reason, response ID and expiry). It does not add query strings, request bodies, cookies, Authorization headers, API keys/tokens or referrer URLs. The file is bounded and compacted instead of growing indefinitely.
 
 ## Enforcement path
 
@@ -79,6 +82,7 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/rate-limits.json`
 - `/data/nginx/hyrovi-security/rate-limited-ips.geo`
 - `/data/nginx/hyrovi-security/policy.json`
+- `/data/logs/hyrovi-sec-actions.log` (bounded JSONL response audit history)
 
 Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v2` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
 

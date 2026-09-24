@@ -47,12 +47,26 @@ export interface SecurityAttackSessionPattern {
 	statuses: number[];
 }
 
+export interface SecurityResponseHistoryEntry {
+	id: string;
+	at: string;
+	type: "block" | "rate_limit";
+	action: "started" | "removed" | "expired";
+	responseId: string;
+	ip: string;
+	source: string;
+	reason: string;
+	createdAt: string | null;
+	expiresAt: string | null;
+}
+
 export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 	requestPatterns: SecurityAttackSessionPattern[];
 	activeResponses: Array<
 		| (SecurityBlock & { type: "block" })
 		| (SecurityRateLimit & { type: "rate_limit" })
 	>;
+	responseHistory: SecurityResponseHistoryEntry[];
 	timeline: SecurityEvent[];
 }
 

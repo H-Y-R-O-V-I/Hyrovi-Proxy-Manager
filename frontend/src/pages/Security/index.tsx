@@ -719,6 +719,52 @@ const Security = () => {
 									</div>
 								</div>
 
+								<div className="border-bottom">
+									<div className="card-body pb-2">
+										<h4 className="mb-1">Response history</h4>
+										<div className="text-secondary small">
+											Recorded HYROVI Sec rate-limit and block lifecycle actions for this source.
+										</div>
+									</div>
+									<div className="table-responsive">
+										<table className="table table-vcenter card-table">
+											<thead>
+												<tr>
+													<th>Time</th>
+													<th>Action</th>
+													<th>Type</th>
+													<th>Source</th>
+													<th>Reason</th>
+													<th>Expires</th>
+												</tr>
+											</thead>
+											<tbody>
+												{incident.data.responseHistory.map((entry) => (
+													<tr key={entry.id}>
+														<td className="text-nowrap">{formatTime(entry.at)}</td>
+														<td>
+															<span className={`badge ${entry.action === "started" ? "bg-yellow text-dark" : "bg-secondary-lt"}`}>
+																{entry.action}
+															</span>
+														</td>
+														<td>{entry.type === "block" ? "Block" : "Rate limit"}</td>
+														<td>{entry.source}</td>
+														<td>{entry.reason || "—"}</td>
+														<td>{formatTime(entry.expiresAt)}</td>
+													</tr>
+												))}
+												{incident.data.responseHistory.length === 0 ? (
+													<tr>
+														<td colSpan={6} className="text-secondary">
+															No recorded response actions for this source.
+														</td>
+													</tr>
+												) : null}
+											</tbody>
+										</table>
+									</div>
+								</div>
+
 								<div className="table-responsive border-bottom">
 									<table className="table table-vcenter card-table">
 										<thead>
