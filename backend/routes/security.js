@@ -162,6 +162,33 @@ router
 		}
 	});
 
+router.get("/detection-rules/export", async (req, res, next) => {
+	try {
+		await res.locals.access.can("logs:list");
+		res.set("Cache-Control", "no-store");
+		res.status(200).send(await internalSecurityDetectionRules.exportRules());
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/detection-rules/import", async (req, res, next) => {
+	try {
+		await res.locals.access.can("users:list");
+		res.status(200).send(
+			await internalSecurityDetectionRules.importRules({
+				version: req.body?.version,
+				mode: req.body?.mode,
+				rules: Array.isArray(req.body?.rules) ? req.body.rules.map(detectionRuleInput) : req.body?.rules,
+			}),
+		);
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router
 	.route("/detection-rules/:rule_id")
 	.put(async (req, res, next) => {

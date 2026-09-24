@@ -345,6 +345,20 @@ export interface SecurityDetectionRule {
 	updatedAt: string;
 }
 
+
+export interface SecurityDetectionRulesExport {
+	version: 1;
+	exportedAt: string;
+	rules: Array<Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">>;
+}
+
+export interface SecurityDetectionRulesImportResult {
+	mode: "merge" | "replace";
+	added: number;
+	skipped: number;
+	total: number;
+}
+
 export interface SecurityTrustedDevice {
 	deviceId: string;
 	name: string;
@@ -419,6 +433,16 @@ export async function updateSecurityDetectionRule(
 
 export async function deleteSecurityDetectionRule(id: string): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/detection-rules/${encodeURIComponent(id)}` });
+}
+
+export async function exportSecurityDetectionRules(): Promise<SecurityDetectionRulesExport> {
+	return await api.get({ url: "/security/detection-rules/export" });
+}
+
+export async function importSecurityDetectionRules(
+	data: SecurityDetectionRulesExport & { mode: "merge" | "replace" },
+): Promise<SecurityDetectionRulesImportResult> {
+	return await api.post({ url: "/security/detection-rules/import", data });
 }
 
 export async function acknowledgeSecurityAlert(id: string): Promise<SecurityAlert> {

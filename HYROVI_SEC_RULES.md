@@ -91,3 +91,21 @@ Read access uses the normal Nginx Proxy Manager `logs:list` permission. Mutation
 The HYROVI Sec page provides create, enable/disable and delete controls. Matching changes affect new live analysis immediately. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
 
 If the rule file becomes unreadable or invalid, HYROVI Sec logs the problem and continues built-in detection without custom rules instead of disabling the security monitor.
+
+## Import and export
+
+The HYROVI Sec page can export all custom rules as versioned portable JSON and import them again in either `merge` or `replace` mode.
+
+Export endpoint:
+
+```text
+GET /api/security/detection-rules/export
+```
+
+Import endpoint:
+
+```text
+POST /api/security/detection-rules/import
+```
+
+Exported rule entries intentionally omit local IDs and timestamps. Imports are fully revalidated and always receive new local metadata. Repeated `merge` imports deduplicate identical rule configurations. `replace` validates the entire incoming set before atomically replacing the existing rules.

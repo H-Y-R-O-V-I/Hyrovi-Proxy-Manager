@@ -12,6 +12,7 @@ import {
 	deleteSecurityDetectionRule,
 	deleteSecurityHostPolicy,
 	deleteSecurityRateLimit,
+	exportSecurityDetectionRules,
 	getSecurityAlerts,
 	getSecurityAppEvents,
 	getSecurityAttackSession,
@@ -26,6 +27,7 @@ import {
 	getSecurityPolicy,
 	getSecurityRateLimits,
 	getSecurityTrustedDevices,
+	importSecurityDetectionRules,
 	updateSecurityDetectionRule,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
@@ -181,6 +183,8 @@ const Security = () => {
 	const [ruleMethods, setRuleMethods] = useState("");
 	const [ruleStatuses, setRuleStatuses] = useState("");
 	const [ruleUserAgent, setRuleUserAgent] = useState("");
+	const [ruleTransferText, setRuleTransferText] = useState("");
+	const [ruleImportMode, setRuleImportMode] = useState<"merge" | "replace">("merge");
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
@@ -343,6 +347,17 @@ const Security = () => {
 	const toggleDetectionRule = useMutation({
 		mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
 			updateSecurityDetectionRule(id, { enabled }),
+		onSuccess: refresh,
+	});
+	const exportDetectionRules = useMutation({
+		mutationFn: exportSecurityDetectionRules,
+		onSuccess: (data) => setRuleTransferText(JSON.stringify(data, null, 2)),
+	});
+	const importDetectionRules = useMutation({
+		mutationFn: async () => {
+			const parsed = JSON.parse(ruleTransferText);
+			return importSecurityDetectionRules({ ...parsed, mode: ruleImportMode });
+		},
 		onSuccess: refresh,
 	});
 	const registerTrustedDevice = useMutation({
@@ -1032,6 +1047,47 @@ const Security = () => {
 							</div>
 						</div>
 						{createDetectionRule.error ? <div className="text-red mt-2">{createDetectionRule.error.message}</div> : null}
+					</div>
+					<div className="card-body border-bottom">
+						<div className="row g-3 align-items-end">
+							<div className="col-12 col-lg-8">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-transfer">Rule import / export JSON</label>
+								<textarea
+									id="hyrovi-sec-rule-transfer"
+									className="form-control font-monospace"
+									rows={6}
+									value={ruleTransferText}
+									onChange={(event) => setRuleTransferText(event.target.value)}
+									placeholder="Export current rules here or paste a HYROVI Sec rule export."
+								/>
+							</div>
+							<div className="col-6 col-lg-2">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-import-mode">Import mode</label>
+								<select
+									id="hyrovi-sec-rule-import-mode"
+									className="form-select"
+									value={ruleImportMode}
+									onChange={(event) => setRuleImportMode(event.target.value as "merge" | "replace")}
+								>
+									<option value="merge">Merge</option>
+									<option value="replace">Replace</option>
+								</select>
+							</div>
+							<div className="col-6 col-lg-2 d-grid gap-2">
+								<Button className="btn-outline-primary" disabled={exportDetectionRules.isPending} onClick={() => exportDetectionRules.mutate()}>
+									Export JSON
+								</Button>
+								<Button className="btn-outline-secondary" disabled={!ruleTransferText.trim() || importDetectionRules.isPending} onClick={() => importDetectionRules.mutate()}>
+									Import
+								</Button>
+							</div>
+						</div>
+						{importDetectionRules.error ? <div className="text-red mt-2">{importDetectionRules.error.message}</div> : null}
+						{importDetectionRules.data ? (
+							<div className="text-secondary small mt-2">
+								Import {importDetectionRules.data.mode}: {importDetectionRules.data.added} added, {importDetectionRules.data.skipped} skipped, {importDetectionRules.data.total} total.
+							</div>
+						) : null}
 					</div>
 					<div className="table-responsive">
 						<table className="table table-vcenter card-table">

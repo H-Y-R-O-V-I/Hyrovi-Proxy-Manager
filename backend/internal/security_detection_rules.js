@@ -175,6 +175,70 @@ const deleteRule = (id) =>
 		return { success: true };
 	});
 
+const portableRule = (rule) => ({
+	name: rule.name,
+	enabled: rule.enabled,
+	score: rule.score,
+	response: rule.response,
+	match: rule.match,
+});
+
+const portableRuleKey = (rule) => JSON.stringify(portableRule(rule));
+
+const exportRules = async () => ({
+	version: 1,
+	exportedAt: new Date().toISOString(),
+	rules: (await listRules()).map(portableRule),
+});
+
+const importRules = (payload = {}) =>
+	withMutation(async () => {
+		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+			throw new errs.ValidationError("Detection-rule import payload must be an object");
+		}
+		if (Number.parseInt(payload.version, 10) !== 1) {
+			throw new errs.ValidationError("Unsupported detection-rule export version");
+		}
+		const mode = String(payload.mode || "merge").trim().toLowerCase();
+		if (!["merge", "replace"].includes(mode)) {
+			throw new errs.ValidationError("Detection-rule import mode must be merge or replace");
+		}
+		if (!Array.isArray(payload.rules)) {
+			throw new errs.ValidationError("Detection-rule import requires a rules array");
+		}
+		if (payload.rules.length > MAX_RULES) {
+			throw new errs.ValidationError(`Detection-rule import is limited to ${MAX_RULES} rules`);
+		}
+
+		const imported = payload.rules.map((rule) => normalizeRuleInput(rule));
+		const existing = mode === "replace" ? [] : await readRulesUnsafe();
+		const existingKeys = new Set(existing.map(portableRuleKey));
+		const additions = [];
+		let skipped = 0;
+
+		for (const rule of imported) {
+			const key = portableRuleKey(rule);
+			if (existingKeys.has(key)) {
+				skipped += 1;
+				continue;
+			}
+			existingKeys.add(key);
+			additions.push(rule);
+		}
+
+		const next = [...existing, ...additions];
+		if (next.length > MAX_RULES) {
+			throw new errs.ValidationError(`Detection rules are limited to ${MAX_RULES}; import would create ${next.length}`);
+		}
+		await writeJsonAtomic(RULES_FILE, next);
+		return {
+			mode,
+			added: additions.length,
+			skipped,
+			total: next.length,
+		};
+	});
+
 const hostMatches = (pattern, host) => {
 	if (!pattern) return true;
 	const normalized = String(host || "").toLowerCase();
@@ -232,6 +296,8 @@ const internalSecurityDetectionRules = {
 	createRule,
 	updateRule,
 	deleteRule,
+	exportRules,
+	importRules,
 	matchRules,
 };
 
