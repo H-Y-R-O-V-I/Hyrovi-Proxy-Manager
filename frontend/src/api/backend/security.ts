@@ -271,6 +271,28 @@ export interface SecurityAlertsResponse {
 	alerts: SecurityAlert[];
 }
 
+export type SecurityDetectionRuleResponse = "observe" | "soft";
+
+export interface SecurityDetectionRuleMatch {
+	host: string | null;
+	pathPrefix: string | null;
+	pathContains: string | null;
+	methods: string[];
+	statuses: number[];
+	userAgentContains: string | null;
+}
+
+export interface SecurityDetectionRule {
+	id: string;
+	name: string;
+	enabled: boolean;
+	score: number;
+	response: SecurityDetectionRuleResponse;
+	match: SecurityDetectionRuleMatch;
+	createdAt: string;
+	updatedAt: string;
+}
+
 export interface SecurityTrustedDevice {
 	deviceId: string;
 	name: string;
@@ -319,6 +341,28 @@ export async function getSecurityAlerts(limit = 100, status: SecurityAlertStatus
 		url: "/security/alerts",
 		params: { limit, ...(status ? { status } : {}) },
 	});
+}
+
+
+export async function getSecurityDetectionRules(): Promise<SecurityDetectionRule[]> {
+	return await api.get({ url: "/security/detection-rules" });
+}
+
+export async function createSecurityDetectionRule(
+	data: Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">,
+): Promise<SecurityDetectionRule> {
+	return await api.post({ url: "/security/detection-rules", data });
+}
+
+export async function updateSecurityDetectionRule(
+	id: string,
+	data: Partial<Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">>,
+): Promise<SecurityDetectionRule> {
+	return await api.put({ url: `/security/detection-rules/${encodeURIComponent(id)}`, data });
+}
+
+export async function deleteSecurityDetectionRule(id: string): Promise<{ success: boolean }> {
+	return await api.del({ url: `/security/detection-rules/${encodeURIComponent(id)}` });
 }
 
 export async function acknowledgeSecurityAlert(id: string): Promise<SecurityAlert> {

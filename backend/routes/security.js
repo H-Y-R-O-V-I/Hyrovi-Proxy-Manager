@@ -4,6 +4,7 @@ import internalSecurityAppEvents from "../internal/security_app_events.js";
 import internalSecurityAlerts from "../internal/security_alerts.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
+import internalSecurityDetectionRules from "../internal/security_detection_rules.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
 
@@ -120,6 +121,69 @@ router.get("/integration/alerts", async (req, res, next) => {
 });
 
 router.use(jwtdecode());
+
+const detectionRuleInput = (body = {}) => ({
+	name: body?.name,
+	enabled: body?.enabled,
+	score: body?.score,
+	response: body?.response,
+	...(body?.match
+		? {
+				match: {
+					host: body.match.host,
+					pathPrefix: body.match.path_prefix,
+					pathContains: body.match.path_contains,
+					methods: body.match.methods,
+					statuses: body.match.statuses,
+					userAgentContains: body.match.user_agent_contains,
+				},
+			}
+		: {}),
+});
+
+router
+	.route("/detection-rules")
+	.get(async (req, res, next) => {
+		try {
+			await res.locals.access.can("logs:list");
+			res.status(200).send(await internalSecurityDetectionRules.listRules());
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.post(async (req, res, next) => {
+		try {
+			await res.locals.access.can("users:list");
+			res.status(201).send(await internalSecurityDetectionRules.createRule(detectionRuleInput(req.body)));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router
+	.route("/detection-rules/:rule_id")
+	.put(async (req, res, next) => {
+		try {
+			await res.locals.access.can("users:list");
+			res.status(200).send(
+				await internalSecurityDetectionRules.updateRule(req.params.rule_id, detectionRuleInput(req.body)),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.delete(async (req, res, next) => {
+		try {
+			await res.locals.access.can("users:list");
+			res.status(200).send(await internalSecurityDetectionRules.deleteRule(req.params.rule_id));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
 
 router.get("/alerts", async (req, res, next) => {
 	try {

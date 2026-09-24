@@ -8,6 +8,7 @@ import internalSecurityAppEvents from "./security_app_events.js";
 import internalSecurityAlerts from "./security_alerts.js";
 import internalSecurityChallenge from "./security_challenge.js";
 import internalSecurityDevices from "./security_devices.js";
+import internalSecurityDetectionRules from "./security_detection_rules.js";
 import deadHostModel from "../models/dead_host.js";
 import proxyHostModel from "../models/proxy_host.js";
 import redirectionHostModel from "../models/redirection_host.js";
@@ -269,14 +270,16 @@ const normalizeEvent = (raw) => {
 	};
 };
 
-const baseSignals = (event) => {
+const baseSignals = (event, detectionRules = []) => {
 	const signals = [];
 	const path = event.path.toLowerCase();
 	const ua = event.userAgent.toLowerCase();
 	let risk = 0;
+	let automationRisk = 0;
 
-	const add = (id, score, label) => {
+	const add = (id, score, label, automationEligible = true) => {
 		risk += score;
+		if (automationEligible) automationRisk += score;
 		signals.push({ id, score, label });
 	};
 
@@ -310,17 +313,22 @@ const baseSignals = (event) => {
 		add("slow_request", 8, "Very long request duration");
 	}
 
-	return { risk, signals };
+	for (const signal of internalSecurityDetectionRules.matchRules(detectionRules, event)) {
+		add(signal.id, signal.score, signal.label, signal.response === "soft");
+	}
+
+	return { risk, automationRisk, signals };
 };
 
-const enrichEvents = (events) => {
+const enrichEvents = (events, detectionRules = []) => {
 	const analyzed = events.map((event, index) => {
-		const base = baseSignals(event);
+		const base = baseSignals(event, detectionRules);
 		return {
 			event,
 			index,
 			time: parseTimestamp(event.timestamp)?.getTime() ?? null,
 			baseRisk: base.risk,
+			baseAutomationRisk: base.automationRisk,
 			baseSignals: base.signals,
 		};
 	});
@@ -344,7 +352,7 @@ const enrichEvents = (events) => {
 		const addToWindow = (item) => {
 			if ([401, 403].includes(item.event.status)) denied += 1;
 			if (item.event.status === 404) missing += 1;
-			if (item.baseRisk >= 30) {
+			if (item.baseAutomationRisk >= 30) {
 				suspiciousPathCounts.set(item.event.path, (suspiciousPathCounts.get(item.event.path) || 0) + 1);
 			}
 		};
@@ -352,7 +360,7 @@ const enrichEvents = (events) => {
 		const removeFromWindow = (item) => {
 			if ([401, 403].includes(item.event.status)) denied -= 1;
 			if (item.event.status === 404) missing -= 1;
-			if (item.baseRisk >= 30) {
+			if (item.baseAutomationRisk >= 30) {
 				const next = (suspiciousPathCounts.get(item.event.path) || 0) - 1;
 				if (next <= 0) suspiciousPathCounts.delete(item.event.path);
 				else suspiciousPathCounts.set(item.event.path, next);
@@ -380,11 +388,13 @@ const enrichEvents = (events) => {
 	return analyzed.map((item) => {
 		const signals = [...item.baseSignals];
 		let risk = item.baseRisk;
+		let automationRisk = item.baseAutomationRisk;
 		const recent = contextByIndex.get(item.index);
 
 		const add = (id, score, label) => {
 			if (signals.some((signal) => signal.id === id)) return;
 			risk += score;
+			automationRisk += score;
 			signals.push({ id, score, label });
 		};
 
@@ -394,13 +404,17 @@ const enrichEvents = (events) => {
 		if (recent?.suspiciousPaths >= 5) add("reconnaissance_burst", 35, "Multiple suspicious paths probed");
 
 		risk = clamp(risk, 0, 100);
+		automationRisk = clamp(automationRisk, 0, 100);
 		const severity = risk >= 80 ? "critical" : risk >= 60 ? "high" : risk >= 40 ? "medium" : risk >= 20 ? "low" : "normal";
-		return { ...item.event, risk, severity, signals };
+		return { ...item.event, risk, automationRisk, severity, signals };
 	});
 };
 
 const loadLiveEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
-	const text = await readSecurityEventWindow();
+	const [text, detectionRules] = await Promise.all([
+		readSecurityEventWindow(),
+		internalSecurityDetectionRules.listRulesForAnalysis(),
+	]);
 	if (!text) return [];
 	const parsed = text
 		.split("\n")
@@ -410,7 +424,7 @@ const loadLiveEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
 		.map(normalizeEvent)
 		.filter((event) => event.ip && event.host);
 
-	const enriched = enrichEvents(parsed);
+	const enriched = enrichEvents(parsed, detectionRules);
 	return enriched.slice(-clamp(limit, 1, MAX_EVENT_LIMIT)).reverse();
 };
 
@@ -886,7 +900,7 @@ const rememberEvent = (event) => {
 
 const eventIsAutoBlockCandidate = (event, policy) => {
 	if (
-		event.risk < policy.autoBlockThreshold ||
+		(event.automationRisk ?? event.risk) < policy.autoBlockThreshold ||
 		isPrivateOrLoopback(event.ip) ||
 		isTrustedSource(event.ip, policy.trustedSources)
 	) {
@@ -904,7 +918,7 @@ const eventIsAutoBlockCandidate = (event, policy) => {
 
 const eventIsAutoRateLimitCandidate = (event, policy) => {
 	if (
-		event.risk < policy.autoRateLimitThreshold ||
+		(event.automationRisk ?? event.risk) < policy.autoRateLimitThreshold ||
 		isPrivateOrLoopback(event.ip) ||
 		isTrustedSource(event.ip, policy.trustedSources)
 	) {
@@ -921,7 +935,8 @@ const eventIsAutoRateLimitCandidate = (event, policy) => {
 		ids.has("reconnaissance_burst") ||
 		(ids.has("scanner_user_agent") &&
 			(ids.has("cms_probe") || ids.has("access_denied") || ids.has("not_found"))) ||
-		(ids.has("unusual_method") && ids.has("access_denied"))
+		(ids.has("unusual_method") && ids.has("access_denied")) ||
+		[...ids].some((id) => id.startsWith("custom:soft:"))
 	);
 };
 
@@ -1850,6 +1865,7 @@ const internalSecurity = {
 		await ensureSecurityDir();
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
 		await internalSecurityDevices.prepare();
+		await internalSecurityDetectionRules.prepare();
 		await internalSecurityAlerts.prepare();
 		try {
 			await fs.promises.access(BLOCKS_CONF_FILE);

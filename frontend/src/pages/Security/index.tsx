@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	acknowledgeSecurityAlert,
 	createSecurityBlock,
+	createSecurityDetectionRule,
 	createSecurityRateLimit,
 	createSecurityTrustedDevice,
 	deleteSecurityBlock,
 	deleteSecurityChallenge,
+	deleteSecurityDetectionRule,
 	deleteSecurityHostPolicy,
 	deleteSecurityRateLimit,
 	getSecurityAlerts,
@@ -15,6 +17,7 @@ import {
 	getSecurityAttackSession,
 	getSecurityBlocks,
 	getSecurityChallenges,
+	getSecurityDetectionRules,
 	getSecurityEventDetail,
 	getSecurityEvents,
 	getSecurityHostPolicies,
@@ -22,6 +25,7 @@ import {
 	getSecurityPolicy,
 	getSecurityRateLimits,
 	getSecurityTrustedDevices,
+	updateSecurityDetectionRule,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
 	type SecurityAlertSeverity,
@@ -154,6 +158,15 @@ const Security = () => {
 	const [trustedDeviceName, setTrustedDeviceName] = useState("");
 	const [trustedDeviceApps, setTrustedDeviceApps] = useState("");
 	const [trustedDevicePublicKey, setTrustedDevicePublicKey] = useState("");
+	const [ruleName, setRuleName] = useState("");
+	const [ruleScore, setRuleScore] = useState(25);
+	const [ruleResponse, setRuleResponse] = useState<"observe" | "soft">("observe");
+	const [ruleHost, setRuleHost] = useState("");
+	const [rulePathPrefix, setRulePathPrefix] = useState("");
+	const [rulePathContains, setRulePathContains] = useState("");
+	const [ruleMethods, setRuleMethods] = useState("");
+	const [ruleStatuses, setRuleStatuses] = useState("");
+	const [ruleUserAgent, setRuleUserAgent] = useState("");
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
@@ -173,6 +186,11 @@ const Security = () => {
 	const alerts = useQuery({
 		queryKey: ["security-alerts"],
 		queryFn: () => getSecurityAlerts(100, "open"),
+		refetchInterval: POLL_MS,
+	});
+	const detectionRules = useQuery({
+		queryKey: ["security-detection-rules"],
+		queryFn: getSecurityDetectionRules,
 		refetchInterval: POLL_MS,
 	});
 	const appEvents = useQuery({
@@ -239,6 +257,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-event-detail"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-alerts"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-detection-rules"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-trusted-devices"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
@@ -280,6 +299,30 @@ const Security = () => {
 	});
 	const acknowledgeAlert = useMutation({
 		mutationFn: acknowledgeSecurityAlert,
+		onSuccess: refresh,
+	});
+	const createDetectionRule = useMutation({
+		mutationFn: createSecurityDetectionRule,
+		onSuccess: async () => {
+			setRuleName("");
+			setRuleScore(25);
+			setRuleResponse("observe");
+			setRuleHost("");
+			setRulePathPrefix("");
+			setRulePathContains("");
+			setRuleMethods("");
+			setRuleStatuses("");
+			setRuleUserAgent("");
+			await refresh();
+		},
+	});
+	const removeDetectionRule = useMutation({
+		mutationFn: deleteSecurityDetectionRule,
+		onSuccess: refresh,
+	});
+	const toggleDetectionRule = useMutation({
+		mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+			updateSecurityDetectionRule(id, { enabled }),
 		onSuccess: refresh,
 	});
 	const registerTrustedDevice = useMutation({
@@ -844,6 +887,138 @@ const Security = () => {
 								</div>
 							</div>
 						</div>
+					</div>
+				</div>
+
+				<div className="card mb-4">
+					<div className="card-header d-flex align-items-center justify-content-between">
+						<div>
+							<h3 className="card-title">Custom detection rules</h3>
+							<div className="text-secondary small">
+								Safe literal matchers only — no arbitrary regex or executable code. Observe rules add explainable risk; Soft rules may rate-limit after the normal risk threshold is reached, but never hard-block by themselves.
+							</div>
+						</div>
+						<span className="badge bg-azure-lt">{detectionRules.data?.length ?? 0} rules</span>
+					</div>
+					<div className="card-body border-bottom">
+						<div className="row g-3">
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-name">Name</label>
+								<input id="hyrovi-sec-rule-name" className="form-control" value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="Protect private API" />
+							</div>
+							<div className="col-6 col-lg-2">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-score">Risk points</label>
+								<input id="hyrovi-sec-rule-score" className="form-control" type="number" min={1} max={60} value={ruleScore} onChange={(event) => setRuleScore(Number(event.target.value))} />
+							</div>
+							<div className="col-6 col-lg-2">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-response">Response</label>
+								<select id="hyrovi-sec-rule-response" className="form-select" value={ruleResponse} onChange={(event) => setRuleResponse(event.target.value as "observe" | "soft")}>
+									<option value="observe">Observe</option>
+									<option value="soft">Soft response</option>
+								</select>
+							</div>
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-host">Host</label>
+								<input id="hyrovi-sec-rule-host" className="form-control font-monospace" value={ruleHost} onChange={(event) => setRuleHost(event.target.value)} placeholder="api.example.com or *.example.com" />
+							</div>
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-prefix">Path prefix</label>
+								<input id="hyrovi-sec-rule-prefix" className="form-control font-monospace" value={rulePathPrefix} onChange={(event) => setRulePathPrefix(event.target.value)} placeholder="/api/private" />
+							</div>
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-contains">Path contains</label>
+								<input id="hyrovi-sec-rule-contains" className="form-control font-monospace" value={rulePathContains} onChange={(event) => setRulePathContains(event.target.value)} placeholder="/secret/" />
+							</div>
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-methods">Methods</label>
+								<input id="hyrovi-sec-rule-methods" className="form-control font-monospace" value={ruleMethods} onChange={(event) => setRuleMethods(event.target.value)} placeholder="POST, PUT, DELETE" />
+							</div>
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-statuses">Statuses</label>
+								<input id="hyrovi-sec-rule-statuses" className="form-control font-monospace" value={ruleStatuses} onChange={(event) => setRuleStatuses(event.target.value)} placeholder="401, 403" />
+							</div>
+							<div className="col-12 col-lg-4">
+								<label className="form-label" htmlFor="hyrovi-sec-rule-ua">User-Agent contains</label>
+								<input id="hyrovi-sec-rule-ua" className="form-control font-monospace" value={ruleUserAgent} onChange={(event) => setRuleUserAgent(event.target.value)} placeholder="my-client" />
+							</div>
+							<div className="col-12 d-flex justify-content-end">
+								<Button
+									className="btn-primary"
+									disabled={
+										!ruleName.trim() ||
+										(!ruleHost.trim() && !rulePathPrefix.trim() && !rulePathContains.trim() && !ruleMethods.trim() && !ruleStatuses.trim() && !ruleUserAgent.trim()) ||
+										createDetectionRule.isPending
+									}
+									onClick={() =>
+										createDetectionRule.mutate({
+											name: ruleName.trim(),
+											enabled: true,
+											score: ruleScore,
+											response: ruleResponse,
+											match: {
+												host: ruleHost.trim() || null,
+												pathPrefix: rulePathPrefix.trim() || null,
+												pathContains: rulePathContains.trim() || null,
+												methods: ruleMethods.split(",").map((entry) => entry.trim()).filter(Boolean),
+												statuses: ruleStatuses.split(",").map((entry) => Number(entry.trim())).filter((entry) => Number.isInteger(entry) && entry > 0),
+												userAgentContains: ruleUserAgent.trim() || null,
+											},
+										})
+									}
+								>
+									Add detection rule
+								</Button>
+							</div>
+						</div>
+						{createDetectionRule.error ? <div className="text-red mt-2">{createDetectionRule.error.message}</div> : null}
+					</div>
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>Rule</th>
+									<th>Response</th>
+									<th>Risk</th>
+									<th>Matchers</th>
+									<th>Status</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{(detectionRules.data ?? []).map((rule) => {
+									const matcherParts = [
+										rule.match.host ? `host ${rule.match.host}` : null,
+										rule.match.pathPrefix ? `prefix ${rule.match.pathPrefix}` : null,
+										rule.match.pathContains ? `path contains ${rule.match.pathContains}` : null,
+										rule.match.methods.length ? `methods ${rule.match.methods.join("/")}` : null,
+										rule.match.statuses.length ? `status ${rule.match.statuses.join("/")}` : null,
+										rule.match.userAgentContains ? `UA contains ${rule.match.userAgentContains}` : null,
+									].filter(Boolean);
+									return (
+										<tr key={rule.id}>
+											<td><strong>{rule.name}</strong><div className="text-secondary small font-monospace">{rule.id}</div></td>
+											<td><span className={`badge ${rule.response === "soft" ? "bg-yellow text-dark" : "bg-blue-lt"}`}>{rule.response}</span></td>
+											<td>+{rule.score}</td>
+											<td className="text-secondary small">{matcherParts.join(" · ")}</td>
+											<td><span className={`badge ${rule.enabled ? "bg-green-lt" : "bg-secondary-lt"}`}>{rule.enabled ? "enabled" : "disabled"}</span></td>
+											<td className="text-end">
+												<div className="d-flex gap-1 justify-content-end">
+													<Button className="btn-outline-secondary" disabled={toggleDetectionRule.isPending} onClick={() => toggleDetectionRule.mutate({ id: rule.id, enabled: !rule.enabled })}>
+														{rule.enabled ? "Disable" : "Enable"}
+													</Button>
+													<Button className="btn-outline-danger" disabled={removeDetectionRule.isPending} onClick={() => removeDetectionRule.mutate(rule.id)}>
+														Delete
+													</Button>
+												</div>
+											</td>
+										</tr>
+									);
+								})}
+								{!detectionRules.isLoading && (detectionRules.data?.length ?? 0) === 0 ? (
+									<tr><td colSpan={6} className="text-secondary">No custom detection rules configured.</td></tr>
+								) : null}
+							</tbody>
+						</table>
 					</div>
 				</div>
 
