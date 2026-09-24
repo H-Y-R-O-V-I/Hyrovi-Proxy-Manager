@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import net from "node:net";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import errs from "../lib/error.js";
 import { global as logger } from "../logger.js";
 import internalNginx from "./nginx.js";
@@ -849,6 +849,129 @@ const monitorThreats = async () => {
 		}
 	});
 };
+
+const attackSessionId = (ip, firstSeen) =>
+	createHash("sha256").update(`${ip}|${firstSeen || ""}`).digest("hex").slice(0, 24);
+
+const sessionRequestPatterns = (timeline) => {
+	const groups = new Map();
+	for (const event of timeline) {
+		const key = [event.host, event.method, event.path].join("|");
+		let group = groups.get(key);
+		if (!group) {
+			group = {
+				host: event.host,
+				method: event.method,
+				path: event.path,
+				count: 0,
+				maxRisk: 0,
+				statuses: new Set(),
+			};
+			groups.set(key, group);
+		}
+		group.count += 1;
+		group.maxRisk = Math.max(group.maxRisk, event.risk);
+		if (event.status) group.statuses.add(event.status);
+	}
+
+	return [...groups.values()]
+		.map((group) => ({ ...group, statuses: [...group.statuses].sort((a, b) => a - b) }))
+		.sort((a, b) => b.count - a.count || b.maxRisk - a.maxRisk)
+		.slice(0, 20);
+};
+
+const buildAttackSessions = (events) => {
+	const suspicious = events.filter((event) => event.risk >= 40);
+	const orderedSuspicious = [...suspicious].sort((a, b) => {
+		const aTime = parseTimestamp(a.timestamp)?.getTime() || 0;
+		const bTime = parseTimestamp(b.timestamp)?.getTime() || 0;
+		return aTime - bTime;
+	});
+	const sessionsByIp = new Map();
+	const attackSessions = [];
+
+	for (const event of orderedSuspicious) {
+		const eventTime = parseTimestamp(event.timestamp)?.getTime() || 0;
+		let session = sessionsByIp.get(event.ip);
+		if (!session || eventTime - session.lastSeenMs > SESSION_WINDOW_MS) {
+			const firstSeen = event.timestamp || event.requestId || "";
+			session = {
+				id: attackSessionId(event.ip, firstSeen),
+				ip: event.ip,
+				requests: 0,
+				maxRisk: 0,
+				signals: new Set(),
+				hosts: new Set(),
+				firstSeen: event.timestamp,
+				lastSeen: event.timestamp,
+				lastSeenMs: eventTime,
+				timeline: [],
+			};
+			attackSessions.push(session);
+			sessionsByIp.set(event.ip, session);
+		}
+
+		session.requests += 1;
+		session.maxRisk = Math.max(session.maxRisk, event.risk);
+		for (const signal of event.signals) session.signals.add(signal.id);
+		if (event.host) session.hosts.add(event.host);
+		session.timeline.push(event);
+		session.lastSeen = event.timestamp;
+		session.lastSeenMs = eventTime;
+	}
+
+	return attackSessions;
+};
+
+const attackSessionSummary = (session, blocks = [], rateLimits = []) => {
+	const block = blocks.find((entry) => entry.ip === session.ip);
+	const rateLimit = rateLimits.find((entry) => entry.ip === session.ip);
+	return {
+		id: session.id,
+		ip: session.ip,
+		requests: session.requests,
+		maxRisk: session.maxRisk,
+		signals: [...session.signals],
+		hosts: [...session.hosts],
+		firstSeen: session.firstSeen,
+		lastSeen: session.lastSeen,
+		activeResponse: block ? "block" : rateLimit ? "rate_limit" : null,
+	};
+};
+
+const attackSessionDetail = (session, blocks = [], rateLimits = []) => {
+	const activeResponses = [];
+	for (const block of blocks) {
+		if (block.ip === session.ip) activeResponses.push({ type: "block", ...block });
+	}
+	for (const rateLimit of rateLimits) {
+		if (rateLimit.ip === session.ip) activeResponses.push({ type: "rate_limit", ...rateLimit });
+	}
+	return {
+		...attackSessionSummary(session, blocks, rateLimits),
+		requestPatterns: sessionRequestPatterns(session.timeline),
+		activeResponses,
+		timeline: session.timeline.map((event) => ({
+			timestamp: event.timestamp,
+			requestId: event.requestId,
+			host: event.host,
+			method: event.method,
+			path: event.path,
+			status: event.status,
+			userAgent: event.userAgent,
+			risk: event.risk,
+			severity: event.severity,
+			signals: event.signals,
+			requestLength: event.requestLength,
+			bytesSent: event.bytesSent,
+			requestTime: event.requestTime,
+			upstreamStatus: event.upstreamStatus,
+			proxyHostId: event.proxyHostId,
+			securityMode: event.securityMode,
+		})),
+	};
+};
+
 const getEnabledHosts = (model) =>
 	model
 		.query()
@@ -937,7 +1060,7 @@ const internalSecurity = {
 	getOverview: async (access) => {
 		await access.can("logs:list");
 		const [rawEvents, blocks, rateLimits, policy] = await Promise.all([
-			loadEvents(1000),
+			loadEvents(MAX_EVENT_LIMIT),
 			purgeExpired(),
 			purgeExpiredRateLimits(),
 			readPolicyUnsafe(),
@@ -946,43 +1069,8 @@ const internalSecurity = {
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const suspicious = events.filter((event) => event.risk >= 40);
 		const critical = events.filter((event) => event.risk >= 80);
-		const sessionsByIp = new Map();
-		const attackSessions = [];
-
-		const orderedSuspicious = [...suspicious].sort((a, b) => {
-			const aTime = parseTimestamp(a.timestamp)?.getTime() || 0;
-			const bTime = parseTimestamp(b.timestamp)?.getTime() || 0;
-			return aTime - bTime;
-		});
-
-		for (const event of orderedSuspicious) {
-			const eventTime = parseTimestamp(event.timestamp)?.getTime() || 0;
-			let session = sessionsByIp.get(event.ip);
-
-			if (!session || eventTime - session.lastSeenMs > SESSION_WINDOW_MS) {
-				session = {
-					id: `${event.ip}-${event.timestamp || event.requestId || attackSessions.length}`,
-					ip: event.ip,
-					requests: 0,
-					maxRisk: 0,
-					signals: new Set(),
-					firstSeen: event.timestamp,
-					lastSeen: event.timestamp,
-					lastSeenMs: eventTime,
-				};
-				attackSessions.push(session);
-				sessionsByIp.set(event.ip, session);
-			}
-
-			session.requests += 1;
-			session.maxRisk = Math.max(session.maxRisk, event.risk);
-			for (const signal of event.signals) session.signals.add(signal.id);
-			session.lastSeen = event.timestamp;
-			session.lastSeenMs = eventTime;
-		}
-
-		const publicSessions = attackSessions
-			.map(({ lastSeenMs: _, ...session }) => ({ ...session, signals: [...session.signals] }))
+		const publicSessions = buildAttackSessions(events)
+			.map((session) => attackSessionSummary(session, blocks, rateLimits))
 			.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime() || b.maxRisk - a.maxRisk)
 			.slice(0, 20);
 
@@ -1000,6 +1088,21 @@ const internalSecurity = {
 			},
 			attackSessions: publicSessions,
 		};
+	},
+
+	getAttackSession: async (access, sessionId) => {
+		await access.can("logs:list");
+		const [rawEvents, blocks, rateLimits, policy] = await Promise.all([
+			loadEvents(MAX_EVENT_LIMIT),
+			purgeExpired(),
+			purgeExpiredRateLimits(),
+			readPolicyUnsafe(),
+		]);
+		const hostPolicyContext = await getHostPolicyContext(policy);
+		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
+		const session = buildAttackSessions(events).find((entry) => entry.id === sessionId);
+		if (!session) throw new errs.ItemNotFoundError(sessionId);
+		return attackSessionDetail(session, blocks, rateLimits);
 	},
 
 	getPolicy: async (access) => {

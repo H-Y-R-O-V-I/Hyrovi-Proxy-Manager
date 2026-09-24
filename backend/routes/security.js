@@ -34,6 +34,15 @@ router.get("/events", async (req, res, next) => {
 	}
 });
 
+router.get("/attack-sessions/:session_id", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.getAttackSession(res.locals.access, req.params.session_id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router
 	.route("/policy")
 	.get(async (req, res, next) => {

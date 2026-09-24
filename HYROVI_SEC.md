@@ -18,8 +18,8 @@ The first implementation adds:
 - bounded request analysis in the backend;
 - risk scoring and explainable signals;
 - event-relative 60-second burst analysis so historical risk explanations remain stable;
-- attack-session aggregation by source IP;
-- critical/suspicious request inspection in the admin UI;
+- attack-session aggregation by source IP with stable bounded-window IDs, host summaries, top request patterns and incident timelines;
+- critical/suspicious request inspection plus drill-down incident detail in the admin UI;
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;

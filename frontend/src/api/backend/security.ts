@@ -32,8 +32,28 @@ export interface SecurityAttackSession {
 	requests: number;
 	maxRisk: number;
 	signals: string[];
+	hosts: string[];
 	firstSeen: string;
 	lastSeen: string;
+	activeResponse: "block" | "rate_limit" | null;
+}
+
+export interface SecurityAttackSessionPattern {
+	host: string;
+	method: string;
+	path: string;
+	count: number;
+	maxRisk: number;
+	statuses: number[];
+}
+
+export interface SecurityAttackSessionDetail extends SecurityAttackSession {
+	requestPatterns: SecurityAttackSessionPattern[];
+	activeResponses: Array<
+		| (SecurityBlock & { type: "block" })
+		| (SecurityRateLimit & { type: "rate_limit" })
+	>;
+	timeline: SecurityEvent[];
 }
 
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
@@ -108,6 +128,10 @@ export async function getSecurityEvents(limit = 250, minRisk = 0): Promise<Secur
 		url: "/security/events",
 		params: { limit, minRisk },
 	});
+}
+
+export async function getSecurityAttackSession(id: string): Promise<SecurityAttackSessionDetail> {
+	return await api.get({ url: `/security/attack-sessions/${encodeURIComponent(id)}` });
 }
 
 export async function getSecurityPolicy(): Promise<SecurityPolicy> {

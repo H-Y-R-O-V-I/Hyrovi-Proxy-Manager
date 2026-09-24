@@ -7,6 +7,7 @@ import {
 	deleteSecurityBlock,
 	deleteSecurityHostPolicy,
 	deleteSecurityRateLimit,
+	getSecurityAttackSession,
 	getSecurityBlocks,
 	getSecurityEvents,
 	getSecurityHostPolicies,
@@ -71,6 +72,7 @@ const Security = () => {
 	const [reason, setReason] = useState("");
 	const [durationMinutes, setDurationMinutes] = useState(60);
 	const [trustedSourcesText, setTrustedSourcesText] = useState("");
+	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
 
 	const overview = useQuery({
@@ -103,6 +105,12 @@ const Security = () => {
 	const hostPolicies = useQuery({
 		queryKey: ["security-host-policies"],
 		queryFn: getSecurityHostPolicies,
+	});
+	const incident = useQuery({
+		queryKey: ["security-attack-session", selectedSessionId],
+		queryFn: () => getSecurityAttackSession(selectedSessionId || ""),
+		enabled: Boolean(selectedSessionId),
+		refetchInterval: selectedSessionId ? POLL_MS : false,
 	});
 	useEffect(() => {
 		if (policy.data) setTrustedSourcesText(policy.data.trustedSources.join("\n"));
@@ -615,14 +623,17 @@ const Security = () => {
 									<th>Source</th>
 									<th>Requests</th>
 									<th>Max risk</th>
+									<th>Hosts</th>
 									<th>Signals</th>
+									<th>Response</th>
 									<th>Last seen</th>
+									<th />
 								</tr>
 							</thead>
 							<tbody>
 								{topSessions.length === 0 ? (
 									<tr>
-										<td colSpan={5} className="text-secondary">
+										<td colSpan={8} className="text-secondary">
 											No suspicious attack sessions in the current analysis window.
 										</td>
 									</tr>
@@ -636,8 +647,27 @@ const Security = () => {
 													{session.maxRisk}
 												</span>
 											</td>
+											<td className="text-secondary">{session.hosts.join(", ") || "—"}</td>
 											<td className="text-secondary">{session.signals.join(", ") || "—"}</td>
+											<td>
+												{session.activeResponse === "block" ? (
+													<span className="badge bg-red text-white">Blocked</span>
+												) : session.activeResponse === "rate_limit" ? (
+													<span className="badge bg-yellow text-dark">Rate limited</span>
+												) : (
+													<span className="text-secondary">Observe</span>
+												)}
+											</td>
 											<td>{formatTime(session.lastSeen)}</td>
+											<td>
+												<button
+													type="button"
+													className="btn btn-sm btn-outline-primary"
+													onClick={() => setSelectedSessionId(session.id)}
+												>
+													Details
+												</button>
+											</td>
 										</tr>
 									))
 								)}
@@ -645,6 +675,108 @@ const Security = () => {
 						</table>
 					</div>
 				</div>
+
+				{selectedSessionId ? (
+					<div className="card mb-4">
+						<div className="card-header d-flex align-items-center justify-content-between">
+							<div>
+								<h3 className="card-title">Incident detail</h3>
+								<div className="text-secondary small">
+									{incident.data ? `${incident.data.ip} · ${incident.data.requests} suspicious requests · risk ${incident.data.maxRisk}` : "Loading attack session…"}
+								</div>
+							</div>
+							<button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedSessionId(null)}>
+								Close
+							</button>
+						</div>
+						{incident.error ? <div className="card-body text-red">{incident.error.message}</div> : null}
+						{incident.data ? (
+							<>
+								<div className="card-body border-bottom">
+									<div className="row g-3">
+										<div className="col-6 col-lg-3">
+											<div className="text-secondary small">First seen</div>
+											<div>{formatTime(incident.data.firstSeen)}</div>
+										</div>
+										<div className="col-6 col-lg-3">
+											<div className="text-secondary small">Last seen</div>
+											<div>{formatTime(incident.data.lastSeen)}</div>
+										</div>
+										<div className="col-12 col-lg-3">
+											<div className="text-secondary small">Hosts</div>
+											<div>{incident.data.hosts.join(", ") || "—"}</div>
+										</div>
+										<div className="col-12 col-lg-3">
+											<div className="text-secondary small">Active response</div>
+											<div>
+												{incident.data.activeResponses.length > 0
+													? incident.data.activeResponses
+														.map((response) => `${response.type === "block" ? "Block" : "Rate limit"} until ${formatTime(response.expiresAt)}`)
+														.join(" · ")
+													: "Observe only"}
+											</div>
+										</div>
+									</div>
+								</div>
+
+								<div className="table-responsive border-bottom">
+									<table className="table table-vcenter card-table">
+										<thead>
+											<tr>
+												<th>Top request pattern</th>
+												<th>Count</th>
+												<th>Max risk</th>
+												<th>Status</th>
+											</tr>
+										</thead>
+										<tbody>
+											{incident.data.requestPatterns.map((pattern) => (
+												<tr key={`${pattern.host}-${pattern.method}-${pattern.path}`}>
+													<td>
+														<div><strong>{pattern.method}</strong> {pattern.host}</div>
+														<div className="font-monospace text-secondary">{pattern.path}</div>
+													</td>
+													<td>{pattern.count}</td>
+													<td>{pattern.maxRisk}</td>
+													<td>{pattern.statuses.join(", ") || "—"}</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+
+								<div className="table-responsive">
+									<table className="table table-vcenter card-table">
+										<thead>
+											<tr>
+												<th>Time</th>
+												<th>Risk</th>
+												<th>Request</th>
+												<th>Status</th>
+												<th>Why</th>
+											</tr>
+										</thead>
+										<tbody>
+											{incident.data.timeline.map((event) => (
+												<tr key={event.requestId || `${event.timestamp}-${event.method}-${event.path}`}>
+													<td className="text-nowrap">{formatTime(event.timestamp)}</td>
+													<td><span className={`badge ${severityClass(event.severity)}`}>{event.risk}</span></td>
+													<td>
+														<div><strong>{event.method}</strong> {event.host}</div>
+														<div className="font-monospace text-secondary">{event.path}</div>
+														<div className="text-secondary small text-truncate" style={{ maxWidth: 520 }}>{event.userAgent || "—"}</div>
+													</td>
+													<td>{event.status || "—"}</td>
+													<td>{event.signals.map((signal) => signal.label).join(", ") || "Normal request"}</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							</>
+						) : null}
+					</div>
+				) : null}
 
 				<div className="card mb-4">
 					<div className="card-header d-flex align-items-center justify-content-between">
