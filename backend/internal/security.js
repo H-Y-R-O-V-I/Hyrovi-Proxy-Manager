@@ -1666,6 +1666,110 @@ const adminChallengeRecord = (challenge) => ({
 	expiresAt: challenge.expiresAt,
 });
 
+const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], challenges = [] }) => {
+	const requestIds = new Set(session.timeline.map((event) => event.requestId).filter(Boolean));
+	const firstSeenMs = parseTimestamp(session.firstSeen)?.getTime() || Date.now();
+	const lastSeenMs = parseTimestamp(session.lastSeen)?.getTime() || firstSeenMs;
+	const responseFromMs = firstSeenMs - 60_000;
+	const responseToMs = lastSeenMs + 15 * 60_000;
+	const inResponseWindow = (value) => {
+		const timestamp = parseTimestamp(value)?.getTime();
+		return Number.isFinite(timestamp) && timestamp >= responseFromMs && timestamp <= responseToMs;
+	};
+
+	const items = [
+		...session.timeline.map((event) => ({
+			id: `proxy:${eventIdentity(event)}`,
+			timestamp: event.timestamp,
+			kind: "proxy_request",
+			correlation: "attack_session",
+			severity: event.severity,
+			summary: `${event.method} ${event.host}`,
+			detail: event.path,
+			requestId: event.requestId,
+			host: event.host,
+			app: null,
+			accountId: null,
+			appSessionId: null,
+			deviceId: null,
+			risk: event.risk,
+			status: event.status,
+		})),
+		...appEvents.map((event) => ({
+			id: `app:${event.id}`,
+			timestamp: event.timestamp,
+			kind: "app_event",
+			correlation: event.requestId && requestIds.has(event.requestId) ? "request_id" : "source_ip",
+			severity: event.severity,
+			summary: event.eventType,
+			detail: event.reason || null,
+			requestId: event.requestId,
+			host: event.host,
+			app: event.app,
+			accountId: event.accountId,
+			appSessionId: event.sessionId,
+			deviceId: event.deviceId,
+			risk: null,
+			status: null,
+		})),
+		...actions
+			.filter((entry) => entry.ip === session.ip && inResponseWindow(entry.at))
+			.map((entry) => ({
+				id: `response:${entry.id}`,
+				timestamp: entry.at,
+				kind: "response_action",
+				correlation: "source_ip",
+				severity: entry.type === "block" ? "critical" : "high",
+				summary: `${entry.action} ${entry.type === "block" ? "block" : "rate limit"}`,
+				detail: entry.reason || null,
+				requestId: null,
+				host: null,
+				app: null,
+				accountId: null,
+				appSessionId: null,
+				deviceId: null,
+				risk: null,
+				status: null,
+			})),
+		...challenges
+			.filter((challenge) => challenge.ip === session.ip && inResponseWindow(challenge.createdAt))
+			.map((challenge) => ({
+				id: `challenge:${challenge.id}`,
+				timestamp: challenge.createdAt,
+				kind: "challenge",
+				correlation: "source_ip",
+				severity: "high",
+				summary: "adaptive challenge started",
+				detail: challenge.reason || null,
+				requestId: null,
+				host: null,
+				app: null,
+				accountId: null,
+				appSessionId: null,
+				deviceId: null,
+				risk: null,
+				status: null,
+			})),
+	].sort((left, right) => {
+		const leftTime = parseTimestamp(left.timestamp)?.getTime() || 0;
+		const rightTime = parseTimestamp(right.timestamp)?.getTime() || 0;
+		return leftTime - rightTime;
+	});
+
+	const unique = (values) => [...new Set(values.filter(Boolean))];
+	return {
+		entities: {
+			hosts: unique(session.timeline.map((event) => event.host)),
+			apps: unique(appEvents.map((event) => event.app)),
+			accountIds: unique(appEvents.map((event) => event.accountId)),
+			appSessionIds: unique(appEvents.map((event) => event.sessionId)),
+			deviceIds: unique(appEvents.map((event) => event.deviceId)),
+			requestIds: unique(session.timeline.map((event) => event.requestId)),
+		},
+		items,
+	};
+};
+
 const getEnabledHosts = (model) =>
 	model
 		.query()
@@ -1851,6 +1955,7 @@ const internalSecurity = {
 				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 				.slice(-100),
 			appEvents,
+			correlation: buildIncidentCorrelation({ session, appEvents, actions, challenges }),
 			escalation: escalation[session.ip] || null,
 		};
 	},

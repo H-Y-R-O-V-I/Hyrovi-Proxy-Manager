@@ -61,6 +61,38 @@ export interface SecurityResponseHistoryEntry {
 	expiresAt: string | null;
 }
 
+export type SecurityIncidentTimelineKind = "proxy_request" | "app_event" | "response_action" | "challenge";
+
+export interface SecurityIncidentTimelineItem {
+	id: string;
+	timestamp: string | null;
+	kind: SecurityIncidentTimelineKind;
+	correlation: "attack_session" | "request_id" | "source_ip";
+	severity: "normal" | "info" | "low" | "medium" | "high" | "critical";
+	summary: string;
+	detail: string | null;
+	requestId: string | null;
+	host: string | null;
+	app: string | null;
+	accountId: string | null;
+	appSessionId: string | null;
+	deviceId: string | null;
+	risk: number | null;
+	status: number | null;
+}
+
+export interface SecurityIncidentCorrelation {
+	entities: {
+		hosts: string[];
+		apps: string[];
+		accountIds: string[];
+		appSessionIds: string[];
+		deviceIds: string[];
+		requestIds: string[];
+	};
+	items: SecurityIncidentTimelineItem[];
+}
+
 export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 	requestPatterns: SecurityAttackSessionPattern[];
 	activeResponses: Array<
@@ -70,6 +102,7 @@ export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];
 	appEvents: SecurityAppEvent[];
+	correlation: SecurityIncidentCorrelation;
 	escalation: SecurityEscalationState | null;
 	timeline: SecurityEvent[];
 }

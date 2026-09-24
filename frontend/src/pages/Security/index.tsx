@@ -24,6 +24,7 @@ import {
 	type SecurityEvent,
 	type SecurityHostMode,
 	type SecurityHostPolicyEntry,
+	type SecurityIncidentTimelineKind,
 } from "src/api/backend";
 import { Button, HasPermission } from "src/components";
 import { ADMIN, VIEW } from "src/modules/Permissions";
@@ -93,6 +94,30 @@ const responseLabel = (type: "block" | "challenge" | "rate_limit") => {
 			return "Challenge";
 		default:
 			return "Rate limit";
+	}
+};
+
+const incidentTimelineKindLabel = (kind: SecurityIncidentTimelineKind) => {
+	switch (kind) {
+		case "proxy_request":
+			return "Proxy";
+		case "app_event":
+			return "App/Auth";
+		case "response_action":
+			return "Response";
+		default:
+			return "Challenge";
+	}
+};
+
+const incidentCorrelationLabel = (correlation: "attack_session" | "request_id" | "source_ip") => {
+	switch (correlation) {
+		case "request_id":
+			return "Request ID";
+		case "source_ip":
+			return "Source IP";
+		default:
+			return "Attack session";
 	}
 };
 
@@ -947,6 +972,65 @@ const Security = () => {
 												</div>
 											) : null}
 										</div>
+									</div>
+								</div>
+
+								<div className="border-bottom">
+									<div className="card-body pb-2">
+										<h4 className="mb-1">Correlated incident timeline</h4>
+										<div className="text-secondary small">
+											Proxy requests, app/auth events and HYROVI Sec responses ordered on one timeline.
+										</div>
+										<div className="d-flex flex-wrap gap-2 mt-2">
+											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.hosts.length} host(s)</span>
+											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.apps.length} app(s)</span>
+											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.accountIds.length} account(s)</span>
+											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.appSessionIds.length} app session(s)</span>
+											<span className="badge bg-secondary-lt">{incident.data.correlation.entities.deviceIds.length} device(s)</span>
+										</div>
+									</div>
+									<div className="table-responsive">
+										<table className="table table-vcenter card-table">
+											<thead>
+												<tr>
+													<th>Time</th>
+													<th>Type</th>
+													<th>Event</th>
+													<th>Correlation</th>
+													<th>Identity / context</th>
+												</tr>
+											</thead>
+											<tbody>
+												{incident.data.correlation.items.map((item) => (
+													<tr key={item.id}>
+														<td className="text-nowrap">{formatTime(item.timestamp)}</td>
+														<td>
+															<span className="badge bg-azure-lt">{incidentTimelineKindLabel(item.kind)}</span>
+														</td>
+														<td style={{ minWidth: 260 }}>
+															<div>{item.summary}</div>
+															{item.detail ? <div className="text-secondary small font-monospace">{item.detail}</div> : null}
+														</td>
+														<td><span className="badge bg-secondary-lt">{incidentCorrelationLabel(item.correlation)}</span></td>
+														<td className="text-secondary small" style={{ minWidth: 220 }}>
+															{[
+																item.app ? `app ${item.app}` : null,
+																item.accountId ? `account ${item.accountId}` : null,
+																item.appSessionId ? `session ${item.appSessionId}` : null,
+																item.deviceId ? `device ${item.deviceId}` : null,
+																item.host ? `host ${item.host}` : null,
+																item.requestId ? `request ${item.requestId}` : null,
+																item.risk !== null ? `risk ${item.risk}` : null,
+																item.status ? `HTTP ${item.status}` : null,
+															].filter(Boolean).join(" · ") || "—"}
+														</td>
+													</tr>
+												))}
+												{incident.data.correlation.items.length === 0 ? (
+													<tr><td colSpan={5} className="text-secondary">No correlated timeline items.</td></tr>
+												) : null}
+											</tbody>
+										</table>
 									</div>
 								</div>
 

@@ -19,6 +19,7 @@ The first implementation adds:
 - risk scoring and explainable signals;
 - event-relative 60-second burst analysis so historical risk explanations remain stable;
 - attack-session aggregation by source IP with stable bounded-window IDs, host summaries, top request patterns and incident timelines;
+- unified correlated incident timelines that merge proxy requests, app/auth events, response actions and active challenge starts, with host/app/account/session/device entity summaries and explicit request-ID/source-IP match provenance;
 - bounded response-action history for rate-limit/block start, removal and expiry;
 - bounded daily security-event archive with configurable retention/minimum risk, independent of the rolling live nginx log window;
 - critical/suspicious request inspection with per-request drill-down, explainable risk, similar-request correlation, linked attack sessions and response state/history in the admin UI;
@@ -108,11 +109,10 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 
 1. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;
 2. trusted device identities based on cryptographic device keys;
-3. correlated attack timelines across hosts, sessions, accounts and devices;
-4. alerting and HYROVI One integration;
-5. IPv4/IPv6 subnet and ASN-aware controls;
-6. custom detection/rule management with safe validation and explainable matches;
-7. optional challenge tuning per host/endpoint and non-browser client helpers.
+3. alerting and HYROVI One integration;
+4. IPv4/IPv6 subnet and ASN-aware controls;
+5. custom detection/rule management with safe validation and explainable matches;
+6. optional challenge tuning per host/endpoint and non-browser client helpers.
 
 ## Upstream attribution
 
