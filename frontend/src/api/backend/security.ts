@@ -36,7 +36,7 @@ export interface SecurityAttackSession {
 	hosts: string[];
 	firstSeen: string;
 	lastSeen: string;
-	activeResponse: "block" | "rate_limit" | null;
+	activeResponse: "block" | "challenge" | "rate_limit" | null;
 }
 
 export interface SecurityAttackSessionPattern {
@@ -65,6 +65,7 @@ export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 	requestPatterns: SecurityAttackSessionPattern[];
 	activeResponses: Array<
 		| (SecurityBlock & { type: "block" })
+		| (SecurityChallenge & { type: "challenge" })
 		| (SecurityRateLimit & { type: "rate_limit" })
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];
@@ -82,6 +83,7 @@ export interface SecurityEventDetail extends SecurityEvent {
 	attackSession: SecurityAttackSession | null;
 	activeResponses: Array<
 		| (SecurityBlock & { type: "block" })
+		| (SecurityChallenge & { type: "challenge" })
 		| (SecurityRateLimit & { type: "rate_limit" })
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];

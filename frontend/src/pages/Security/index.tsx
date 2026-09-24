@@ -85,6 +85,17 @@ const formatTime = (value: string | null) => {
 	return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 };
 
+const responseLabel = (type: "block" | "challenge" | "rate_limit") => {
+	switch (type) {
+		case "block":
+			return "Block";
+		case "challenge":
+			return "Challenge";
+		default:
+			return "Rate limit";
+	}
+};
+
 const Security = () => {
 	const queryClient = useQueryClient();
 	const [minRisk, setMinRisk] = useState(20);
@@ -676,7 +687,8 @@ const Security = () => {
 								<div className="text-secondary">Active blocks</div>
 								<div className="h2 mb-0">{overview.data?.activeBlocks ?? "—"}</div>
 								<div className="text-secondary small">
-									{overview.data?.activeRateLimits ?? "—"} rate limited · {overview.data?.activeEscalations.length ?? "—"} escalating
+									{overview.data?.activeRateLimits ?? "—"} rate limited · {challenges.data?.length ?? "—"} challenged ·{" "}
+									{overview.data?.activeEscalations.length ?? "—"} escalating
 								</div>
 							</div>
 						</div>
@@ -862,6 +874,8 @@ const Security = () => {
 											<td>
 												{session.activeResponse === "block" ? (
 													<span className="badge bg-red text-white">Blocked</span>
+												) : session.activeResponse === "challenge" ? (
+													<span className="badge bg-azure-lt">Challenge</span>
 												) : session.activeResponse === "rate_limit" ? (
 													<span className="badge bg-yellow text-dark">Rate limited</span>
 												) : (
@@ -921,7 +935,7 @@ const Security = () => {
 											<div>
 												{incident.data.activeResponses.length > 0
 													? incident.data.activeResponses
-														.map((response) => `${response.type === "block" ? "Block" : "Rate limit"} until ${formatTime(response.expiresAt)}`)
+														.map((response) => `${responseLabel(response.type)} until ${formatTime(response.expiresAt)}`)
 														.join(" · ")
 													: "Observe only"}
 											</div>
@@ -1341,7 +1355,7 @@ const Security = () => {
 									<div>
 										{requestDetail.data.activeResponses.length > 0
 											? requestDetail.data.activeResponses
-												.map((response) => `${response.type === "block" ? "Block" : "Rate limit"} until ${formatTime(response.expiresAt)}`)
+												.map((response) => `${responseLabel(response.type)} until ${formatTime(response.expiresAt)}`)
 												.join(" · ")
 											: "No active response"}
 									</div>

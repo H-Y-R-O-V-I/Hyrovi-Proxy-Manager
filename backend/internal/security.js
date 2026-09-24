@@ -1560,8 +1560,9 @@ const buildAttackSessions = (events) => {
 	return attackSessions;
 };
 
-const attackSessionSummary = (session, blocks = [], rateLimits = []) => {
+const attackSessionSummary = (session, blocks = [], rateLimits = [], challenges = []) => {
 	const block = blocks.find((entry) => entry.ip === session.ip);
+	const challenge = challenges.find((entry) => entry.ip === session.ip);
 	const rateLimit = rateLimits.find((entry) => entry.ip === session.ip);
 	return {
 		id: session.id,
@@ -1572,20 +1573,23 @@ const attackSessionSummary = (session, blocks = [], rateLimits = []) => {
 		hosts: [...session.hosts],
 		firstSeen: session.firstSeen,
 		lastSeen: session.lastSeen,
-		activeResponse: block ? "block" : rateLimit ? "rate_limit" : null,
+		activeResponse: block ? "block" : challenge ? "challenge" : rateLimit ? "rate_limit" : null,
 	};
 };
 
-const attackSessionDetail = (session, blocks = [], rateLimits = []) => {
+const attackSessionDetail = (session, blocks = [], rateLimits = [], challenges = []) => {
 	const activeResponses = [];
 	for (const block of blocks) {
 		if (block.ip === session.ip) activeResponses.push({ type: "block", ...block });
+	}
+	for (const challenge of challenges) {
+		if (challenge.ip === session.ip) activeResponses.push({ type: "challenge", ...adminChallengeRecord(challenge) });
 	}
 	for (const rateLimit of rateLimits) {
 		if (rateLimit.ip === session.ip) activeResponses.push({ type: "rate_limit", ...rateLimit });
 	}
 	return {
-		...attackSessionSummary(session, blocks, rateLimits),
+		...attackSessionSummary(session, blocks, rateLimits, challenges),
 		requestPatterns: sessionRequestPatterns(session.timeline),
 		activeResponses,
 		timeline: session.timeline.map((event) => ({
@@ -1636,8 +1640,11 @@ const similarSecurityEvents = (source, events) =>
 		})
 		.slice(0, 20);
 
-const activeResponsesForIp = (ip, blocks, rateLimits) => [
+const activeResponsesForIp = (ip, blocks, rateLimits, challenges = []) => [
 	...blocks.filter((entry) => entry.ip === ip).map((entry) => ({ type: "block", ...entry })),
+	...challenges
+		.filter((entry) => entry.ip === ip)
+		.map((entry) => ({ type: "challenge", ...adminChallengeRecord(entry) })),
 	...rateLimits.filter((entry) => entry.ip === ip).map((entry) => ({ type: "rate_limit", ...entry })),
 ];
 
@@ -1673,7 +1680,6 @@ const internalSecurity = {
 	prepare: async () => {
 		await ensureSecurityDir();
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
-		await internalSecurityChallenge.prepare();
 		try {
 			await fs.promises.access(BLOCKS_CONF_FILE);
 		} catch (_) {
@@ -1770,9 +1776,10 @@ const internalSecurity = {
 	},
 	getOverview: async (access) => {
 		await access.can("logs:list");
-		const [blocks, rateLimits, policy, rawEscalations] = await Promise.all([
+		const [blocks, rateLimits, challenges, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
+			internalSecurityChallenge.listChallenges(),
 			readPolicyUnsafe(),
 			readEscalationsUnsafe(),
 		]);
@@ -1784,7 +1791,7 @@ const internalSecurity = {
 		const suspicious = events.filter((event) => event.risk >= 40);
 		const critical = events.filter((event) => event.risk >= 80);
 		const publicSessions = buildAttackSessions(events)
-			.map((session) => attackSessionSummary(session, blocks, rateLimits))
+			.map((session) => attackSessionSummary(session, blocks, rateLimits, challenges))
 			.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime() || b.maxRisk - a.maxRisk)
 			.slice(0, 20);
 
@@ -1814,9 +1821,10 @@ const internalSecurity = {
 
 	getAttackSession: async (access, sessionId) => {
 		await access.can("logs:list");
-		const [blocks, rateLimits, actions, policy, rawEscalations] = await Promise.all([
+		const [blocks, rateLimits, challenges, actions, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
+			internalSecurityChallenge.listChallenges(),
 			loadSecurityActions(1000),
 			readPolicyUnsafe(),
 			readEscalationsUnsafe(),
@@ -1837,7 +1845,7 @@ const internalSecurity = {
 			limit: 100,
 		});
 		return {
-			...attackSessionDetail(session, blocks, rateLimits),
+			...attackSessionDetail(session, blocks, rateLimits, challenges),
 			responseHistory: actions
 				.filter((entry) => entry.ip === session.ip)
 				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
@@ -1852,9 +1860,10 @@ const internalSecurity = {
 		const id = String(requestId || "").trim();
 		if (!id) throw new errs.ValidationError("Request ID is required");
 
-		const [blocks, rateLimits, actions, policy, rawEscalations] = await Promise.all([
+		const [blocks, rateLimits, challenges, actions, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
+			internalSecurityChallenge.listChallenges(),
 			loadSecurityActions(1000),
 			readPolicyUnsafe(),
 			readEscalationsUnsafe(),
@@ -1881,8 +1890,8 @@ const internalSecurity = {
 		return {
 			...event,
 			similarRequests: similarSecurityEvents(event, events),
-			attackSession: session ? attackSessionSummary(session, blocks, rateLimits) : null,
-			activeResponses: activeResponsesForIp(event.ip, blocks, rateLimits),
+			attackSession: session ? attackSessionSummary(session, blocks, rateLimits, challenges) : null,
+			activeResponses: activeResponsesForIp(event.ip, blocks, rateLimits, challenges),
 			responseHistory: responseHistoryForIp(event.ip, actions),
 			appEvents,
 			escalation: escalation[event.ip] || null,
