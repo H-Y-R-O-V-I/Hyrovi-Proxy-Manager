@@ -75,6 +75,9 @@ jobs:
       - name: Install
         run: yarn install --frozen-lockfile
 
+      - name: Compile upstream locales
+        run: yarn locale-compile
+
       - name: Lint
         run: yarn lint
 
