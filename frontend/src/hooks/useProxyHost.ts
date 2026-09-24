@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createProxyHost, getProxyHost, type ProxyHost, updateProxyHost } from "src/api/backend";
+import {
+	createProxyHost,
+	deleteSecurityHostPolicy,
+	getProxyHost,
+	type ProxyHost,
+	type SecurityHostPolicy,
+	updateProxyHost,
+	updateSecurityHostPolicy,
+} from "src/api/backend";
 
 const fetchProxyHost = (id: number | "new") => {
 	if (id === "new") {
@@ -39,25 +47,53 @@ const useProxyHost = (id: number | "new", options = {}) => {
 	});
 };
 
+type ProxyHostMutationInput = Omit<ProxyHost, "id"> & {
+	id?: number;
+	hyroviSecurityPolicy?: SecurityHostPolicy | null;
+};
+
+type ProxyHostRollback = (() => void) | undefined;
+
 const useSetProxyHost = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (values: ProxyHost) => (values.id ? updateProxyHost(values) : createProxyHost(values)),
-		onMutate: (values: ProxyHost) => {
+		mutationFn: async (values: ProxyHostMutationInput) => {
+			const { hyroviSecurityPolicy, ...proxyHostValues } = values;
+			const savedHost = proxyHostValues.id
+				? await updateProxyHost(proxyHostValues as ProxyHost)
+				: await createProxyHost(proxyHostValues as ProxyHost);
+
+			try {
+				if (hyroviSecurityPolicy === null) {
+					await deleteSecurityHostPolicy(savedHost.id);
+				} else if (hyroviSecurityPolicy) {
+					await updateSecurityHostPolicy(savedHost.id, hyroviSecurityPolicy);
+				}
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				throw new Error(`Proxy Host saved, but HYROVI Sec policy failed: ${message}`);
+			}
+
+			return savedHost;
+		},
+		onMutate: (values: ProxyHostMutationInput) => {
 			if (!values.id) {
 				return;
 			}
+			const { hyroviSecurityPolicy: _, ...proxyHostValues } = values;
 			const previousObject = queryClient.getQueryData(["proxy-host", values.id]);
 			queryClient.setQueryData(["proxy-host", values.id], (old: ProxyHost) => ({
 				...old,
-				...values,
+				...proxyHostValues,
 			}));
 			return () => queryClient.setQueryData(["proxy-host", values.id], previousObject);
 		},
-		onError: (_, __, rollback: any) => rollback(),
+		onError: (_, __, rollback: ProxyHostRollback) => rollback?.(),
 		onSuccess: async ({ id }: ProxyHost) => {
 			queryClient.invalidateQueries({ queryKey: ["proxy-host", id] });
 			queryClient.invalidateQueries({ queryKey: ["proxy-hosts"] });
+			queryClient.invalidateQueries({ queryKey: ["security-host-policies"] });
+			queryClient.invalidateQueries({ queryKey: ["security-overview"] });
 			queryClient.invalidateQueries({ queryKey: ["audit-logs"] });
 			queryClient.invalidateQueries({ queryKey: ["host-report"] });
 			queryClient.invalidateQueries({ queryKey: ["certificates"] });
@@ -66,3 +102,4 @@ const useSetProxyHost = () => {
 };
 
 export { useProxyHost, useSetProxyHost };
+export type { ProxyHostMutationInput };

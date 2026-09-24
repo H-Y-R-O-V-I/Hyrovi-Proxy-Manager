@@ -1,5 +1,6 @@
-import { IconSettings } from "@tabler/icons-react";
+import { IconSettings, IconShield } from "@tabler/icons-react";
 import cn from "classnames";
+import { useQuery } from "@tanstack/react-query";
 import EasyModal, { type InnerModalProps } from "ez-modal-react";
 import { Field, Form, Formik } from "formik";
 import { type ReactNode, useState } from "react";
@@ -16,7 +17,13 @@ import {
 	SSLCertificateField,
 	SSLOptionsFields,
 } from "src/components";
-import { useProxyHost, useSetProxyHost, useUser } from "src/hooks";
+import {
+	getSecurityHostPolicy,
+	getSecurityHostPolicyDefaults,
+	type SecurityHostMode,
+	type SecurityHostPolicy,
+} from "src/api/backend";
+import { type ProxyHostMutationInput, useProxyHost, useSetProxyHost, useUser } from "src/hooks";
 import { T } from "src/locale";
 import { MANAGE, PROXY_HOSTS } from "src/modules/Permissions";
 import { validateNumber, validateString } from "src/modules/Validations";
@@ -32,6 +39,15 @@ interface Props extends InnerModalProps {
 const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 	const { data: currentUser, isLoading: userIsLoading, error: userError } = useUser("me");
 	const { data, isLoading, error } = useProxyHost(id);
+	const securityDefaults = useQuery({
+		queryKey: ["security-host-policy-defaults"],
+		queryFn: getSecurityHostPolicyDefaults,
+	});
+	const securityHostPolicy = useQuery({
+		queryKey: ["security-host-policy", id],
+		queryFn: () => getSecurityHostPolicy(id as number),
+		enabled: id !== "new",
+	});
 	const { mutate: setProxyHost } = useSetProxyHost();
 	const [errorMsg, setErrorMsg] = useState<ReactNode | null>(null);
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -41,10 +57,33 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		setIsSubmitting(true);
 		setErrorMsg(null);
 
-		const { ...payload } = {
+		const {
+			hyroviSecurityMode,
+			hyroviAutoRateLimitThreshold,
+			hyroviAutoRateLimitMinutes,
+			hyroviAutoBlockThreshold,
+			hyroviAutoBlockMinutes,
+			...proxyHostValues
+		} = values;
+
+		const hyroviSecurityPolicy: SecurityHostPolicy | null | undefined =
+			hyroviSecurityMode === "inherit"
+				? id === "new"
+					? undefined
+					: null
+				: {
+						mode: hyroviSecurityMode as SecurityHostMode,
+						autoRateLimitThreshold: Number(hyroviAutoRateLimitThreshold),
+						autoRateLimitMinutes: Number(hyroviAutoRateLimitMinutes),
+						autoBlockThreshold: Number(hyroviAutoBlockThreshold),
+						autoBlockMinutes: Number(hyroviAutoBlockMinutes),
+					};
+
+		const payload: ProxyHostMutationInput = {
 			id: id === "new" ? undefined : id,
-			...values,
-		};
+			...proxyHostValues,
+			hyroviSecurityPolicy,
+		} as ProxyHostMutationInput;
 
 		setProxyHost(payload, {
 			onError: (err: any) => setErrorMsg(<T id={err.message} />),
@@ -59,15 +98,19 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		});
 	};
 
+	const securityIsLoading = securityDefaults.isLoading || (id !== "new" && securityHostPolicy.isLoading);
+	const securityError = securityDefaults.error || (id !== "new" ? securityHostPolicy.error : null);
+	const effectiveSecurity = securityHostPolicy.data?.policy ?? securityHostPolicy.data?.effective ?? securityDefaults.data;
+
 	return (
 		<Modal show={visible} onHide={remove}>
-			{!isLoading && (error || userError) && (
+			{!isLoading && !securityIsLoading && (error || userError || securityError) && (
 				<Alert variant="danger" className="m-3">
-					{error?.message || userError?.message || "Unknown error"}
+					{error?.message || userError?.message || securityError?.message || "Unknown error"}
 				</Alert>
 			)}
-			{isLoading || (userIsLoading && <Loading noLogo />)}
-			{!isLoading && !userIsLoading && data && currentUser && (
+			{(isLoading || userIsLoading || securityIsLoading) && <Loading noLogo />}
+			{!isLoading && !userIsLoading && !securityIsLoading && !securityError && data && currentUser && securityDefaults.data && (
 				<Formik
 					initialValues={
 						{
@@ -89,6 +132,12 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hstsEnabled: data?.hstsEnabled || false,
 							hstsSubdomains: data?.hstsSubdomains || false,
 							trustForwardedProto: data?.trustForwardedProto || false,
+							// HYROVI Sec tab
+							hyroviSecurityMode: securityHostPolicy.data?.policy?.mode ?? "inherit",
+							hyroviAutoRateLimitThreshold: effectiveSecurity?.autoRateLimitThreshold ?? 50,
+							hyroviAutoRateLimitMinutes: effectiveSecurity?.autoRateLimitMinutes ?? 10,
+							hyroviAutoBlockThreshold: effectiveSecurity?.autoBlockThreshold ?? 95,
+							hyroviAutoBlockMinutes: effectiveSecurity?.autoBlockMinutes ?? 60,
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
 							meta: data?.meta || {},
@@ -96,7 +145,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 					}
 					onSubmit={onSubmit}
 				>
-					{() => (
+					{({ values }: any) => (
 						<Form>
 							<Modal.Header closeButton>
 								<Modal.Title>
@@ -145,7 +194,20 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 													<T id="column.ssl" />
 												</a>
 											</li>
-											<li className="nav-item ms-auto" role="presentation">
+											<li className="nav-item" role="presentation">
+								<a
+									href="#tab-hyrovi-security"
+									className="nav-link"
+									data-bs-toggle="tab"
+									aria-selected="false"
+									tabIndex={-1}
+									role="tab"
+								>
+									<IconShield size={18} className="me-1" />
+									HYROVI Sec
+								</a>
+							</li>
+							<li className="nav-item ms-auto" role="presentation">
 												<a
 													href="#tab-advanced"
 													className="nav-link"
@@ -342,7 +404,111 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 												/>
 												<SSLOptionsFields color="bg-lime" forProxyHost={true} />
 											</div>
-											<div className="tab-pane" id="tab-advanced" role="tabpanel">
+											<div className="tab-pane" id="tab-hyrovi-security" role="tabpanel">
+								<div className="mb-3">
+									<label className="form-label" htmlFor="hyroviSecurityMode">
+										Protection mode
+									</label>
+									<Field
+										as="select"
+										id="hyroviSecurityMode"
+										name="hyroviSecurityMode"
+										className="form-select"
+									>
+										<option value="inherit">Inherit global policy</option>
+										<option value="off">Off</option>
+										<option value="observe">Observe</option>
+										<option value="protect">Protect</option>
+										<option value="strict">Strict</option>
+									</Field>
+									<div className="form-hint mt-1">
+										Off excludes this host from HYROVI Sec analysis. Observe records threats without automatic response.
+										 Protect and Strict can automatically rate-limit or block high-confidence attacks.
+									</div>
+								</div>
+
+								{!securityDefaults.data.enforcementEnabled ? (
+									<Alert variant="warning">
+										Global automatic response is currently in Observe mode. Protect/Strict settings are saved, but enforcement stays disabled until the global HYROVI Sec master switch is enabled.
+									</Alert>
+								) : null}
+
+								<div className="row">
+									<div className="col-md-6">
+										<div className="mb-3">
+											<label className="form-label" htmlFor="hyroviAutoRateLimitThreshold">
+												Soft restriction risk
+											</label>
+											<Field
+												id="hyroviAutoRateLimitThreshold"
+												name="hyroviAutoRateLimitThreshold"
+												type="number"
+												min={40}
+												max={100}
+												className="form-control"
+												disabled={values.hyroviSecurityMode === "inherit"}
+											/>
+										</div>
+									</div>
+									<div className="col-md-6">
+										<div className="mb-3">
+											<label className="form-label" htmlFor="hyroviAutoRateLimitMinutes">
+												Soft restriction minutes
+											</label>
+											<Field
+												id="hyroviAutoRateLimitMinutes"
+												name="hyroviAutoRateLimitMinutes"
+												type="number"
+												min={1}
+												max={43200}
+												className="form-control"
+												disabled={values.hyroviSecurityMode === "inherit"}
+											/>
+										</div>
+									</div>
+									<div className="col-md-6">
+										<div className="mb-3">
+											<label className="form-label" htmlFor="hyroviAutoBlockThreshold">
+												Hard block risk
+											</label>
+											<Field
+												id="hyroviAutoBlockThreshold"
+												name="hyroviAutoBlockThreshold"
+												type="number"
+												min={80}
+												max={100}
+												className="form-control"
+												disabled={values.hyroviSecurityMode === "inherit"}
+											/>
+										</div>
+									</div>
+									<div className="col-md-6">
+										<div className="mb-3">
+											<label className="form-label" htmlFor="hyroviAutoBlockMinutes">
+												Hard block minutes
+											</label>
+											<Field
+												id="hyroviAutoBlockMinutes"
+												name="hyroviAutoBlockMinutes"
+												type="number"
+												min={1}
+												max={43200}
+												className="form-control"
+												disabled={values.hyroviSecurityMode === "inherit"}
+											/>
+										</div>
+									</div>
+								</div>
+
+								{values.hyroviSecurityMode === "inherit" ? (
+									<div className="text-secondary small">
+										Current inherited values: soft risk {effectiveSecurity?.autoRateLimitThreshold ?? 50} for{" "}
+										{effectiveSecurity?.autoRateLimitMinutes ?? 10} minutes; hard risk{" "}
+										{effectiveSecurity?.autoBlockThreshold ?? 95} for {effectiveSecurity?.autoBlockMinutes ?? 60} minutes.
+									</div>
+								) : null}
+							</div>
+							<div className="tab-pane" id="tab-advanced" role="tabpanel">
 												<NginxConfigField />
 											</div>
 										</div>

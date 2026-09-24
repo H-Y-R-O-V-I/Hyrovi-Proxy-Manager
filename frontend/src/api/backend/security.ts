@@ -96,6 +96,10 @@ export interface SecurityHostPolicy {
 	autoBlockMinutes: number;
 }
 
+export interface SecurityHostPolicyDefaults extends SecurityHostPolicy {
+	enforcementEnabled: boolean;
+}
+
 export interface SecurityHostPolicyEntry {
 	id: number;
 	domainNames: string[];
@@ -213,8 +217,16 @@ export async function updateSecurityPolicy(data: Partial<SecurityPolicy>): Promi
 	return await api.put({ url: "/security/policy", data });
 }
 
+export async function getSecurityHostPolicyDefaults(): Promise<SecurityHostPolicyDefaults> {
+	return await api.get({ url: "/security/host-policy-defaults" });
+}
+
 export async function getSecurityHostPolicies(): Promise<SecurityHostPolicyEntry[]> {
 	return await api.get({ url: "/security/host-policies" });
+}
+
+export async function getSecurityHostPolicy(id: number): Promise<SecurityHostPolicyEntry> {
+	return await api.get({ url: `/security/host-policies/${encodeURIComponent(id)}` });
 }
 
 export async function updateSecurityHostPolicy(

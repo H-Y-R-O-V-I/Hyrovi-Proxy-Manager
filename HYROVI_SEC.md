@@ -28,7 +28,7 @@ The first implementation adds:
 - conservative automatic response for public sources: suspicious attack signals can be soft-limited first, while hard blocks still require high-confidence signals;
 - protection against automatically blocking RFC1918/link-local/loopback source addresses;
 - trusted exact IP/CIDR sources that remain observable but are excluded from automatic rate limits and blocking;
-- per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations;
+- per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations, configurable directly inside the normal Proxy Host editor;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
 - authenticated app/auth security-event ingest and admin visibility;
@@ -48,7 +48,9 @@ The security log deliberately does **not** store:
 The current event record contains only the minimum useful request metadata: timestamp, request ID, host, method, path without query string, response status, source IP, user-agent, request size, response bytes, request duration and upstream status.
 
 The response-action audit log stores only response lifecycle metadata (time, source IP, response type/action, source/reason, response ID and expiry). It does not add query strings, request bodies, cookies, Authorization headers, API keys/tokens or referrer URLs. The file is bounded and compacted instead of growing indefinitely.
-\nApp security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md). Upstream HYROVI apps also receive `X-Hyrovi-Request-ID`, enabling exact proxy↔app event correlation without storing additional request content.\n
+
+App security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md). Upstream HYROVI apps also receive `X-Hyrovi-Request-ID`, enabling exact proxy↔app event correlation without storing additional request content.
+
 ## Enforcement path
 
 ```text
@@ -101,7 +103,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 
 ## Next security phases
 
-1. expose per-host policy directly inside the normal Proxy Host editor and add endpoint-specific rules;
+1. add endpoint-specific security rules inside each Proxy Host;
 2. richer automatic response rules with cool-downs, escalation chains and browser/API challenges;
 3. expand the authentication-event API into reusable client SDKs and deeper proxy/session correlation;
 4. trusted device identities based on cryptographic device keys;

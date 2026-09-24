@@ -961,12 +961,55 @@ const addBlockUnsafe = async ({ ip, reason, source, durationMinutes }) => {
 	return block;
 };
 
-const listProxyHostsForSecurity = () =>
-	proxyHostModel
+const listProxyHostsForSecurity = async (access = null) => {
+	const query = proxyHostModel
 		.query()
 		.select("id", "domain_names", "enabled")
 		.where("is_deleted", 0)
 		.orderBy("id", "ASC");
+
+	if (access) {
+		const accessData = await access.can("proxy_hosts:list");
+		if (accessData.permission_visibility !== "all") {
+			query.andWhere("owner_user_id", access.token.getUserId(1));
+		}
+	}
+
+	return query;
+};
+
+const getProxyHostForSecurity = async (access, hostId, permission, fields = ["id"]) => {
+	const accessData = await access.can(`proxy_hosts:${permission}`, hostId);
+	const query = proxyHostModel
+		.query()
+		.select(...fields)
+		.where("is_deleted", 0)
+		.andWhere("id", hostId);
+
+	if (accessData.permission_visibility !== "all") {
+		query.andWhere("owner_user_id", access.token.getUserId(1));
+	}
+
+	return query.first();
+};
+
+const hostPolicyEntry = (host, policy) => {
+	const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
+	const explicit = policy.hostPolicies[String(host.id)] || null;
+	return {
+		id: host.id,
+		domainNames: host.domain_names || [],
+		enabled: host.enabled,
+		policy: explicit,
+		effective: explicit || {
+			mode: globalMode,
+			autoRateLimitThreshold: policy.autoRateLimitThreshold,
+			autoRateLimitMinutes: policy.autoRateLimitMinutes,
+			autoBlockThreshold: policy.autoBlockThreshold,
+			autoBlockMinutes: policy.autoBlockMinutes,
+		},
+	};
+};
 
 const createHostPolicyContext = (policy, hosts = []) => {
 	const exact = new Map();
@@ -1521,32 +1564,35 @@ const internalSecurity = {
 	},
 
 	listHostPolicies: async (access) => {
-		await access.can("logs:list");
-		const [hosts, policy] = await Promise.all([listProxyHostsForSecurity(), readPolicyUnsafe()]);
-		const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
-		return hosts.map((host) => {
-			const explicit = policy.hostPolicies[String(host.id)] || null;
-			return {
-				id: host.id,
-				domainNames: host.domain_names || [],
-				enabled: host.enabled,
-				policy: explicit,
-				effective: explicit || {
-					mode: globalMode,
-					autoRateLimitThreshold: policy.autoRateLimitThreshold,
-					autoRateLimitMinutes: policy.autoRateLimitMinutes,
-					autoBlockThreshold: policy.autoBlockThreshold,
-					autoBlockMinutes: policy.autoBlockMinutes,
-				},
-			};
-		});
+		const [hosts, policy] = await Promise.all([listProxyHostsForSecurity(access), readPolicyUnsafe()]);
+		return hosts.map((host) => hostPolicyEntry(host, policy));
+	},
+
+	getHostPolicyDefaults: async (access) => {
+		await access.can("proxy_hosts:list");
+		const policy = await readPolicyUnsafe();
+		return {
+			enforcementEnabled: policy.autoBlockEnabled,
+			mode: policy.autoBlockEnabled ? "protect" : "observe",
+			autoRateLimitThreshold: policy.autoRateLimitThreshold,
+			autoRateLimitMinutes: policy.autoRateLimitMinutes,
+			autoBlockThreshold: policy.autoBlockThreshold,
+			autoBlockMinutes: policy.autoBlockMinutes,
+		};
+	},
+
+	getHostPolicy: async (access, hostId) => {
+		const id = Number.parseInt(hostId, 10);
+		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
+		const host = await getProxyHostForSecurity(access, id, "get", ["id", "domain_names", "enabled"]);
+		if (!host?.id) throw new errs.ItemNotFoundError(id);
+		return hostPolicyEntry(host, await readPolicyUnsafe());
 	},
 
 	updateHostPolicy: async (access, hostId, data) => {
-		await access.can("users:list");
 		const id = Number.parseInt(hostId, 10);
 		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
-		const host = await proxyHostModel.query().select("id").where("is_deleted", 0).andWhere("id", id).first();
+		const host = await getProxyHostForSecurity(access, id, "update");
 		if (!host?.id) throw new errs.ItemNotFoundError(id);
 		if (typeof data.mode !== "undefined" && !HOST_POLICY_MODES.has(data.mode)) {
 			throw new errs.ValidationError("Security mode must be off, observe, protect or strict");
@@ -1601,9 +1647,10 @@ const internalSecurity = {
 	},
 
 	deleteHostPolicy: async (access, hostId) => {
-		await access.can("users:list");
 		const id = Number.parseInt(hostId, 10);
 		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
+		const host = await getProxyHostForSecurity(access, id, "update");
+		if (!host?.id) throw new errs.ItemNotFoundError(id);
 		const current = await readPolicyUnsafe();
 		if (!current.hostPolicies[String(id)]) return { success: true };
 		const hostPolicies = { ...current.hostPolicies };

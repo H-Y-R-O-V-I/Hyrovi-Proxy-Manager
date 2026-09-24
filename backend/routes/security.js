@@ -120,6 +120,15 @@ router
 		}
 	});
 
+router.get("/host-policy-defaults", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.getHostPolicyDefaults(res.locals.access));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router.get("/host-policies", async (req, res, next) => {
 	try {
 		res.status(200).send(await internalSecurity.listHostPolicies(res.locals.access));
@@ -131,6 +140,14 @@ router.get("/host-policies", async (req, res, next) => {
 
 router
 	.route("/host-policies/:host_id")
+	.get(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurity.getHostPolicy(res.locals.access, req.params.host_id));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
 	.put(async (req, res, next) => {
 		try {
 			res.status(200).send(
