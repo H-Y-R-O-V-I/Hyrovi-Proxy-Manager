@@ -23,6 +23,7 @@ export interface SecurityEvent {
 	severity: "normal" | "low" | "medium" | "high" | "critical";
 	proxyHostId: number | null;
 	securityMode: SecurityHostMode;
+	endpointRulePath: string | null;
 	signals: SecuritySignal[];
 }
 
@@ -88,12 +89,18 @@ export interface SecurityEventDetail extends SecurityEvent {
 
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
 
+export interface SecurityEndpointRule {
+	pathPrefix: string;
+	mode: SecurityHostMode;
+}
+
 export interface SecurityHostPolicy {
 	mode: SecurityHostMode;
 	autoRateLimitThreshold: number;
 	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
+	endpointRules: SecurityEndpointRule[];
 }
 
 export interface SecurityHostPolicyDefaults extends SecurityHostPolicy {

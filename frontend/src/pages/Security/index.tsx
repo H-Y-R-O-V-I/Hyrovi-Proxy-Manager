@@ -1061,6 +1061,9 @@ const Security = () => {
 											<div>
 												<strong>{event.method}</strong> {event.host}
 												<span className="badge bg-secondary-lt ms-2">{event.securityMode}</span>
+												{event.endpointRulePath ? (
+													<span className="badge bg-azure-lt ms-1">rule {event.endpointRulePath}</span>
+												) : null}
 											</div>
 											<div className="font-monospace text-secondary text-truncate" style={{ maxWidth: 420 }}>
 												{event.path}
@@ -1151,6 +1154,17 @@ const Security = () => {
 									<div className="mt-3">
 										<div className="text-secondary small">Request ID</div>
 										<div className="font-monospace">{requestDetail.data.requestId || "—"}</div>
+									</div>
+									<div className="mt-3">
+										<div className="text-secondary small">Effective protection</div>
+										<div>
+											<span className="badge bg-secondary-lt">{requestDetail.data.securityMode}</span>
+											{requestDetail.data.endpointRulePath ? (
+												<span className="badge bg-azure-lt ms-1">endpoint {requestDetail.data.endpointRulePath}</span>
+											) : (
+												<span className="text-secondary small ms-2">host/global policy</span>
+											)}
+										</div>
 									</div>
 									{requestDetail.data.attackSession ? (
 										<div className="mt-3 d-flex align-items-center gap-2">

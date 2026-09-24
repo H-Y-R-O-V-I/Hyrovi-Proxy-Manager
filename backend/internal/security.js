@@ -43,6 +43,7 @@ const DEFAULT_POLICY = Object.freeze({
 });
 const HOST_POLICY_MODES = new Set(["off", "observe", "protect", "strict"]);
 const MAX_HOST_POLICIES = 500;
+const MAX_ENDPOINT_RULES_PER_HOST = 50;
 
 const processedEventIds = new Set();
 const processedEventOrder = [];
@@ -100,6 +101,31 @@ const isTrustedSource = (ip, trustedSources = []) => {
 
 	return blockList.check(ip, type);
 };
+const normalizeEndpointPathPrefix = (value) => {
+	let pathPrefix = String(value || "").trim();
+	if (!pathPrefix || /[\r\n]/.test(pathPrefix)) return null;
+	pathPrefix = pathPrefix.split(/[?#]/, 1)[0];
+	if (!pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
+	pathPrefix = pathPrefix.replace(/\/{2,}/g, "/");
+	if (pathPrefix.length > 1) pathPrefix = pathPrefix.replace(/\/+$/, "");
+	return pathPrefix.length <= 200 ? pathPrefix : null;
+};
+
+const normalizeEndpointRules = (value) => {
+	if (!Array.isArray(value)) return [];
+	const seen = new Set();
+	const rules = [];
+	for (const candidate of value.slice(0, MAX_ENDPOINT_RULES_PER_HOST)) {
+		if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+		const pathPrefix = normalizeEndpointPathPrefix(candidate.pathPrefix);
+		const mode = HOST_POLICY_MODES.has(candidate.mode) ? candidate.mode : null;
+		if (!pathPrefix || !mode || seen.has(pathPrefix)) continue;
+		seen.add(pathPrefix);
+		rules.push({ pathPrefix, mode });
+	}
+	return rules.sort((left, right) => right.pathPrefix.length - left.pathPrefix.length);
+};
+
 const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
 	const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
 	const mode = HOST_POLICY_MODES.has(source.mode) ? source.mode : "observe";
@@ -131,6 +157,7 @@ const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
 			1,
 			43_200,
 		),
+		endpointRules: normalizeEndpointRules(source.endpointRules),
 	};
 };
 
@@ -1007,6 +1034,7 @@ const hostPolicyEntry = (host, policy) => {
 			autoRateLimitMinutes: policy.autoRateLimitMinutes,
 			autoBlockThreshold: policy.autoBlockThreshold,
 			autoBlockMinutes: policy.autoBlockMinutes,
+			endpointRules: [],
 		},
 	};
 };
@@ -1023,6 +1051,7 @@ const createHostPolicyContext = (policy, hosts = []) => {
 		autoRateLimitMinutes: policy.autoRateLimitMinutes,
 		autoBlockThreshold: policy.autoBlockThreshold,
 		autoBlockMinutes: policy.autoBlockMinutes,
+		endpointRules: [],
 		inherited: true,
 	};
 
@@ -1049,13 +1078,34 @@ const createHostPolicyContext = (policy, hosts = []) => {
 	}
 
 	wildcards.sort((left, right) => right.suffix.length - left.suffix.length);
+
+	const applyEndpointRule = (effective, requestPath) => {
+		const path = String(requestPath || "/");
+		const rule = (effective.endpointRules || []).find((entry) => {
+			if (entry.pathPrefix === "/") return true;
+			return path === entry.pathPrefix || path.startsWith(`${entry.pathPrefix}/`);
+		});
+		if (!rule) return { ...effective, endpointRulePath: null };
+
+		const strict = rule.mode === "strict";
+		return {
+			...effective,
+			mode: rule.mode,
+			autoBlockEnabled: policy.autoBlockEnabled && ["protect", "strict"].includes(rule.mode),
+			autoRateLimitThreshold: strict ? Math.min(effective.autoRateLimitThreshold, 45) : effective.autoRateLimitThreshold,
+			autoBlockThreshold: strict ? Math.min(effective.autoBlockThreshold, 90) : effective.autoBlockThreshold,
+			endpointRulePath: rule.pathPrefix,
+			inherited: false,
+		};
+	};
+
 	return {
-		resolve: (hostname) => {
+		resolve: (hostname, requestPath = "/") => {
 			const normalized = normalizeHostname(hostname);
 			const direct = exact.get(normalized);
-			if (direct) return direct;
+			if (direct) return applyEndpointRule(direct, requestPath);
 			const wildcard = wildcards.find((entry) => normalized.endsWith(entry.suffix) && normalized !== entry.suffix.slice(1));
-			return wildcard?.effective || globalEffective;
+			return applyEndpointRule(wildcard?.effective || globalEffective, requestPath);
 		},
 	};
 };
@@ -1068,8 +1118,13 @@ const getHostPolicyContext = async (policy) => {
 const decorateEventsWithHostPolicy = (events, context) =>
 	events
 		.map((event) => {
-			const effective = context.resolve(event.host);
-			return { ...event, proxyHostId: effective.proxyHostId, securityMode: effective.mode };
+			const effective = context.resolve(event.host, event.path);
+			return {
+				...event,
+				proxyHostId: effective.proxyHostId,
+				securityMode: effective.mode,
+				endpointRulePath: effective.endpointRulePath || null,
+			};
 		})
 		.filter((event) => event.securityMode !== "off");
 const monitorThreats = async () => {
@@ -1101,7 +1156,7 @@ const monitorThreats = async () => {
 		const rateLimitAdditions = [];
 
 		for (const event of fresh) {
-			const effective = hostPolicyContext.resolve(event.host);
+			const effective = hostPolicyContext.resolve(event.host, event.path);
 			if (!effective.autoBlockEnabled || blockedIps.has(event.ip)) continue;
 
 			const candidatePolicy = {
@@ -1578,6 +1633,7 @@ const internalSecurity = {
 			autoRateLimitMinutes: policy.autoRateLimitMinutes,
 			autoBlockThreshold: policy.autoBlockThreshold,
 			autoBlockMinutes: policy.autoBlockMinutes,
+			endpointRules: [],
 		};
 	},
 
@@ -1597,6 +1653,26 @@ const internalSecurity = {
 		if (typeof data.mode !== "undefined" && !HOST_POLICY_MODES.has(data.mode)) {
 			throw new errs.ValidationError("Security mode must be off, observe, protect or strict");
 		}
+		if (typeof data.endpointRules !== "undefined") {
+			if (!Array.isArray(data.endpointRules)) {
+				throw new errs.ValidationError("Endpoint rules must be an array");
+			}
+			if (data.endpointRules.length > MAX_ENDPOINT_RULES_PER_HOST) {
+				throw new errs.ValidationError(`Endpoint rules are limited to ${MAX_ENDPOINT_RULES_PER_HOST} entries per host`);
+			}
+			for (const rule of data.endpointRules) {
+				if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
+					throw new errs.ValidationError("Each endpoint rule must be an object");
+				}
+				if (!normalizeEndpointPathPrefix(rule.pathPrefix)) {
+					throw new errs.ValidationError("Each endpoint rule requires a valid path prefix");
+				}
+				if (!HOST_POLICY_MODES.has(rule.mode)) {
+					throw new errs.ValidationError("Endpoint rule mode must be off, observe, protect or strict");
+				}
+			}
+		}
+
 		if (typeof data.autoRateLimitThreshold !== "undefined") {
 			const threshold = Number.parseInt(data.autoRateLimitThreshold, 10);
 			if (!Number.isInteger(threshold) || threshold < 40 || threshold > 100) {

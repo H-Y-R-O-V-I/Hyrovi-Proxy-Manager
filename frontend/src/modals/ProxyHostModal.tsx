@@ -2,7 +2,7 @@ import { IconSettings, IconShield } from "@tabler/icons-react";
 import cn from "classnames";
 import { useQuery } from "@tanstack/react-query";
 import EasyModal, { type InnerModalProps } from "ez-modal-react";
-import { Field, Form, Formik } from "formik";
+import { Field, FieldArray, Form, Formik } from "formik";
 import { type ReactNode, useState } from "react";
 import { Alert } from "react-bootstrap";
 import Modal from "react-bootstrap/Modal";
@@ -63,6 +63,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 			hyroviAutoRateLimitMinutes,
 			hyroviAutoBlockThreshold,
 			hyroviAutoBlockMinutes,
+			hyroviEndpointRules,
 			...proxyHostValues
 		} = values;
 
@@ -77,6 +78,12 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 						autoRateLimitMinutes: Number(hyroviAutoRateLimitMinutes),
 						autoBlockThreshold: Number(hyroviAutoBlockThreshold),
 						autoBlockMinutes: Number(hyroviAutoBlockMinutes),
+						endpointRules: (Array.isArray(hyroviEndpointRules) ? hyroviEndpointRules : [])
+							.map((rule: any) => ({
+								pathPrefix: String(rule?.pathPrefix || "").trim(),
+								mode: rule?.mode as SecurityHostMode,
+							}))
+							.filter((rule: any) => rule.pathPrefix),
 					};
 
 		const payload: ProxyHostMutationInput = {
@@ -138,6 +145,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hyroviAutoRateLimitMinutes: effectiveSecurity?.autoRateLimitMinutes ?? 10,
 							hyroviAutoBlockThreshold: effectiveSecurity?.autoBlockThreshold ?? 95,
 							hyroviAutoBlockMinutes: effectiveSecurity?.autoBlockMinutes ?? 60,
+							hyroviEndpointRules: securityHostPolicy.data?.policy?.endpointRules ?? [],
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
 							meta: data?.meta || {},
@@ -498,6 +506,70 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 											/>
 										</div>
 									</div>
+								</div>
+
+								<div className="border-top pt-3 mt-2">
+									<div className="d-flex align-items-center justify-content-between mb-2">
+										<div>
+											<h4 className="mb-1">Endpoint rules</h4>
+											<div className="text-secondary small">
+												Longest matching path prefix wins. Example: <code>/api/admin</code> can be Strict while the rest of the host stays Protect.
+											</div>
+										</div>
+									</div>
+									{values.hyroviSecurityMode === "inherit" ? (
+										<div className="text-secondary small mb-3">
+											Choose an explicit host mode before adding endpoint rules. This keeps endpoint behavior deterministic when the global policy changes.
+										</div>
+									) : (
+										<FieldArray name="hyroviEndpointRules">
+											{({ push, remove }) => (
+												<>
+													{(values.hyroviEndpointRules ?? []).map((rule: any, index: number) => (
+														<div className="row g-2 align-items-end mb-2" key={`${index}-${rule.pathPrefix || "new"}`}>
+															<div className="col-md-7">
+																<label className="form-label" htmlFor={`hyroviEndpointPath-${index}`}>Path prefix</label>
+																<Field
+																	id={`hyroviEndpointPath-${index}`}
+																	name={`hyroviEndpointRules.${index}.pathPrefix`}
+																	className="form-control font-monospace"
+																	placeholder="/api/admin"
+																/>
+															</div>
+															<div className="col-md-3">
+																<label className="form-label" htmlFor={`hyroviEndpointMode-${index}`}>Mode</label>
+																<Field
+																	as="select"
+																	id={`hyroviEndpointMode-${index}`}
+																	name={`hyroviEndpointRules.${index}.mode`}
+																	className="form-select"
+																>
+																	<option value="off">Off</option>
+																	<option value="observe">Observe</option>
+																	<option value="protect">Protect</option>
+																	<option value="strict">Strict</option>
+																</Field>
+															</div>
+															<div className="col-md-2 d-grid">
+																<Button className="btn-outline-danger" type="button" onClick={() => remove(index)}>
+																	Remove
+																</Button>
+															</div>
+														</div>
+													))}
+													{(values.hyroviEndpointRules?.length ?? 0) < 50 ? (
+														<Button
+															className="btn-outline-primary"
+															type="button"
+															onClick={() => push({ pathPrefix: "", mode: "strict" })}
+														>
+															Add endpoint rule
+														</Button>
+													) : null}
+												</>
+											)}
+										</FieldArray>
+									)}
 								</div>
 
 								{values.hyroviSecurityMode === "inherit" ? (
