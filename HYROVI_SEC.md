@@ -17,6 +17,7 @@ The first implementation adds:
 - structured security telemetry for HTTP proxy, redirect and dead-host traffic;
 - bounded request analysis in the backend;
 - risk scoring and explainable signals;
+- event-relative 60-second burst analysis so historical risk explanations remain stable;
 - attack-session aggregation by source IP;
 - critical/suspicious request inspection in the admin UI;
 - manual timed IPv4/IPv6 blocks;

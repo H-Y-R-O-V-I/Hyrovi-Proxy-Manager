@@ -18,6 +18,7 @@ const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 250;
 const MAX_EVENT_LIMIT = 2000;
 const SESSION_WINDOW_MS = 5 * 60 * 1000;
+const REQUEST_CONTEXT_WINDOW_MS = 60_000;
 const MONITOR_INTERVAL_MS = 5_000;
 const PROCESSED_EVENT_LIMIT = 5_000;
 const DEFAULT_POLICY = Object.freeze({
@@ -180,26 +181,73 @@ const baseSignals = (event) => {
 };
 
 const enrichEvents = (events) => {
-	const now = Date.now();
-	const recentByIp = new Map();
+	const analyzed = events.map((event, index) => {
+		const base = baseSignals(event);
+		return {
+			event,
+			index,
+			time: parseTimestamp(event.timestamp)?.getTime() ?? null,
+			baseRisk: base.risk,
+			baseSignals: base.signals,
+		};
+	});
+	const eventsByIp = new Map();
+	const contextByIndex = new Map();
 
-	for (const event of events) {
-		const date = parseTimestamp(event.timestamp);
-		if (!event.ip || !date || now - date.getTime() > 60_000) continue;
-		const list = recentByIp.get(event.ip) || [];
-		list.push(event);
-		recentByIp.set(event.ip, list);
+	for (const item of analyzed) {
+		if (!item.event.ip || item.time === null) continue;
+		const list = eventsByIp.get(item.event.ip) || [];
+		list.push(item);
+		eventsByIp.set(item.event.ip, list);
 	}
 
-	return events.map((event) => {
-		const { risk: baseRisk, signals } = baseSignals(event);
-		let risk = baseRisk;
-		const recent = recentByIp.get(event.ip) || [];
-		const denied = recent.filter((item) => [401, 403].includes(item.status)).length;
-		const missing = recent.filter((item) => item.status === 404).length;
-		const suspiciousPaths = new Set(
-			recent.filter((item) => baseSignals(item).risk >= 30).map((item) => item.path),
-		);
+	for (const list of eventsByIp.values()) {
+		list.sort((left, right) => left.time - right.time || left.index - right.index);
+		let startIndex = 0;
+		let denied = 0;
+		let missing = 0;
+		const suspiciousPathCounts = new Map();
+
+		const addToWindow = (item) => {
+			if ([401, 403].includes(item.event.status)) denied += 1;
+			if (item.event.status === 404) missing += 1;
+			if (item.baseRisk >= 30) {
+				suspiciousPathCounts.set(item.event.path, (suspiciousPathCounts.get(item.event.path) || 0) + 1);
+			}
+		};
+
+		const removeFromWindow = (item) => {
+			if ([401, 403].includes(item.event.status)) denied -= 1;
+			if (item.event.status === 404) missing -= 1;
+			if (item.baseRisk >= 30) {
+				const next = (suspiciousPathCounts.get(item.event.path) || 0) - 1;
+				if (next <= 0) suspiciousPathCounts.delete(item.event.path);
+				else suspiciousPathCounts.set(item.event.path, next);
+			}
+		};
+
+		for (let endIndex = 0; endIndex < list.length; endIndex += 1) {
+			const current = list[endIndex];
+			addToWindow(current);
+
+			while (startIndex <= endIndex && current.time - list[startIndex].time > REQUEST_CONTEXT_WINDOW_MS) {
+				removeFromWindow(list[startIndex]);
+				startIndex += 1;
+			}
+
+			contextByIndex.set(current.index, {
+				requests: endIndex - startIndex + 1,
+				denied,
+				missing,
+				suspiciousPaths: suspiciousPathCounts.size,
+			});
+		}
+	}
+
+	return analyzed.map((item) => {
+		const signals = [...item.baseSignals];
+		let risk = item.baseRisk;
+		const recent = contextByIndex.get(item.index);
 
 		const add = (id, score, label) => {
 			if (signals.some((signal) => signal.id === id)) return;
@@ -207,14 +255,14 @@ const enrichEvents = (events) => {
 			signals.push({ id, score, label });
 		};
 
-		if (recent.length >= 120) add("request_burst", 25, `${recent.length} requests from this IP in 60s`);
-		if (denied >= 10) add("auth_failure_burst", 35, `${denied} denied requests from this IP in 60s`);
-		if (missing >= 20) add("path_enumeration", 25, `${missing} missing paths requested in 60s`);
-		if (suspiciousPaths.size >= 5) add("reconnaissance_burst", 35, "Multiple suspicious paths probed");
+		if (recent?.requests >= 120) add("request_burst", 25, `${recent.requests} requests from this IP in 60s`);
+		if (recent?.denied >= 10) add("auth_failure_burst", 35, `${recent.denied} denied requests from this IP in 60s`);
+		if (recent?.missing >= 20) add("path_enumeration", 25, `${recent.missing} missing paths requested in 60s`);
+		if (recent?.suspiciousPaths >= 5) add("reconnaissance_burst", 35, "Multiple suspicious paths probed");
 
 		risk = clamp(risk, 0, 100);
 		const severity = risk >= 80 ? "critical" : risk >= 60 ? "high" : risk >= 40 ? "medium" : risk >= 20 ? "low" : "normal";
-		return { ...event, risk, severity, signals };
+		return { ...item.event, risk, severity, signals };
 	});
 };
 
