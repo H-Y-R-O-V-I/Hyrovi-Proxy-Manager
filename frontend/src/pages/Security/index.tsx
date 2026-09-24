@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconBan, IconRefresh, IconShield } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+	acknowledgeSecurityAlert,
 	createSecurityBlock,
 	createSecurityRateLimit,
 	createSecurityTrustedDevice,
@@ -9,6 +10,7 @@ import {
 	deleteSecurityChallenge,
 	deleteSecurityHostPolicy,
 	deleteSecurityRateLimit,
+	getSecurityAlerts,
 	getSecurityAppEvents,
 	getSecurityAttackSession,
 	getSecurityBlocks,
@@ -22,6 +24,7 @@ import {
 	getSecurityTrustedDevices,
 	updateSecurityHostPolicy,
 	updateSecurityPolicy,
+	type SecurityAlertSeverity,
 	type SecurityAppEventSeverity,
 	type SecurityEvent,
 	type SecurityHostMode,
@@ -70,6 +73,21 @@ const severityClass = (severity: SecurityEvent["severity"]) => {
 };
 
 const appEventSeverityClass = (severity: SecurityAppEventSeverity) => {
+	switch (severity) {
+		case "critical":
+			return "bg-red text-white";
+		case "high":
+			return "bg-orange text-white";
+		case "medium":
+			return "bg-yellow text-dark";
+		case "low":
+			return "bg-azure-lt";
+		default:
+			return "bg-secondary-lt";
+	}
+};
+
+const alertSeverityClass = (severity: SecurityAlertSeverity) => {
 	switch (severity) {
 		case "critical":
 			return "bg-red text-white";
@@ -152,6 +170,11 @@ const Security = () => {
 		refetchInterval: POLL_MS,
 	});
 
+	const alerts = useQuery({
+		queryKey: ["security-alerts"],
+		queryFn: () => getSecurityAlerts(100, "open"),
+		refetchInterval: POLL_MS,
+	});
 	const appEvents = useQuery({
 		queryKey: ["security-app-events"],
 		queryFn: () => getSecurityAppEvents(100),
@@ -215,6 +238,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-event-detail"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-alerts"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-trusted-devices"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-rate-limits"] }),
@@ -252,6 +276,10 @@ const Security = () => {
 	});
 	const removeChallenge = useMutation({
 		mutationFn: deleteSecurityChallenge,
+		onSuccess: refresh,
+	});
+	const acknowledgeAlert = useMutation({
+		mutationFn: acknowledgeSecurityAlert,
 		onSuccess: refresh,
 	});
 	const registerTrustedDevice = useMutation({
@@ -362,6 +390,68 @@ const Security = () => {
 						HYROVI Sec is still observing and preserving stored response state, but IP blocks, rate limits and automatic response enforcement are disabled. Remove <code>HYROVI_SEC_EMERGENCY_BYPASS=true</code> and restart the container to restore enforcement.
 					</div>
 				) : null}
+
+				<div className="card mb-4">
+					<div className="card-header d-flex align-items-center justify-content-between">
+						<div>
+							<h3 className="card-title">Security alerts</h3>
+							<div className="text-secondary small">
+								Operational alerts from automatic rate limits, challenges, hard blocks and high/critical app-auth events.
+							</div>
+						</div>
+						<div className="d-flex gap-2">
+							<span className={`badge ${alerts.data?.feedConfigured ? "bg-green-lt" : "bg-secondary-lt"}`}>
+								HYROVI One feed {alerts.data?.feedConfigured ? "READY" : "OFF"}
+							</span>
+							<span className="badge bg-red-lt">{alerts.data?.alerts.length ?? 0} open</span>
+						</div>
+					</div>
+					{alerts.data && !alerts.data.feedConfigured ? (
+						<div className="card-body border-bottom text-secondary small">
+							Set <code>HYROVI_SEC_ALERT_FEED_TOKEN</code> to a secret with at least {alerts.data.minFeedTokenLength} characters to enable the read-only HYROVI One feed at <code>/api/security/integration/alerts</code>.
+						</div>
+					) : null}
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>Time</th>
+									<th>Severity</th>
+									<th>Alert</th>
+									<th>Source</th>
+									<th>Count</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{(alerts.data?.alerts ?? []).map((alert) => (
+									<tr key={alert.id}>
+										<td className="text-nowrap">{formatTime(alert.updatedAt)}</td>
+										<td><span className={`badge ${alertSeverityClass(alert.severity)}`}>{alert.severity}</span></td>
+										<td>
+											<div><strong>{alert.title}</strong></div>
+											<div className="text-secondary small">{alert.detail || alert.type}</div>
+										</td>
+										<td className="font-monospace">{alert.sourceIp || alert.host || alert.app || "—"}</td>
+										<td>{alert.count}</td>
+										<td className="text-end">
+											<Button
+												className="btn-outline-secondary"
+												disabled={acknowledgeAlert.isPending}
+												onClick={() => acknowledgeAlert.mutate(alert.id)}
+											>
+												Acknowledge
+											</Button>
+										</td>
+									</tr>
+								))}
+								{!alerts.isLoading && (alerts.data?.alerts.length ?? 0) === 0 ? (
+									<tr><td colSpan={6} className="text-secondary">No open security alerts.</td></tr>
+								) : null}
+							</tbody>
+						</table>
+					</div>
+				</div>
 
 				<div className="card mb-4">
 					<div className="card-body">

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import errs from "../lib/error.js";
+import internalSecurityAlerts from "./security_alerts.js";
 
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const APP_EVENTS_DIR = `${SECURITY_DIR}/app-events`;
@@ -280,7 +281,27 @@ const listEvents = async (limit = 250) => {
 const ingest = async ({ authorization, body, sourceIp, verifiedDevice = null }) => {
 	if (!verifiedDevice) assertAuthorized(authorization);
 	const event = normalizeEvent(body, sourceIp, verifiedDevice);
-	return appendEvent(event);
+	const stored = await appendEvent(event);
+	if (["high", "critical"].includes(stored.severity)) {
+		await internalSecurityAlerts.createAlertBestEffort({
+			severity: stored.severity,
+			type: `app_${stored.eventType}`,
+			title: `${stored.app}: ${stored.eventType.replaceAll("_", " ")}`,
+			detail: stored.reason,
+			sourceIp: stored.ip || stored.sourceIp,
+			host: stored.host,
+			app: stored.app,
+			requestId: stored.requestId,
+			dedupeKey: [
+				"app",
+				stored.app,
+				stored.eventType,
+				stored.ip || stored.sourceIp || "",
+				stored.accountId || "",
+			].join(":"),
+		});
+	}
+	return stored;
 };
 
 const getStatus = async () => ({

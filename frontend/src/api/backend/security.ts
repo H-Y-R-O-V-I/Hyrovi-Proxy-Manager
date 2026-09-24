@@ -243,6 +243,34 @@ export interface SecurityAppEventsResponse {
 	events: SecurityAppEvent[];
 }
 
+export type SecurityAlertSeverity = "info" | "low" | "medium" | "high" | "critical";
+export type SecurityAlertStatus = "open" | "acknowledged";
+
+export interface SecurityAlert {
+	id: string;
+	createdAt: string;
+	updatedAt: string;
+	status: SecurityAlertStatus;
+	acknowledgedAt: string | null;
+	severity: SecurityAlertSeverity;
+	type: string;
+	title: string;
+	detail: string | null;
+	sourceIp: string | null;
+	host: string | null;
+	app: string | null;
+	requestId: string | null;
+	entityId: string | null;
+	count: number;
+}
+
+export interface SecurityAlertsResponse {
+	feedConfigured: boolean;
+	minFeedTokenLength: number;
+	maxAlerts: number;
+	alerts: SecurityAlert[];
+}
+
 export interface SecurityTrustedDevice {
 	deviceId: string;
 	name: string;
@@ -284,6 +312,17 @@ export async function getSecurityOverview(): Promise<SecurityOverview> {
 
 export async function getSecurityAppEvents(limit = 100): Promise<SecurityAppEventsResponse> {
 	return await api.get({ url: "/security/app-events", params: { limit } });
+}
+
+export async function getSecurityAlerts(limit = 100, status: SecurityAlertStatus | "" = "open"): Promise<SecurityAlertsResponse> {
+	return await api.get({
+		url: "/security/alerts",
+		params: { limit, ...(status ? { status } : {}) },
+	});
+}
+
+export async function acknowledgeSecurityAlert(id: string): Promise<SecurityAlert> {
+	return await api.post({ url: `/security/alerts/${encodeURIComponent(id)}/acknowledge` });
 }
 
 export async function getSecurityEvents(limit = 250, minRisk = 0): Promise<SecurityEvent[]> {

@@ -35,7 +35,7 @@ The first implementation adds:
 - endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
-- authenticated app/auth security-event ingest and admin visibility;\n- Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;
+- authenticated app/auth security-event ingest and admin visibility;\n- Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;\n- bounded operational security alerts with acknowledgement, deduplication and a separate read-only HYROVI One pull feed;
 - a dedicated HYROVI Sec navigation page.
 
 ### Data minimization
@@ -53,7 +53,7 @@ The current event record contains only the minimum useful request metadata: time
 
 The response-action audit log stores only response lifecycle metadata (time, source IP, response type/action, source/reason, response ID and expiry). It does not add query strings, request bodies, cookies, Authorization headers, API keys/tokens or referrer URLs. The file is bounded and compacted instead of growing indefinitely.
 
-App security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md). Upstream HYROVI apps also receive `X-Hyrovi-Request-ID`, enabling exact proxy↔app event correlation without storing additional request content.
+App security-event ingest is disabled unless `HYROVI_SEC_INGEST_TOKEN` is configured with at least 32 characters. Only explicitly allowlisted security metadata is persisted; arbitrary extra JSON fields are discarded. See [HYROVI_SEC_APP_EVENTS.md](HYROVI_SEC_APP_EVENTS.md). Upstream HYROVI apps also receive `X-Hyrovi-Request-ID`, enabling exact proxy↔app event correlation without storing additional request content. Alerting and the read-only HYROVI One feed are documented in [HYROVI_SEC_ALERTS.md](HYROVI_SEC_ALERTS.md).
 
 ## Enforcement path
 
@@ -89,7 +89,7 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/blocked-ips.conf`
 - `/data/nginx/hyrovi-security/rate-limits.json`
 - `/data/nginx/hyrovi-security/rate-limited-ips.geo`
-- `/data/nginx/hyrovi-security/policy.json`\n- `/data/nginx/hyrovi-security/escalations.json` (persistent soft-limit escalation counters)\n- `/data/nginx/hyrovi-security/trusted-devices.json` (trusted Ed25519 public keys and app scopes)\n- `/data/nginx/hyrovi-security/trusted-device-state.json` (replay counters and last-seen state)
+- `/data/nginx/hyrovi-security/policy.json`\n- `/data/nginx/hyrovi-security/escalations.json` (persistent soft-limit escalation counters)\n- `/data/nginx/hyrovi-security/trusted-devices.json` (trusted Ed25519 public keys and app scopes)\n- `/data/nginx/hyrovi-security/trusted-device-state.json` (replay counters and last-seen state)\n- `/data/nginx/hyrovi-security/alerts.json` (bounded operational alert state)
 - `/data/logs/hyrovi-sec-actions.log` (bounded JSONL response audit history)
 - `/data/nginx/hyrovi-security/events/YYYY-MM-DD.jsonl` (bounded retained security-event archive)
 

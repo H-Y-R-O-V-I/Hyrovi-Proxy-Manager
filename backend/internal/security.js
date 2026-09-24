@@ -5,6 +5,7 @@ import errs from "../lib/error.js";
 import { global as logger } from "../logger.js";
 import internalNginx from "./nginx.js";
 import internalSecurityAppEvents from "./security_app_events.js";
+import internalSecurityAlerts from "./security_alerts.js";
 import internalSecurityChallenge from "./security_challenge.js";
 import internalSecurityDevices from "./security_devices.js";
 import deadHostModel from "../models/dead_host.js";
@@ -1442,6 +1443,14 @@ const monitorThreats = async () => {
 			await commitRateLimitState(rateLimits, [...rateLimits, ...rateLimitAdditions]);
 			for (const entry of rateLimitAdditions) {
 				await recordResponseAction("rate_limit", "started", entry);
+				await internalSecurityAlerts.createAlertBestEffort({
+					severity: "medium",
+					type: "auto_rate_limit",
+					title: `Soft restriction applied to ${entry.ip}`,
+					detail: entry.reason,
+					sourceIp: entry.ip,
+					entityId: entry.id,
+				});
 				logger.warn(`HYROVI Sec auto-rate-limited ${entry.ip} until ${entry.expiresAt}: ${entry.reason}`);
 			}
 		}
@@ -1450,6 +1459,14 @@ const monitorThreats = async () => {
 			try {
 				const createdChallenges = await internalSecurityChallenge.challengeIps(challengeRequests);
 				for (const challenge of createdChallenges) {
+					await internalSecurityAlerts.createAlertBestEffort({
+						severity: "high",
+						type: "adaptive_challenge",
+						title: `Adaptive challenge started for ${challenge.ip}`,
+						detail: challenge.reason,
+						sourceIp: challenge.ip,
+						entityId: challenge.id,
+					});
 					logger.warn(
 						`HYROVI Sec challenged ${challenge.ip} until ${challenge.expiresAt}: ${challenge.reason}`,
 					);
@@ -1468,6 +1485,14 @@ const monitorThreats = async () => {
 			await commitBlockState(blocks, [...blocks, ...blockAdditions]);
 			for (const block of blockAdditions) {
 				await recordResponseAction("block", "started", block);
+				await internalSecurityAlerts.createAlertBestEffort({
+					severity: "critical",
+					type: "hard_block",
+					title: `Hard block applied to ${block.ip}`,
+					detail: block.reason,
+					sourceIp: block.ip,
+					entityId: block.id,
+				});
 				logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
 			}
 			for (const ip of challengeRemovals) {
@@ -1797,6 +1822,7 @@ const internalSecurity = {
 		await ensureSecurityDir();
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
 		await internalSecurityDevices.prepare();
+		await internalSecurityAlerts.prepare();
 		try {
 			await fs.promises.access(BLOCKS_CONF_FILE);
 		} catch (_) {

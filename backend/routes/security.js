@@ -1,6 +1,7 @@
 import express from "express";
 import internalSecurity from "../internal/security.js";
 import internalSecurityAppEvents from "../internal/security_app_events.js";
+import internalSecurityAlerts from "../internal/security_alerts.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
@@ -92,7 +93,61 @@ router.post("/challenge/verify", async (req, res, next) => {
 	}
 });
 
+router.get("/integration/alerts", async (req, res, next) => {
+	try {
+		const status = internalSecurityAlerts.getStatus();
+		if (!status.feedConfigured) {
+			res.status(503).send({
+				error: { code: 503, message: "HYROVI Sec alert feed is disabled" },
+			});
+			return;
+		}
+		internalSecurityAlerts.authorizeFeed(req.headers.authorization);
+		const alerts = await internalSecurityAlerts.listAlerts({
+			limit: req.query.limit,
+			status: req.query.status,
+			since: req.query.since,
+		});
+		res.set("Cache-Control", "no-store");
+		res.status(200).send({
+			generatedAt: new Date().toISOString(),
+			alerts,
+		});
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router.use(jwtdecode());
+
+router.get("/alerts", async (req, res, next) => {
+	try {
+		await res.locals.access.can("logs:list");
+		const [alerts, status] = await Promise.all([
+			internalSecurityAlerts.listAlerts({
+				limit: req.query.limit,
+				status: req.query.status,
+				since: req.query.since,
+			}),
+			Promise.resolve(internalSecurityAlerts.getStatus()),
+		]);
+		res.status(200).send({ ...status, alerts });
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/alerts/:alert_id/acknowledge", async (req, res, next) => {
+	try {
+		await res.locals.access.can("users:list");
+		res.status(200).send(await internalSecurityAlerts.acknowledge(req.params.alert_id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
 
 router.get("/app-events", async (req, res, next) => {
 	try {
