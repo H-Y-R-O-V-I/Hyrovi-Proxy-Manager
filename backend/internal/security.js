@@ -53,6 +53,9 @@ let eventArchiveMutationQueue = Promise.resolve();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+const emergencyBypassEnabled = () =>
+	/^(1|true|yes|on)$/i.test(String(process.env.HYROVI_SEC_EMERGENCY_BYPASS || "").trim());
+
 const normalizeTrustedSource = (value) => {
 	const entry = String(value || "").trim();
 	if (!entry) return null;
@@ -742,6 +745,10 @@ const renderBlockConfig = (blocks) => {
 		"# Managed by HYROVI Sec. Do not edit manually.",
 		"# Query strings, cookies, authorization headers and request bodies are never written here.",
 	];
+	if (emergencyBypassEnabled()) {
+		lines.push("# EMERGENCY BYPASS ACTIVE: stored blocks are preserved but not enforced.");
+		return `${lines.join("\n")}\n`;
+	}
 	for (const block of activeBlocks(blocks)) {
 		lines.push(`# ${block.id} | ${String(block.reason || "").replace(/[\r\n]/g, " ").slice(0, 160)}`);
 		lines.push(`deny ${block.ip};`);
@@ -823,6 +830,10 @@ const renderRateLimitGeo = (entries) => {
 		"# Managed by HYROVI Sec. Do not edit manually.",
 		"# Only exact source IPs listed here receive a rate-limit key.",
 	];
+	if (emergencyBypassEnabled()) {
+		lines.push("# EMERGENCY BYPASS ACTIVE: stored rate limits are preserved but not enforced.");
+		return `${lines.join("\n")}\n`;
+	}
 	for (const entry of activeBlocks(entries)) {
 		if (!net.isIP(entry.ip)) continue;
 		lines.push(`# ${entry.id}`);
@@ -1034,7 +1045,7 @@ const monitorThreats = async () => {
 	if (fresh.length === 0) return;
 	await persistArchivedEventsBestEffort(fresh, policy);
 
-	if (!policy.autoBlockEnabled) return;
+	if (emergencyBypassEnabled() || !policy.autoBlockEnabled) return;
 	const hostPolicyContext = await getHostPolicyContext(policy);
 
 	await withSecurityConfigMutation(async () => {
@@ -1395,6 +1406,7 @@ const internalSecurity = {
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,
+				emergencyBypass: emergencyBypassEnabled(),
 				monitorIntervalMs: MONITOR_INTERVAL_MS,
 			},
 			attackSessions: publicSessions,

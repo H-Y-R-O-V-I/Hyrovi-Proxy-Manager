@@ -247,14 +247,33 @@ const Security = () => {
 					</Button>
 				</div>
 
+				{overview.data?.automation.emergencyBypass ? (
+					<div className="alert alert-warning mb-4" role="alert">
+						<strong>Emergency bypass active.</strong>{" "}
+						HYROVI Sec is still observing and preserving stored response state, but IP blocks, rate limits and automatic response enforcement are disabled. Remove <code>HYROVI_SEC_EMERGENCY_BYPASS=true</code> and restart the container to restore enforcement.
+					</div>
+				) : null}
+
 				<div className="card mb-4">
 					<div className="card-body">
 						<div className="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
 							<div>
 								<div className="d-flex align-items-center gap-2">
 									<strong>Automatic response</strong>
-									<span className={`badge ${policy.data?.autoBlockEnabled ? "bg-red text-white" : "bg-blue-lt"}`}>
-										{policy.data?.autoBlockEnabled ? "ENFORCE" : "OBSERVE"}
+									<span
+										className={`badge ${
+											overview.data?.automation.emergencyBypass
+												? "bg-yellow text-dark"
+												: policy.data?.autoBlockEnabled
+													? "bg-red text-white"
+													: "bg-blue-lt"
+										}`}
+									>
+										{overview.data?.automation.emergencyBypass
+											? "BYPASS"
+											: policy.data?.autoBlockEnabled
+												? "ENFORCE"
+												: "OBSERVE"}
 									</span>
 								</div>
 								<div className="text-secondary small mt-1">

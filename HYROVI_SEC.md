@@ -92,18 +92,22 @@ Response config changes are serialized and written atomically. Nginx is validate
 
 Automatic response defaults remain conservative: global soft restriction starts at risk 50 for 10 minutes, while hard blocking starts at risk 95 for 60 minutes. `Strict` host mode defaults to a lower soft threshold (45) and hard threshold (90). Thresholds alone are not enough: the event must also contain recognized attack/reconnaissance signals, and private/loopback or trusted sources are excluded.
 
+## Emergency recovery
+
+Set `HYROVI_SEC_EMERGENCY_BYPASS=true` on the container and restart it if HYROVI Sec enforcement ever blocks legitimate administrative access. The s6 prepare phase clears only the generated deny/rate-limit files before Nginx starts, while `blocks.json` and `rate-limits.json` remain intact. The backend continues observing/archiving traffic but does not create automatic enforcement actions while the bypass is active.
+
+The admin UI shows a prominent `BYPASS` warning when this mode is active. To restore enforcement, remove the environment variable (or set it to false) and restart the container; unexpired persisted response state is then regenerated into Nginx.
+
 ## Next security phases
 
 1. expose per-host policy directly inside the normal Proxy Host editor and add endpoint-specific rules;
-2. richer automatic response rules with cool-downs and escalation chains;
+2. richer automatic response rules with cool-downs, escalation chains and browser/API challenges;
 3. authentication-event SDK so apps can report login/session/device events;
 4. trusted device identities based on cryptographic device keys;
-5. durable event store and retention controls instead of a bounded log window;
-6. correlated attack timelines across hosts, sessions, accounts and devices;
-7. automatic soft-restriction escalation and browser/API challenges before hard blocking;
-8. alerting and HYROVI One integration;
-9. IPv4/IPv6 subnet and ASN-aware controls;
-10. emergency bypass/recovery controls.
+5. correlated attack timelines across hosts, sessions, accounts and devices;
+6. alerting and HYROVI One integration;
+7. IPv4/IPv6 subnet and ASN-aware controls;
+8. custom detection/rule management with safe validation and explainable matches.
 
 ## Upstream attribution
 

@@ -128,6 +128,7 @@ export interface SecurityOverview {
 	activeRateLimits: number;
 	automation: SecurityPolicy & {
 		mode: "observe" | "enforce";
+		emergencyBypass: boolean;
 		monitorIntervalMs: number;
 	};
 	attackSessions: SecurityAttackSession[];
