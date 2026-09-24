@@ -69,6 +69,7 @@ export interface SecurityAttackSessionDetail extends SecurityAttackSession {
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];
 	appEvents: SecurityAppEvent[];
+	escalation: SecurityEscalationState | null;
 	timeline: SecurityEvent[];
 }
 
@@ -85,6 +86,7 @@ export interface SecurityEventDetail extends SecurityEvent {
 	>;
 	responseHistory: SecurityResponseHistoryEntry[];
 	appEvents: SecurityAppEvent[];
+	escalation: SecurityEscalationState | null;
 }
 
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
@@ -120,6 +122,9 @@ export interface SecurityPolicy {
 	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
+	autoEscalationHits: number;
+	autoEscalationWindowMinutes: number;
+	autoEscalationCooldownSeconds: number;
 	eventRetentionDays: number;
 	eventArchiveMinRisk: number;
 	trustedSources: string[];
@@ -139,6 +144,7 @@ export interface SecurityOverview {
 	critical: number;
 	activeBlocks: number;
 	activeRateLimits: number;
+	activeEscalations: SecurityEscalationState[];
 	automation: SecurityPolicy & {
 		mode: "observe" | "enforce";
 		emergencyBypass: boolean;
@@ -154,6 +160,16 @@ export interface SecurityRateLimit {
 	source: string;
 	createdAt: string;
 	expiresAt: string;
+}
+
+export interface SecurityEscalationState {
+	rateLimitId: string;
+	ip: string;
+	strikes: number;
+	windowStartedAt: string;
+	lastResponseAt: string | null;
+	lastStrikeAt: string | null;
+	updatedAt: string;
 }
 
 export type SecurityAppEventSeverity = "info" | "low" | "medium" | "high" | "critical";

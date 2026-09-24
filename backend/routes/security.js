@@ -109,12 +109,9 @@ router
 					autoRateLimitMinutes: req.body?.auto_rate_limit_minutes,
 					autoBlockThreshold: req.body?.auto_block_threshold,
 					autoBlockMinutes: req.body?.auto_block_minutes,
-					endpointRules: Array.isArray(req.body?.endpoint_rules)
-						? req.body.endpoint_rules.map((rule) => ({
-								pathPrefix: rule?.path_prefix,
-								mode: rule?.mode,
-							}))
-						: req.body?.endpoint_rules,
+					autoEscalationHits: req.body?.auto_escalation_hits,
+					autoEscalationWindowMinutes: req.body?.auto_escalation_window_minutes,
+					autoEscalationCooldownSeconds: req.body?.auto_escalation_cooldown_seconds,
 					eventRetentionDays: req.body?.event_retention_days,
 					eventArchiveMinRisk: req.body?.event_archive_min_risk,
 					trustedSources: req.body?.trusted_sources,
@@ -163,6 +160,12 @@ router
 					autoRateLimitMinutes: req.body?.auto_rate_limit_minutes,
 					autoBlockThreshold: req.body?.auto_block_threshold,
 					autoBlockMinutes: req.body?.auto_block_minutes,
+					endpointRules: Array.isArray(req.body?.endpoint_rules)
+						? req.body.endpoint_rules.map((rule) => ({
+								pathPrefix: rule?.path_prefix,
+								mode: rule?.mode,
+							}))
+						: req.body?.endpoint_rules,
 				}),
 			);
 		} catch (err) {

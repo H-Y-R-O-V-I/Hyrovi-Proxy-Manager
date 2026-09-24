@@ -16,6 +16,7 @@ const BLOCKS_FILE = `${SECURITY_DIR}/blocks.json`;
 const BLOCKS_CONF_FILE = `${SECURITY_DIR}/blocked-ips.conf`;
 const RATE_LIMITS_FILE = `${SECURITY_DIR}/rate-limits.json`;
 const RATE_LIMIT_GEO_FILE = `${SECURITY_DIR}/rate-limited-ips.geo`;
+const ESCALATIONS_FILE = `${SECURITY_DIR}/escalations.json`;
 const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
 const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v3`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
@@ -36,6 +37,9 @@ const DEFAULT_POLICY = Object.freeze({
 	autoRateLimitMinutes: 10,
 	autoBlockThreshold: 95,
 	autoBlockMinutes: 60,
+	autoEscalationHits: 3,
+	autoEscalationWindowMinutes: 15,
+	autoEscalationCooldownSeconds: 60,
 	eventRetentionDays: 14,
 	eventArchiveMinRisk: 20,
 	trustedSources: [],
@@ -598,6 +602,125 @@ const writeTextAtomic = async (path, value) => {
 
 const writeJsonAtomic = (path, value) => writeTextAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 
+const readEscalationsUnsafe = async () => {
+	try {
+		const value = JSON.parse(await fs.promises.readFile(ESCALATIONS_FILE, "utf8"));
+		return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	} catch (err) {
+		if (err.code === "ENOENT") return {};
+		if (err instanceof SyntaxError) {
+			logger.error("HYROVI Sec escalation state is invalid JSON; resetting escalation counters");
+			return {};
+		}
+		throw err;
+	}
+};
+
+const writeEscalationsBestEffort = async (value) => {
+	try {
+		await ensureSecurityDir();
+		await writeJsonAtomic(ESCALATIONS_FILE, value);
+		return true;
+	} catch (err) {
+		logger.error(`HYROVI Sec escalation state write failed; protection will continue: ${err.message}`);
+		return false;
+	}
+};
+
+const createEscalationState = (rateLimit, timestamp = rateLimit.createdAt) => ({
+	rateLimitId: rateLimit.id,
+	ip: rateLimit.ip,
+	strikes: 0,
+	windowStartedAt: timestamp,
+	lastResponseAt: timestamp,
+	lastStrikeAt: null,
+	updatedAt: timestamp,
+});
+
+const pruneEscalationStates = (states, rateLimits, policy, now = Date.now()) => {
+	const activeByIp = new Map(rateLimits.map((entry) => [entry.ip, entry]));
+	const windowMs = policy.autoEscalationWindowMinutes * 60_000;
+	const next = {};
+	for (const [ip, state] of Object.entries(states || {})) {
+		if (!state || typeof state !== "object" || Array.isArray(state)) continue;
+		const active = activeByIp.get(ip);
+		if (!active || state.rateLimitId !== active.id) continue;
+		const startedAt = parseTimestamp(state.windowStartedAt)?.getTime();
+		if (!Number.isFinite(startedAt) || now - startedAt > windowMs) continue;
+		next[ip] = {
+			rateLimitId: active.id,
+			ip,
+			strikes: clamp(Number.parseInt(state.strikes, 10) || 0, 0, 1000),
+			windowStartedAt: new Date(startedAt).toISOString(),
+			lastResponseAt: parseTimestamp(state.lastResponseAt)?.toISOString() || active.createdAt,
+			lastStrikeAt: parseTimestamp(state.lastStrikeAt)?.toISOString() || null,
+			updatedAt: parseTimestamp(state.updatedAt)?.toISOString() || new Date(startedAt).toISOString(),
+		};
+	}
+	return next;
+};
+
+const registerEscalationStrike = ({ states, rateLimit, event, policy }) => {
+	const eventTime = parseTimestamp(event.timestamp)?.getTime() || Date.now();
+	const eventIso = new Date(eventTime).toISOString();
+	const cooldownMs = policy.autoEscalationCooldownSeconds * 1000;
+	const windowMs = policy.autoEscalationWindowMinutes * 60_000;
+	let state = states[event.ip];
+
+	if (
+		!state ||
+		state.rateLimitId !== rateLimit.id ||
+		!parseTimestamp(state.windowStartedAt) ||
+		eventTime - parseTimestamp(state.windowStartedAt).getTime() > windowMs
+	) {
+		state = {
+			rateLimitId: rateLimit.id,
+			ip: rateLimit.ip,
+			strikes: 0,
+			windowStartedAt: eventIso,
+			lastResponseAt: null,
+			lastStrikeAt: null,
+			updatedAt: eventIso,
+		};
+	}
+
+	const cooldownReferenceMs =
+		parseTimestamp(state.lastStrikeAt)?.getTime() ?? parseTimestamp(state.lastResponseAt)?.getTime();
+	if (Number.isFinite(cooldownReferenceMs) && eventTime - cooldownReferenceMs < cooldownMs) {
+		states[event.ip] = state;
+		return { counted: false, escalated: false, state };
+	}
+
+	state = {
+		...state,
+		strikes: state.strikes + 1,
+		lastStrikeAt: eventIso,
+		updatedAt: eventIso,
+	};
+	states[event.ip] = state;
+	return {
+		counted: true,
+		escalated: state.strikes >= policy.autoEscalationHits,
+		state,
+	};
+};
+
+const purgeEscalationsUnsafe = async () => {
+	const [rateLimits, policy, states] = await Promise.all([
+		readRateLimitsUnsafe(),
+		readPolicyUnsafe(),
+		readEscalationsUnsafe(),
+	]);
+	const next = pruneEscalationStates(states, activeBlocks(rateLimits), policy);
+	if (JSON.stringify(next) !== JSON.stringify(states)) {
+		await writeEscalationsBestEffort(next);
+	}
+	return next;
+};
+
+const purgeEscalations = () => withSecurityConfigMutation(purgeEscalationsUnsafe);
+
+
 const loadSecurityActions = async (limit = 500) => {
 	const text = await readTail(SECURITY_ACTION_LOG_FILE, MAX_ACTION_LOG_BYTES);
 	if (!text) return [];
@@ -665,6 +788,21 @@ const normalizePolicy = (value = {}) => {
 		),
 		autoBlockThreshold: clamp(Number.parseInt(value.autoBlockThreshold, 10) || DEFAULT_POLICY.autoBlockThreshold, 80, 100),
 		autoBlockMinutes: clamp(Number.parseInt(value.autoBlockMinutes, 10) || DEFAULT_POLICY.autoBlockMinutes, 1, 43_200),
+		autoEscalationHits: clamp(
+			Number.parseInt(value.autoEscalationHits, 10) || DEFAULT_POLICY.autoEscalationHits,
+			2,
+			20,
+		),
+		autoEscalationWindowMinutes: clamp(
+			Number.parseInt(value.autoEscalationWindowMinutes, 10) || DEFAULT_POLICY.autoEscalationWindowMinutes,
+			1,
+			1440,
+		),
+		autoEscalationCooldownSeconds: clamp(
+			Number.parseInt(value.autoEscalationCooldownSeconds, 10) || DEFAULT_POLICY.autoEscalationCooldownSeconds,
+			5,
+			3600,
+		),
 		eventRetentionDays: clamp(
 			Number.isInteger(retentionDays) ? retentionDays : DEFAULT_POLICY.eventRetentionDays,
 			1,
@@ -1150,8 +1288,12 @@ const monitorThreats = async () => {
 	await withSecurityConfigMutation(async () => {
 		const blocks = await purgeExpiredUnsafe();
 		const rateLimits = await purgeExpiredRateLimitsUnsafe();
+		const rawEscalations = await readEscalationsUnsafe();
+		const escalations = pruneEscalationStates(rawEscalations, rateLimits, policy);
+		const initialEscalationSnapshot = JSON.stringify(escalations);
 		const blockedIps = new Set(blocks.map((block) => block.ip));
 		const rateLimitedIps = new Set(rateLimits.map((entry) => entry.ip));
+		const rateLimitByIp = new Map(rateLimits.map((entry) => [entry.ip, entry]));
 		const blockAdditions = [];
 		const rateLimitAdditions = [];
 
@@ -1176,13 +1318,38 @@ const monitorThreats = async () => {
 				});
 				blockAdditions.push(block);
 				blockedIps.add(event.ip);
+				delete escalations[event.ip];
 				continue;
 			}
 
-			if (
-				!rateLimitedIps.has(event.ip) &&
-				eventIsAutoRateLimitCandidate(event, candidatePolicy)
-			) {
+			if (!eventIsAutoRateLimitCandidate(event, candidatePolicy)) continue;
+
+			const activeRateLimit = rateLimitByIp.get(event.ip);
+			if (activeRateLimit) {
+				if (activeRateLimit.source !== "auto-rate-limit") continue;
+				const strike = registerEscalationStrike({
+					states: escalations,
+					rateLimit: activeRateLimit,
+					event,
+					policy,
+				});
+				if (!strike.escalated) continue;
+
+				const block = createBlockRecord({
+					ip: event.ip,
+					durationMinutes: effective.autoBlockMinutes,
+					source: "auto-escalation",
+					reason: `Escalated after ${strike.state.strikes} attack strikes during soft restriction (${effective.mode}); latest risk ${event.risk}; host ${event.host}; ${event.signals
+						.map((signal) => signal.id)
+						.join(", ")}`,
+				});
+				blockAdditions.push(block);
+				blockedIps.add(event.ip);
+				delete escalations[event.ip];
+				continue;
+			}
+
+			if (!rateLimitedIps.has(event.ip)) {
 				const entry = createRateLimitRecord({
 					ip: event.ip,
 					durationMinutes: effective.autoRateLimitMinutes,
@@ -1193,6 +1360,8 @@ const monitorThreats = async () => {
 				});
 				rateLimitAdditions.push(entry);
 				rateLimitedIps.add(event.ip);
+				rateLimitByIp.set(event.ip, entry);
+				escalations[event.ip] = createEscalationState(entry);
 			}
 		}
 
@@ -1210,6 +1379,10 @@ const monitorThreats = async () => {
 				await recordResponseAction("block", "started", block);
 				logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
 			}
+		}
+
+		if (JSON.stringify(escalations) !== initialEscalationSnapshot || JSON.stringify(rawEscalations) !== initialEscalationSnapshot) {
+			await writeEscalationsBestEffort(escalations);
 		}
 	});
 };
@@ -1411,6 +1584,7 @@ const internalSecurity = {
 		await withSecurityConfigMutation(async () => {
 			await synchronizeBlockConfigUnsafe();
 			await synchronizeRateLimitConfigUnsafe();
+			await purgeEscalationsUnsafe();
 		});
 
 		try {
@@ -1447,6 +1621,8 @@ const internalSecurity = {
 			purgeExpired().catch((err) => logger.error("HYROVI Sec block expiry failed:", err.message));
 		const purgeRateLimits = () =>
 			purgeExpiredRateLimits().catch((err) => logger.error("HYROVI Sec rate-limit expiry failed:", err.message));
+		const purgeEscalationStates = () =>
+			purgeEscalations().catch((err) => logger.error("HYROVI Sec escalation cleanup failed:", err.message));
 		const monitor = () =>
 			monitorThreats().catch((err) => logger.error("HYROVI Sec monitor failed:", err.message));
 		const purgeArchive = () =>
@@ -1455,10 +1631,12 @@ const internalSecurity = {
 				.catch((err) => logger.error("HYROVI Sec event retention failed:", err.message));
 		purge();
 		purgeRateLimits();
+		purgeEscalationStates();
 		purgeArchive();
 		monitor();
 		setInterval(purge, 60_000).unref();
 		setInterval(purgeRateLimits, 60_000).unref();
+		setInterval(purgeEscalationStates, 60_000).unref();
 		setInterval(purgeArchive, 60 * 60_000).unref();
 		setInterval(monitor, MONITOR_INTERVAL_MS).unref();
 	},
@@ -1474,11 +1652,14 @@ const internalSecurity = {
 	},
 	getOverview: async (access) => {
 		await access.can("logs:list");
-		const [blocks, rateLimits, policy] = await Promise.all([
+		const [blocks, rateLimits, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
 			readPolicyUnsafe(),
+			readEscalationsUnsafe(),
 		]);
+		const activeEscalations = Object.values(pruneEscalationStates(rawEscalations, rateLimits, policy))
+			.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
 		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
@@ -1502,6 +1683,7 @@ const internalSecurity = {
 			critical: critical.length,
 			activeBlocks: blocks.length,
 			activeRateLimits: rateLimits.length,
+			activeEscalations,
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,
@@ -1514,12 +1696,14 @@ const internalSecurity = {
 
 	getAttackSession: async (access, sessionId) => {
 		await access.can("logs:list");
-		const [blocks, rateLimits, actions, policy] = await Promise.all([
+		const [blocks, rateLimits, actions, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
 			loadSecurityActions(1000),
 			readPolicyUnsafe(),
+			readEscalationsUnsafe(),
 		]);
+		const escalation = pruneEscalationStates(rawEscalations, rateLimits, policy);
 		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
@@ -1541,6 +1725,7 @@ const internalSecurity = {
 				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 				.slice(-100),
 			appEvents,
+			escalation: escalation[session.ip] || null,
 		};
 	},
 
@@ -1549,12 +1734,14 @@ const internalSecurity = {
 		const id = String(requestId || "").trim();
 		if (!id) throw new errs.ValidationError("Request ID is required");
 
-		const [blocks, rateLimits, actions, policy] = await Promise.all([
+		const [blocks, rateLimits, actions, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
 			purgeExpiredRateLimits(),
 			loadSecurityActions(1000),
 			readPolicyUnsafe(),
+			readEscalationsUnsafe(),
 		]);
+		const escalation = pruneEscalationStates(rawEscalations, rateLimits, policy);
 		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
@@ -1580,6 +1767,7 @@ const internalSecurity = {
 			activeResponses: activeResponsesForIp(event.ip, blocks, rateLimits),
 			responseHistory: responseHistoryForIp(event.ip, actions),
 			appEvents,
+			escalation: escalation[event.ip] || null,
 		};
 	},
 
@@ -1612,6 +1800,13 @@ const internalSecurity = {
 				? { autoBlockThreshold: data.autoBlockThreshold }
 				: {}),
 			...(typeof data.autoBlockMinutes !== "undefined" ? { autoBlockMinutes: data.autoBlockMinutes } : {}),
+			...(typeof data.autoEscalationHits !== "undefined" ? { autoEscalationHits: data.autoEscalationHits } : {}),
+			...(typeof data.autoEscalationWindowMinutes !== "undefined"
+				? { autoEscalationWindowMinutes: data.autoEscalationWindowMinutes }
+				: {}),
+			...(typeof data.autoEscalationCooldownSeconds !== "undefined"
+				? { autoEscalationCooldownSeconds: data.autoEscalationCooldownSeconds }
+				: {}),
 			...(typeof data.eventRetentionDays !== "undefined" ? { eventRetentionDays: data.eventRetentionDays } : {}),
 			...(typeof data.eventArchiveMinRisk !== "undefined" ? { eventArchiveMinRisk: data.eventArchiveMinRisk } : {}),
 			...(typeof data.trustedSources !== "undefined" ? { trustedSources: data.trustedSources } : {}),
@@ -1759,6 +1954,11 @@ const internalSecurity = {
 			const next = entries.filter((entry) => entry.id !== id);
 			if (!removed) throw new errs.ItemNotFoundError(id);
 			await commitRateLimitState(entries, next);
+			const escalations = await readEscalationsUnsafe();
+			if (escalations[removed.ip]) {
+				delete escalations[removed.ip];
+				await writeEscalationsBestEffort(escalations);
+			}
 			await recordResponseAction("rate_limit", "removed", removed);
 			return { success: true };
 		});

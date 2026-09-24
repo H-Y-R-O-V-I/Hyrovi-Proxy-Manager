@@ -368,6 +368,54 @@ const Security = () => {
 								</Button>
 							</div>
 						</div>
+						<div className="row g-3 mt-1">
+							<div className="col-12 col-lg-5">
+								<div className="form-label mb-1">Soft-limit escalation</div>
+								<div className="text-secondary small">
+									While a source is rate-limited, separated attack strikes can escalate it to a hard block. The cooldown prevents one short burst from instantly reaching the strike threshold.
+								</div>
+							</div>
+							<div className="col-4 col-lg-2">
+								<label className="form-label" htmlFor="hyrovi-sec-escalation-hits">Strikes</label>
+								<input
+									id="hyrovi-sec-escalation-hits"
+									className="form-control"
+									type="number"
+									min={2}
+									max={20}
+									defaultValue={policy.data?.autoEscalationHits ?? 3}
+									onBlur={(event) => updatePolicy.mutate({ autoEscalationHits: Number(event.target.value) })}
+								/>
+							</div>
+							<div className="col-4 col-lg-2">
+								<label className="form-label" htmlFor="hyrovi-sec-escalation-window">Window min</label>
+								<input
+									id="hyrovi-sec-escalation-window"
+									className="form-control"
+									type="number"
+									min={1}
+									max={1440}
+									defaultValue={policy.data?.autoEscalationWindowMinutes ?? 15}
+									onBlur={(event) =>
+										updatePolicy.mutate({ autoEscalationWindowMinutes: Number(event.target.value) })
+									}
+								/>
+							</div>
+							<div className="col-4 col-lg-3">
+								<label className="form-label" htmlFor="hyrovi-sec-escalation-cooldown">Cooldown sec</label>
+								<input
+									id="hyrovi-sec-escalation-cooldown"
+									className="form-control"
+									type="number"
+									min={5}
+									max={3600}
+									defaultValue={policy.data?.autoEscalationCooldownSeconds ?? 60}
+									onBlur={(event) =>
+										updatePolicy.mutate({ autoEscalationCooldownSeconds: Number(event.target.value) })
+									}
+								/>
+							</div>
+						</div>
 						<hr className="my-3" />
 						<div className="row g-3 align-items-end">
 							<div className="col-12 col-lg-6">
@@ -615,7 +663,9 @@ const Security = () => {
 							<div className="card-body">
 								<div className="text-secondary">Active blocks</div>
 								<div className="h2 mb-0">{overview.data?.activeBlocks ?? "—"}</div>
-								<div className="text-secondary small">{overview.data?.activeRateLimits ?? "—"} rate limited</div>
+								<div className="text-secondary small">
+									{overview.data?.activeRateLimits ?? "—"} rate limited · {overview.data?.activeEscalations.length ?? "—"} escalating
+								</div>
 							</div>
 						</div>
 					</div>
@@ -863,6 +913,13 @@ const Security = () => {
 														.join(" · ")
 													: "Observe only"}
 											</div>
+											{incident.data.escalation ? (
+												<div className="small mt-1">
+													<span className="badge bg-yellow text-dark">
+														Escalation {incident.data.escalation.strikes}/{policy.data?.autoEscalationHits ?? 3}
+													</span>
+												</div>
+											) : null}
 										</div>
 									</div>
 								</div>
@@ -1276,6 +1333,16 @@ const Security = () => {
 												.join(" · ")
 											: "No active response"}
 									</div>
+									{requestDetail.data.escalation ? (
+										<div className="mt-2">
+											<span className="badge bg-yellow text-dark">
+												Escalation {requestDetail.data.escalation.strikes}/{policy.data?.autoEscalationHits ?? 3}
+											</span>
+											<span className="text-secondary small ms-2">
+												last strike {formatTime(requestDetail.data.escalation.lastStrikeAt)}
+											</span>
+										</div>
+									) : null}
 									<div className="text-secondary small mt-2">
 										{requestDetail.data.responseHistory.length} recorded response lifecycle action(s) for this source.
 									</div>
