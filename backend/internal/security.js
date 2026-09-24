@@ -90,6 +90,21 @@ const normalizeTrustedSources = (value) => {
 	return [...new Set(normalized)].slice(0, 200);
 };
 
+const normalizeResponseTarget = (value) => normalizeTrustedSource(value);
+
+const responseTargetContainsIp = (target, ip) => {
+	const normalizedTarget = normalizeResponseTarget(target);
+	const version = net.isIP(ip);
+	if (!normalizedTarget || !version) return false;
+	const [address, prefix] = normalizedTarget.split("/");
+	if (net.isIP(address) !== version) return false;
+	const type = version === 4 ? "ipv4" : "ipv6";
+	const blockList = new net.BlockList();
+	if (typeof prefix === "undefined") blockList.addAddress(address, type);
+	else blockList.addSubnet(address, Number.parseInt(prefix, 10), type);
+	return blockList.check(ip, type);
+};
+
 const isTrustedSource = (ip, trustedSources = []) => {
 	const version = net.isIP(ip);
 	if (!version) return false;
@@ -920,8 +935,10 @@ const renderBlockConfig = (blocks) => {
 		return `${lines.join("\n")}\n`;
 	}
 	for (const block of activeBlocks(blocks)) {
+		const target = normalizeResponseTarget(block.ip);
+		if (!target) continue;
 		lines.push(`# ${block.id} | ${String(block.reason || "").replace(/[\r\n]/g, " ").slice(0, 160)}`);
-		lines.push(`deny ${block.ip};`);
+		lines.push(`deny ${target};`);
 	}
 	return `${lines.join("\n")}\n`;
 };
@@ -1005,9 +1022,10 @@ const renderRateLimitGeo = (entries) => {
 		return `${lines.join("\n")}\n`;
 	}
 	for (const entry of activeBlocks(entries)) {
-		if (!net.isIP(entry.ip)) continue;
+		const target = normalizeResponseTarget(entry.ip);
+		if (!target) continue;
 		lines.push(`# ${entry.id}`);
-		lines.push(`${entry.ip} 1;`);
+		lines.push(`${target} 1;`);
 	}
 	return `${lines.join("\n")}\n`;
 };
@@ -1092,13 +1110,14 @@ const createRateLimitRecord = ({ ip, reason, source, durationMinutes }) => {
 };
 
 const addRateLimitUnsafe = async ({ ip, reason, source, durationMinutes }) => {
-	if (!net.isIP(ip)) throw new errs.ValidationError("Invalid IP address");
+	const target = normalizeResponseTarget(ip);
+	if (!target) throw new errs.ValidationError("Invalid IP address or CIDR");
 	const minutes = clamp(Number.parseInt(durationMinutes, 10) || 10, 1, 43_200);
 	const entries = await purgeExpiredRateLimitsUnsafe();
-	const existing = entries.find((entry) => entry.ip === ip);
+	const existing = entries.find((entry) => entry.ip === target);
 	if (existing) return existing;
 
-	const entry = createRateLimitRecord({ ip, reason, source, durationMinutes: minutes });
+	const entry = createRateLimitRecord({ ip: target, reason, source, durationMinutes: minutes });
 	const next = [...entries, entry];
 	await commitRateLimitState(entries, next);
 	await recordResponseAction("rate_limit", "started", entry);
@@ -1117,13 +1136,14 @@ const createBlockRecord = ({ ip, reason, source, durationMinutes }) => {
 };
 
 const addBlockUnsafe = async ({ ip, reason, source, durationMinutes }) => {
-	if (!net.isIP(ip)) throw new errs.ValidationError("Invalid IP address");
+	const target = normalizeResponseTarget(ip);
+	if (!target) throw new errs.ValidationError("Invalid IP address or CIDR");
 	const minutes = clamp(Number.parseInt(durationMinutes, 10) || 60, 1, 43_200);
 	const blocks = await purgeExpiredUnsafe();
-	const existing = blocks.find((block) => block.ip === ip);
+	const existing = blocks.find((block) => block.ip === target);
 	if (existing) return existing;
 
-	const block = createBlockRecord({ ip, reason, source, durationMinutes: minutes });
+	const block = createBlockRecord({ ip: target, reason, source, durationMinutes: minutes });
 	const next = [...blocks, block];
 	await commitBlockState(blocks, next);
 	await recordResponseAction("block", "started", block);
@@ -1337,7 +1357,13 @@ const monitorThreats = async () => {
 
 		for (const event of fresh) {
 			const effective = hostPolicyContext.resolve(event.host, event.path);
-			if (!effective.autoBlockEnabled || blockedIps.has(event.ip)) continue;
+			if (
+				!effective.autoBlockEnabled ||
+				blockedIps.has(event.ip) ||
+				blocks.some((block) => responseTargetContainsIp(block.ip, event.ip))
+			) {
+				continue;
+			}
 
 			const candidatePolicy = {
 				...policy,
@@ -1380,7 +1406,9 @@ const monitorThreats = async () => {
 
 			if (!eventIsAutoRateLimitCandidate(event, candidatePolicy)) continue;
 
-			const activeRateLimit = rateLimitByIp.get(event.ip);
+			const activeRateLimit =
+				rateLimitByIp.get(event.ip) ||
+				rateLimits.find((entry) => responseTargetContainsIp(entry.ip, event.ip));
 			if (activeRateLimit) {
 				if (activeRateLimit.source !== "auto-rate-limit") continue;
 				const strike = registerEscalationStrike({

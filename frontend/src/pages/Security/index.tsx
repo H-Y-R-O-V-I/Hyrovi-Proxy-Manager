@@ -1065,7 +1065,7 @@ const Security = () => {
 				<div className="card mb-4">
 					<div className="card-header">
 						<div>
-							<h3 className="card-title">Restrict an IP</h3>
+							<h3 className="card-title">Restrict an IP or network</h3>
 							<div className="text-secondary small">
 								Use a soft rate limit first when possible. Both rate limits and hard blocks are validated with nginx before becoming active.
 							</div>
@@ -1074,11 +1074,11 @@ const Security = () => {
 					<div className="card-body">
 						<div className="row g-2">
 							<div className="col-12 col-md-3">
-								<label className="visually-hidden" htmlFor="hyrovi-sec-restrict-ip">IP address</label>
+								<label className="visually-hidden" htmlFor="hyrovi-sec-restrict-ip">IP address or CIDR</label>
 								<input
 									id="hyrovi-sec-restrict-ip"
 									className="form-control"
-									placeholder="IPv4 or IPv6"
+									placeholder="IPv4, IPv6 or CIDR"
 									value={ip}
 									onChange={(event) => setIp(event.target.value)}
 								/>
