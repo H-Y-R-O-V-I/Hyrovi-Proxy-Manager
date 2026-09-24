@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconBan, IconRefresh, IconShield } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
 	createSecurityBlock,
 	deleteSecurityBlock,
@@ -43,6 +43,7 @@ const Security = () => {
 	const [ip, setIp] = useState("");
 	const [reason, setReason] = useState("");
 	const [durationMinutes, setDurationMinutes] = useState(60);
+	const [trustedSourcesText, setTrustedSourcesText] = useState("");
 
 	const overview = useQuery({
 		queryKey: ["security-overview"],
@@ -66,12 +67,16 @@ const Security = () => {
 		queryKey: ["security-policy"],
 		queryFn: getSecurityPolicy,
 	});
+	useEffect(() => {
+		if (policy.data) setTrustedSourcesText(policy.data.trustedSources.join("\n"));
+	}, [policy.data]);
 
 	const refresh = async () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
 		]);
 	};
 
@@ -138,7 +143,7 @@ const Security = () => {
 									</span>
 								</div>
 								<div className="text-secondary small mt-1">
-									Only high-confidence public source IPs at or above the configured risk threshold are auto-blocked.
+									Only high-confidence public source IPs at or above the configured risk threshold are auto-blocked. Trusted sources are excluded.
 								</div>
 							</div>
 							<div className="d-flex flex-wrap align-items-center gap-2">
@@ -179,6 +184,42 @@ const Security = () => {
 								</Button>
 							</div>
 						</div>
+						<hr className="my-3" />
+						<div className="row g-3 align-items-end">
+							<div className="col-12 col-lg-9">
+								<label className="form-label" htmlFor="hyrovi-sec-trusted-sources">
+									Trusted sources
+								</label>
+								<textarea
+									id="hyrovi-sec-trusted-sources"
+									className="form-control font-monospace"
+									rows={3}
+									placeholder={"203.0.113.10\n192.0.2.0/24\n2001:db8::/32"}
+									value={trustedSourcesText}
+									onChange={(event) => setTrustedSourcesText(event.target.value)}
+								/>
+								<div className="text-secondary small mt-1">
+									One exact IPv4/IPv6 address or CIDR per line. These requests remain visible, but automatic blocking will skip them.
+								</div>
+							</div>
+							<div className="col-12 col-lg-3 d-grid">
+								<Button
+									className="btn-outline-primary"
+									disabled={!policy.data || updatePolicy.isPending}
+									onClick={() =>
+										updatePolicy.mutate({
+											trustedSources: trustedSourcesText
+												.split(/\r?\n|,/)
+												.map((entry) => entry.trim())
+												.filter(Boolean),
+										})
+									}
+								>
+									Save trusted sources
+								</Button>
+							</div>
+						</div>
+						{updatePolicy.error ? <div className="text-red mt-2">{updatePolicy.error.message}</div> : null}
 					</div>
 				</div>
 

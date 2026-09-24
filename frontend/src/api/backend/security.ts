@@ -38,6 +38,7 @@ export interface SecurityPolicy {
 	autoBlockEnabled: boolean;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
+	trustedSources: string[];
 }
 
 export interface SecurityOverview {

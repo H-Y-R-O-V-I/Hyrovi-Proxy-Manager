@@ -24,6 +24,7 @@ The first implementation adds:
 - persistent Observe/Enforce auto-response policy with configurable risk threshold and block duration;
 - conservative automatic blocking only for high-confidence public source IPs;
 - protection against automatically blocking RFC1918/link-local/loopback source addresses;
+- trusted exact IP/CIDR sources that remain observable but are excluded from automatic blocking;
 - block rollback if Nginx validation/reload fails;
 - automatic expiry of timed blocks;
 - a dedicated HYROVI Sec navigation page.
@@ -78,7 +79,7 @@ Block config changes are serialized and written atomically. Nginx is validated/r
 ## Next security phases
 
 1. per-host security policy and protection mode;
-2. richer automatic response rules with cool-downs, allowlists and escalation chains;
+2. richer automatic response rules with cool-downs and escalation chains;
 3. authentication-event SDK so apps can report login/session/device events;
 4. trusted device identities based on cryptographic device keys;
 5. durable event store and retention controls instead of a bounded log window;

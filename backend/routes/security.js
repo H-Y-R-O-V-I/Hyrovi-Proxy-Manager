@@ -51,6 +51,7 @@ router
 					autoBlockEnabled: req.body?.auto_block_enabled,
 					autoBlockThreshold: req.body?.auto_block_threshold,
 					autoBlockMinutes: req.body?.auto_block_minutes,
+					trustedSources: req.body?.trusted_sources,
 				}),
 			);
 		} catch (err) {

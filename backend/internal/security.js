@@ -24,6 +24,7 @@ const DEFAULT_POLICY = Object.freeze({
 	autoBlockEnabled: false,
 	autoBlockThreshold: 95,
 	autoBlockMinutes: 60,
+	trustedSources: [],
 });
 
 const processedEventIds = new Set();
@@ -32,6 +33,50 @@ let monitorPrimed = false;
 let blockMutationQueue = Promise.resolve();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const normalizeTrustedSource = (value) => {
+	const entry = String(value || "").trim();
+	if (!entry) return null;
+
+	const parts = entry.split("/");
+	if (parts.length > 2) return null;
+	const address = parts[0];
+	const version = net.isIP(address);
+	if (!version) return null;
+	if (parts.length === 1) return address;
+
+	if (!/^\d+$/.test(parts[1])) return null;
+	const prefix = Number.parseInt(parts[1], 10);
+	const maxPrefix = version === 4 ? 32 : 128;
+	if (prefix < 0 || prefix > maxPrefix) return null;
+	return `${address}/${prefix}`;
+};
+
+const normalizeTrustedSources = (value) => {
+	if (!Array.isArray(value)) return [];
+	const normalized = value.map(normalizeTrustedSource).filter(Boolean);
+	return [...new Set(normalized)].slice(0, 200);
+};
+
+const isTrustedSource = (ip, trustedSources = []) => {
+	const version = net.isIP(ip);
+	if (!version) return false;
+	const type = version === 4 ? "ipv4" : "ipv6";
+	const blockList = new net.BlockList();
+
+	for (const entry of normalizeTrustedSources(trustedSources)) {
+		const [address, prefix] = entry.split("/");
+		const entryVersion = net.isIP(address);
+		if (entryVersion !== version) continue;
+		if (typeof prefix === "undefined") {
+			blockList.addAddress(address, type);
+		} else {
+			blockList.addSubnet(address, Number.parseInt(prefix, 10), type);
+		}
+	}
+
+	return blockList.check(ip, type);
+};
 
 const safeJsonParse = (line) => {
 	try {
@@ -230,6 +275,7 @@ const normalizePolicy = (value = {}) => ({
 	autoBlockEnabled: value.autoBlockEnabled === true,
 	autoBlockThreshold: clamp(Number.parseInt(value.autoBlockThreshold, 10) || DEFAULT_POLICY.autoBlockThreshold, 80, 100),
 	autoBlockMinutes: clamp(Number.parseInt(value.autoBlockMinutes, 10) || DEFAULT_POLICY.autoBlockMinutes, 1, 43_200),
+	trustedSources: normalizeTrustedSources(value.trustedSources),
 });
 
 const readPolicyUnsafe = async () => {
@@ -281,7 +327,7 @@ const rememberEvent = (event) => {
 };
 
 const eventIsAutoBlockCandidate = (event, policy) => {
-	if (event.risk < policy.autoBlockThreshold || isPrivateOrLoopback(event.ip)) return false;
+	if (event.risk < policy.autoBlockThreshold || isPrivateOrLoopback(event.ip) || isTrustedSource(event.ip, policy.trustedSources)) return false;
 	const ids = new Set(event.signals.map((signal) => signal.id));
 	return (
 		ids.has("path_traversal") ||
@@ -583,6 +629,14 @@ const internalSecurity = {
 	updatePolicy: async (access, data) => {
 		await access.can("users:list");
 		const current = await readPolicyUnsafe();
+		if (typeof data.trustedSources !== "undefined") {
+			if (!Array.isArray(data.trustedSources)) throw new errs.ValidationError("Trusted sources must be an array");
+			if (data.trustedSources.length > 200) throw new errs.ValidationError("Trusted sources are limited to 200 entries");
+			const invalid = data.trustedSources.find((entry) => !normalizeTrustedSource(entry));
+			if (typeof invalid !== "undefined") {
+				throw new errs.ValidationError(`Invalid trusted source: ${String(invalid).slice(0, 120)}`);
+			}
+		}
 		return writePolicyUnsafe({
 			...current,
 			...(typeof data.autoBlockEnabled === "boolean" ? { autoBlockEnabled: data.autoBlockEnabled } : {}),
@@ -590,6 +644,7 @@ const internalSecurity = {
 				? { autoBlockThreshold: data.autoBlockThreshold }
 				: {}),
 			...(typeof data.autoBlockMinutes !== "undefined" ? { autoBlockMinutes: data.autoBlockMinutes } : {}),
+			...(typeof data.trustedSources !== "undefined" ? { trustedSources: data.trustedSources } : {}),
 		});
 	},
 
