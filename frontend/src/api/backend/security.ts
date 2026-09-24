@@ -21,6 +21,8 @@ export interface SecurityEvent {
 	upstreamStatus: string;
 	risk: number;
 	severity: "normal" | "low" | "medium" | "high" | "critical";
+	proxyHostId: number | null;
+	securityMode: SecurityHostMode;
 	signals: SecuritySignal[];
 }
 
@@ -34,11 +36,27 @@ export interface SecurityAttackSession {
 	lastSeen: string;
 }
 
+export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
+
+export interface SecurityHostPolicy {
+	mode: SecurityHostMode;
+	autoBlockThreshold: number;
+	autoBlockMinutes: number;
+}
+
+export interface SecurityHostPolicyEntry {
+	id: number;
+	domainNames: string[];
+	enabled: boolean;
+	policy: SecurityHostPolicy | null;
+	effective: SecurityHostPolicy;
+}
 export interface SecurityPolicy {
 	autoBlockEnabled: boolean;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
 	trustedSources: string[];
+	hostPolicies: Record<string, SecurityHostPolicy>;
 }
 
 export interface SecurityOverview {
@@ -86,6 +104,20 @@ export async function updateSecurityPolicy(data: Partial<SecurityPolicy>): Promi
 	return await api.put({ url: "/security/policy", data });
 }
 
+export async function getSecurityHostPolicies(): Promise<SecurityHostPolicyEntry[]> {
+	return await api.get({ url: "/security/host-policies" });
+}
+
+export async function updateSecurityHostPolicy(
+	id: number,
+	data: Partial<SecurityHostPolicy>,
+): Promise<SecurityHostPolicy> {
+	return await api.put({ url: `/security/host-policies/${encodeURIComponent(id)}`, data });
+}
+
+export async function deleteSecurityHostPolicy(id: number): Promise<{ success: boolean }> {
+	return await api.del({ url: `/security/host-policies/${encodeURIComponent(id)}` });
+}
 export async function getSecurityBlocks(): Promise<SecurityBlock[]> {
 	return await api.get({ url: "/security/blocks" });
 }

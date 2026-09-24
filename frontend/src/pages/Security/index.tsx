@@ -4,17 +4,37 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	createSecurityBlock,
 	deleteSecurityBlock,
+	deleteSecurityHostPolicy,
 	getSecurityBlocks,
 	getSecurityEvents,
+	getSecurityHostPolicies,
 	getSecurityOverview,
 	getSecurityPolicy,
+	updateSecurityHostPolicy,
 	updateSecurityPolicy,
 	type SecurityEvent,
+	type SecurityHostMode,
+	type SecurityHostPolicyEntry,
 } from "src/api/backend";
 import { Button, HasPermission } from "src/components";
 import { ADMIN, VIEW } from "src/modules/Permissions";
 
 const POLL_MS = 5000;
+
+type HostPolicyDraft = {
+	mode: "inherit" | SecurityHostMode;
+	autoBlockThreshold: number;
+	autoBlockMinutes: number;
+};
+
+const hostPolicyDraft = (host: SecurityHostPolicyEntry): HostPolicyDraft => {
+	const source = host.policy ?? host.effective;
+	return {
+		mode: host.policy?.mode ?? "inherit",
+		autoBlockThreshold: source.autoBlockThreshold,
+		autoBlockMinutes: source.autoBlockMinutes,
+	};
+};
 
 const severityClass = (severity: SecurityEvent["severity"]) => {
 	switch (severity) {
@@ -44,6 +64,7 @@ const Security = () => {
 	const [reason, setReason] = useState("");
 	const [durationMinutes, setDurationMinutes] = useState(60);
 	const [trustedSourcesText, setTrustedSourcesText] = useState("");
+	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
 
 	const overview = useQuery({
 		queryKey: ["security-overview"],
@@ -67,9 +88,19 @@ const Security = () => {
 		queryKey: ["security-policy"],
 		queryFn: getSecurityPolicy,
 	});
+	const hostPolicies = useQuery({
+		queryKey: ["security-host-policies"],
+		queryFn: getSecurityHostPolicies,
+	});
 	useEffect(() => {
 		if (policy.data) setTrustedSourcesText(policy.data.trustedSources.join("\n"));
 	}, [policy.data]);
+	useEffect(() => {
+		if (!hostPolicies.data) return;
+		const next: Record<number, HostPolicyDraft> = {};
+		for (const host of hostPolicies.data) next[host.id] = hostPolicyDraft(host);
+		setHostPolicyDrafts(next);
+	}, [hostPolicies.data]);
 
 	const refresh = async () => {
 		await Promise.all([
@@ -77,6 +108,7 @@ const Security = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
 		]);
 	};
 
@@ -99,10 +131,37 @@ const Security = () => {
 		onSuccess: async () => {
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
 				queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			]);
 		},
 	});
+	const saveHostPolicy = useMutation({
+		mutationFn: async ({ hostId, draft }: { hostId: number; draft: HostPolicyDraft }) => {
+			if (draft.mode === "inherit") return deleteSecurityHostPolicy(hostId);
+			return updateSecurityHostPolicy(hostId, {
+				mode: draft.mode,
+				autoBlockThreshold: draft.autoBlockThreshold,
+				autoBlockMinutes: draft.autoBlockMinutes,
+			});
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-policy"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-events"] }),
+			]);
+		},
+	});
+
+	const patchHostDraft = (host: SecurityHostPolicyEntry, patch: Partial<HostPolicyDraft>) => {
+		setHostPolicyDrafts((current) => ({
+			...current,
+			[host.id]: { ...(current[host.id] ?? hostPolicyDraft(host)), ...patch },
+		}));
+	};
 
 	const topSessions = useMemo(() => overview.data?.attackSessions ?? [], [overview.data]);
 
@@ -223,6 +282,114 @@ const Security = () => {
 					</div>
 				</div>
 
+				<div className="card mb-4">
+					<div className="card-header">
+						<div>
+							<h3 className="card-title">Per-host protection</h3>
+							<div className="text-secondary small">
+								Overrides are stored by Proxy Host ID, so domain renames do not lose the security policy. The global auto-response switch remains the master kill switch.
+							</div>
+						</div>
+					</div>
+					<div className="table-responsive">
+						<table className="table table-vcenter card-table">
+							<thead>
+								<tr>
+									<th>Proxy host</th>
+									<th>Mode</th>
+									<th>Auto-block risk</th>
+									<th>Block minutes</th>
+									<th>State</th>
+									<th />
+								</tr>
+							</thead>
+							<tbody>
+								{(hostPolicies.data ?? []).map((host) => {
+									const draft = hostPolicyDrafts[host.id] ?? hostPolicyDraft(host);
+									return (
+										<tr key={host.id}>
+											<td style={{ minWidth: 240 }}>
+												<div className="fw-semibold">{host.domainNames.join(", ") || `Proxy Host #${host.id}`}</div>
+												<div className="text-secondary small">#{host.id}{host.enabled ? "" : " · disabled"}</div>
+											</td>
+											<td style={{ minWidth: 150 }}>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-mode-${host.id}`}>Security mode</label>
+												<select
+													id={`hyrovi-sec-host-mode-${host.id}`}
+													className="form-select"
+													value={draft.mode}
+													onChange={(event) => {
+														const mode = event.target.value as HostPolicyDraft["mode"];
+														patchHostDraft(host, {
+															mode,
+															...(mode === "strict" && draft.mode !== "strict"
+																? { autoBlockThreshold: Math.min(draft.autoBlockThreshold, 90) }
+																: {}),
+														});
+													}}
+												>
+													<option value="inherit">Inherit global</option>
+													<option value="off">Off</option>
+													<option value="observe">Observe</option>
+													<option value="protect">Protect</option>
+													<option value="strict">Strict</option>
+												</select>
+											</td>
+											<td>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-risk-${host.id}`}>Auto-block risk</label>
+												<input
+													id={`hyrovi-sec-host-risk-${host.id}`}
+													className="form-control"
+													style={{ width: 92 }}
+													type="number"
+													min={80}
+													max={100}
+													disabled={draft.mode === "inherit"}
+													value={draft.autoBlockThreshold}
+													onChange={(event) => patchHostDraft(host, { autoBlockThreshold: Number(event.target.value) })}
+												/>
+											</td>
+											<td>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-minutes-${host.id}`}>Block minutes</label>
+												<input
+													id={`hyrovi-sec-host-minutes-${host.id}`}
+													className="form-control"
+													style={{ width: 105 }}
+													type="number"
+													min={1}
+													max={43200}
+													disabled={draft.mode === "inherit"}
+													value={draft.autoBlockMinutes}
+													onChange={(event) => patchHostDraft(host, { autoBlockMinutes: Number(event.target.value) })}
+												/>
+											</td>
+											<td className="text-secondary">
+												{draft.mode === "inherit" ? `Global → ${host.effective.mode}` : "Host override"}
+											</td>
+											<td>
+												<Button
+													className="btn-outline-primary btn-sm"
+													disabled={saveHostPolicy.isPending}
+													onClick={() => saveHostPolicy.mutate({ hostId: host.id, draft })}
+												>
+													Save
+												</Button>
+											</td>
+										</tr>
+									);
+								})}
+								{!hostPolicies.isLoading && (hostPolicies.data?.length ?? 0) === 0 ? (
+									<tr>
+										<td colSpan={6} className="text-secondary">
+											No Proxy Hosts are available yet.
+										</td>
+									</tr>
+								) : null}
+							</tbody>
+						</table>
+					</div>
+					{saveHostPolicy.error ? <div className="card-body pt-0 text-red">{saveHostPolicy.error.message}</div> : null}
+				</div>
 				<div className="row row-cards mb-4">
 					<div className="col-6 col-lg-3">
 						<div className="card card-sm">
@@ -403,6 +570,7 @@ const Security = () => {
 										<td style={{ minWidth: 260 }}>
 											<div>
 												<strong>{event.method}</strong> {event.host}
+												<span className="badge bg-secondary-lt ms-2">{event.securityMode}</span>
 											</div>
 											<div className="font-monospace text-secondary text-truncate" style={{ maxWidth: 420 }}>
 												{event.path}
