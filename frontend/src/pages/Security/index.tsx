@@ -87,6 +87,8 @@ type HostPolicyDraft = {
 	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
+	challengeMinutes: number;
+	challengeDifficulty: number;
 };
 
 const hostPolicyDraft = (host: SecurityHostPolicyEntry): HostPolicyDraft => {
@@ -97,6 +99,8 @@ const hostPolicyDraft = (host: SecurityHostPolicyEntry): HostPolicyDraft => {
 		autoRateLimitMinutes: source.autoRateLimitMinutes,
 		autoBlockThreshold: source.autoBlockThreshold,
 		autoBlockMinutes: source.autoBlockMinutes,
+		challengeMinutes: source.challengeMinutes,
+		challengeDifficulty: source.challengeDifficulty,
 	};
 };
 
@@ -435,6 +439,8 @@ const Security = () => {
 				autoRateLimitMinutes: draft.autoRateLimitMinutes,
 				autoBlockThreshold: draft.autoBlockThreshold,
 				autoBlockMinutes: draft.autoBlockMinutes,
+				challengeMinutes: draft.challengeMinutes,
+				challengeDifficulty: draft.challengeDifficulty,
 			});
 		},
 		onSuccess: async () => {
@@ -841,6 +847,8 @@ const Security = () => {
 									<th>Soft min</th>
 									<th>Block risk</th>
 									<th>Block min</th>
+									<th>Challenge min</th>
+									<th>PoW bits</th>
 									<th>State</th>
 									<th />
 								</tr>
@@ -868,6 +876,7 @@ const Security = () => {
 																? {
 																		autoRateLimitThreshold: Math.min(draft.autoRateLimitThreshold, 45),
 																		autoBlockThreshold: Math.min(draft.autoBlockThreshold, 90),
+																		challengeDifficulty: Math.max(draft.challengeDifficulty, 16),
 																	}
 																: {}),
 														});
@@ -936,6 +945,34 @@ const Security = () => {
 													onChange={(event) => patchHostDraft(host, { autoBlockMinutes: Number(event.target.value) })}
 												/>
 											</td>
+											<td>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-challenge-minutes-${host.id}`}>Challenge minutes</label>
+												<input
+													id={`hyrovi-sec-host-challenge-minutes-${host.id}`}
+													className="form-control"
+													style={{ width: 105 }}
+													type="number"
+													min={1}
+													max={120}
+													disabled={draft.mode === "inherit"}
+													value={draft.challengeMinutes}
+													onChange={(event) => patchHostDraft(host, { challengeMinutes: Number(event.target.value) })}
+												/>
+											</td>
+											<td>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-challenge-difficulty-${host.id}`}>Challenge proof-of-work bits</label>
+												<input
+													id={`hyrovi-sec-host-challenge-difficulty-${host.id}`}
+													className="form-control"
+													style={{ width: 92 }}
+													type="number"
+													min={10}
+													max={22}
+													disabled={draft.mode === "inherit"}
+													value={draft.challengeDifficulty}
+													onChange={(event) => patchHostDraft(host, { challengeDifficulty: Number(event.target.value) })}
+												/>
+											</td>
 											<td className="text-secondary">
 												{draft.mode === "inherit" ? `Global → ${host.effective.mode}` : "Host override"}
 											</td>
@@ -953,7 +990,7 @@ const Security = () => {
 								})}
 								{!hostPolicies.isLoading && (hostPolicies.data?.length ?? 0) === 0 ? (
 									<tr>
-										<td colSpan={8} className="text-secondary">
+										<td colSpan={10} className="text-secondary">
 											No Proxy Hosts are available yet.
 										</td>
 									</tr>

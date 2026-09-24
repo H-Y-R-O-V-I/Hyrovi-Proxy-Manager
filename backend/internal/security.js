@@ -163,6 +163,13 @@ const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
 		mode === "strict"
 			? Math.min(globalPolicy.autoBlockThreshold || DEFAULT_POLICY.autoBlockThreshold, 90)
 			: globalPolicy.autoBlockThreshold || DEFAULT_POLICY.autoBlockThreshold;
+	const autoRateLimitMinutes = clamp(
+		Number.parseInt(source.autoRateLimitMinutes, 10) ||
+			globalPolicy.autoRateLimitMinutes ||
+			DEFAULT_POLICY.autoRateLimitMinutes,
+		1,
+		43_200,
+	);
 	return {
 		mode,
 		autoRateLimitThreshold: clamp(
@@ -170,18 +177,25 @@ const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
 			40,
 			100,
 		),
-		autoRateLimitMinutes: clamp(
-			Number.parseInt(source.autoRateLimitMinutes, 10) ||
-				globalPolicy.autoRateLimitMinutes ||
-				DEFAULT_POLICY.autoRateLimitMinutes,
-			1,
-			43_200,
-		),
+		autoRateLimitMinutes,
 		autoBlockThreshold: clamp(Number.parseInt(source.autoBlockThreshold, 10) || defaultBlockThreshold, 80, 100),
 		autoBlockMinutes: clamp(
 			Number.parseInt(source.autoBlockMinutes, 10) || globalPolicy.autoBlockMinutes || DEFAULT_POLICY.autoBlockMinutes,
 			1,
 			43_200,
+		),
+		challengeMinutes: clamp(
+			Number.parseInt(source.challengeMinutes, 10) || Math.min(30, Math.max(5, autoRateLimitMinutes)),
+			1,
+			120,
+		),
+		challengeDifficulty: clamp(
+			Math.max(
+				mode === "strict" ? 16 : 10,
+				Number.parseInt(source.challengeDifficulty, 10) || (mode === "strict" ? 16 : 14),
+			),
+			10,
+			22,
 		),
 		endpointRules: normalizeEndpointRules(source.endpointRules),
 	};
@@ -1213,6 +1227,8 @@ const hostPolicyEntry = (host, policy) => {
 			autoRateLimitMinutes: policy.autoRateLimitMinutes,
 			autoBlockThreshold: policy.autoBlockThreshold,
 			autoBlockMinutes: policy.autoBlockMinutes,
+			challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
+			challengeDifficulty: 14,
 			endpointRules: [],
 		},
 	};
@@ -1230,6 +1246,8 @@ const createHostPolicyContext = (policy, hosts = []) => {
 		autoRateLimitMinutes: policy.autoRateLimitMinutes,
 		autoBlockThreshold: policy.autoBlockThreshold,
 		autoBlockMinutes: policy.autoBlockMinutes,
+		challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
+		challengeDifficulty: 14,
 		endpointRules: [],
 		inherited: true,
 	};
@@ -1273,6 +1291,7 @@ const createHostPolicyContext = (policy, hosts = []) => {
 			autoBlockEnabled: policy.autoBlockEnabled && ["protect", "strict"].includes(rule.mode),
 			autoRateLimitThreshold: strict ? Math.min(effective.autoRateLimitThreshold, 45) : effective.autoRateLimitThreshold,
 			autoBlockThreshold: strict ? Math.min(effective.autoBlockThreshold, 90) : effective.autoBlockThreshold,
+			challengeDifficulty: strict ? Math.max(effective.challengeDifficulty, 16) : effective.challengeDifficulty,
 			endpointRulePath: rule.pathPrefix,
 			inherited: false,
 		};
@@ -1355,8 +1374,8 @@ const monitorThreats = async () => {
 		const queueChallenge = ({ event, effective, source, reason }) => {
 			challengeRequests.push({
 				ip: event.ip,
-				durationMinutes: Math.min(30, Math.max(5, effective.autoRateLimitMinutes)),
-				difficulty: effective.mode === "strict" ? 16 : 14,
+				durationMinutes: effective.challengeMinutes,
+				difficulty: effective.challengeDifficulty,
 				reason,
 				source,
 			});
@@ -2313,6 +2332,8 @@ const internalSecurity = {
 			autoRateLimitMinutes: policy.autoRateLimitMinutes,
 			autoBlockThreshold: policy.autoBlockThreshold,
 			autoBlockMinutes: policy.autoBlockMinutes,
+			challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
+			challengeDifficulty: 14,
 			endpointRules: [],
 		};
 	},
@@ -2377,6 +2398,18 @@ const internalSecurity = {
 				throw new errs.ValidationError("Auto-block duration must be between 1 and 43200 minutes");
 			}
 		}
+		if (typeof data.challengeMinutes !== "undefined") {
+			const minutes = Number.parseInt(data.challengeMinutes, 10);
+			if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+				throw new errs.ValidationError("Challenge duration must be between 1 and 120 minutes");
+			}
+		}
+		if (typeof data.challengeDifficulty !== "undefined") {
+			const difficulty = Number.parseInt(data.challengeDifficulty, 10);
+			if (!Number.isInteger(difficulty) || difficulty < 10 || difficulty > 22) {
+				throw new errs.ValidationError("Challenge difficulty must be between 10 and 22 bits");
+			}
+		}
 
 		const current = await readPolicyUnsafe();
 		if (Object.keys(current.hostPolicies).length >= MAX_HOST_POLICIES && !current.hostPolicies[String(id)]) {
@@ -2388,6 +2421,8 @@ const internalSecurity = {
 			autoRateLimitMinutes: current.autoRateLimitMinutes,
 			autoBlockThreshold: current.autoBlockThreshold,
 			autoBlockMinutes: current.autoBlockMinutes,
+			challengeMinutes: Math.min(30, Math.max(5, current.autoRateLimitMinutes)),
+			challengeDifficulty: 14,
 		};
 		const definedData = Object.fromEntries(
 			Object.entries(data).filter(([, value]) => typeof value !== "undefined"),
@@ -2396,6 +2431,7 @@ const internalSecurity = {
 		if (!current.hostPolicies[String(id)] && definedData.mode === "strict") {
 			if (typeof definedData.autoRateLimitThreshold === "undefined") delete draft.autoRateLimitThreshold;
 			if (typeof definedData.autoBlockThreshold === "undefined") delete draft.autoBlockThreshold;
+			if (typeof definedData.challengeDifficulty === "undefined") delete draft.challengeDifficulty;
 		}
 		const nextHostPolicy = normalizeHostPolicy(draft, current);
 		const updated = await writePolicyUnsafe({

@@ -423,6 +423,8 @@ router
 					autoRateLimitMinutes: req.body?.auto_rate_limit_minutes,
 					autoBlockThreshold: req.body?.auto_block_threshold,
 					autoBlockMinutes: req.body?.auto_block_minutes,
+					challengeMinutes: req.body?.challenge_minutes,
+					challengeDifficulty: req.body?.challenge_difficulty,
 					endpointRules: Array.isArray(req.body?.endpoint_rules)
 						? req.body.endpoint_rules.map((rule) => ({
 								pathPrefix: rule?.path_prefix,

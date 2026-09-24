@@ -140,6 +140,8 @@ export interface SecurityHostPolicy {
 	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
+	challengeMinutes: number;
+	challengeDifficulty: number;
 	endpointRules: SecurityEndpointRule[];
 }
 
