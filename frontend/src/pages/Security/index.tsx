@@ -18,6 +18,7 @@ import {
 	getSecurityBlocks,
 	getSecurityChallenges,
 	getSecurityDetectionRules,
+	getSecurityDiagnostics,
 	getSecurityEventDetail,
 	getSecurityEvents,
 	getSecurityHostPolicies,
@@ -112,6 +113,19 @@ const formatTime = (value: string | null) => {
 	return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 };
 
+const formatBytes = (value: number) => {
+	if (!Number.isFinite(value) || value < 0) return "—";
+	if (value < 1024) return `${Math.round(value)} B`;
+	const units = ["KB", "MB", "GB", "TB"];
+	let size = value / 1024;
+	let unit = units[0];
+	for (let index = 1; index < units.length && size >= 1024; index += 1) {
+		size /= 1024;
+		unit = units[index];
+	}
+	return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${unit}`;
+};
+
 const responseLabel = (type: "block" | "challenge" | "rate_limit") => {
 	switch (type) {
 		case "block":
@@ -175,6 +189,11 @@ const Security = () => {
 		queryKey: ["security-overview"],
 		queryFn: getSecurityOverview,
 		refetchInterval: POLL_MS,
+	});
+	const diagnostics = useQuery({
+		queryKey: ["security-diagnostics"],
+		queryFn: getSecurityDiagnostics,
+		refetchInterval: 30_000,
 	});
 
 	const events = useQuery({
@@ -253,6 +272,7 @@ const Security = () => {
 	const refresh = async () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-diagnostics"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-event-detail"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-app-events"] }),
@@ -426,6 +446,47 @@ const Security = () => {
 						Refresh
 					</Button>
 				</div>
+
+				{diagnostics.data ? (
+					<div className={`card mb-4 ${diagnostics.data.health.status === "critical" ? "border-danger" : diagnostics.data.health.status === "warning" ? "border-warning" : ""}`}>
+						<div className="card-body">
+							<div className="d-flex flex-column flex-lg-row justify-content-between gap-3">
+								<div>
+									<div className="d-flex align-items-center gap-2">
+										<strong>HYROVI Sec health</strong>
+										<span className={`badge ${diagnostics.data.health.status === "critical" ? "bg-red text-white" : diagnostics.data.health.status === "warning" ? "bg-yellow text-dark" : "bg-green-lt"}`}>
+											{diagnostics.data.health.status.toUpperCase()}
+										</span>
+									</div>
+									<div className="text-secondary small mt-1">
+										Disk {diagnostics.data.storage.disk.usedPercent.toFixed(1)}% used · {formatBytes(diagnostics.data.storage.disk.freeBytes)} free of {formatBytes(diagnostics.data.storage.disk.totalBytes)}
+									</div>
+									{diagnostics.data.health.issues.map((issue) => (
+										<div key={issue} className={diagnostics.data.health.status === "critical" ? "text-red small mt-1" : "text-warning small mt-1"}>{issue}</div>
+									))}
+								</div>
+								<div className="row g-2 flex-grow-1">
+									<div className="col-6 col-md-3">
+										<div className="text-secondary small">Live security log</div>
+										<div>{formatBytes(diagnostics.data.storage.securityLog.bytes)}</div>
+									</div>
+									<div className="col-6 col-md-3">
+										<div className="text-secondary small">Event archive</div>
+										<div>{formatBytes(diagnostics.data.storage.eventArchive.bytes)} · {diagnostics.data.storage.eventArchive.files} files</div>
+									</div>
+									<div className="col-6 col-md-3">
+										<div className="text-secondary small">Responses</div>
+										<div>{diagnostics.data.counts.activeBlocks} block · {diagnostics.data.counts.activeRateLimits} rate · {diagnostics.data.counts.activeChallenges} challenge</div>
+									</div>
+									<div className="col-6 col-md-3">
+										<div className="text-secondary small">Security config</div>
+										<div>{diagnostics.data.counts.enabledDetectionRules}/{diagnostics.data.counts.detectionRules} rules · {diagnostics.data.counts.openAlerts} alerts</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				) : null}
 
 				{overview.data?.automation.emergencyBypass ? (
 					<div className="alert alert-warning mb-4" role="alert">

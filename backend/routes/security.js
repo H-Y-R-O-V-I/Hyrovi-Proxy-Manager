@@ -275,6 +275,16 @@ router.post("/trusted-devices/:device_id/reset-sequence", async (req, res, next)
 	}
 });
 
+router.get("/diagnostics", async (req, res, next) => {
+	try {
+		res.set("Cache-Control", "no-store");
+		res.status(200).send(await internalSecurity.getDiagnostics(res.locals.access));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router.get("/overview", async (req, res, next) => {
 	try {
 		const data = await internalSecurity.getOverview(res.locals.access);

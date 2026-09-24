@@ -169,6 +169,58 @@ export interface SecurityPolicy {
 	hostPolicies: Record<string, SecurityHostPolicy>;
 }
 
+export interface SecurityFileStat {
+	exists: boolean;
+	bytes: number;
+	modifiedAt: string | null;
+}
+
+export interface SecurityDirectoryStat {
+	exists: boolean;
+	files: number;
+	bytes: number;
+}
+
+export interface SecurityDiagnostics {
+	generatedAt: string;
+	health: {
+		status: "ok" | "warning" | "critical";
+		issues: string[];
+	};
+	storage: {
+		disk: {
+			status: "ok" | "warning" | "critical";
+			totalBytes: number;
+			usedBytes: number;
+			freeBytes: number;
+			usedPercent: number;
+			freePercent: number;
+		};
+		securityLog: SecurityFileStat;
+		actionLog: SecurityFileStat;
+		eventArchive: SecurityDirectoryStat;
+		appEventArchive: SecurityDirectoryStat;
+		stateFiles: Record<string, SecurityFileStat>;
+	};
+	components: {
+		instrumented: boolean;
+		emergencyBypass: boolean;
+		monitorIntervalMs: number;
+		autoResponseEnabled: boolean;
+	};
+	counts: {
+		activeBlocks: number;
+		activeRateLimits: number;
+		activeChallenges: number;
+		activeEscalations: number;
+		detectionRules: number;
+		enabledDetectionRules: number;
+		openAlerts: number;
+		trustedDevices: number;
+		revokedTrustedDevices: number;
+	};
+}
+
 export interface SecurityOverview {
 	window: {
 		analyzedRequests: number;
@@ -330,6 +382,10 @@ export interface SecurityBlock {
 
 export async function getSecurityOverview(): Promise<SecurityOverview> {
 	return await api.get({ url: "/security/overview" });
+}
+
+export async function getSecurityDiagnostics(): Promise<SecurityDiagnostics> {
+	return await api.get({ url: "/security/diagnostics" });
 }
 
 export async function getSecurityAppEvents(limit = 100): Promise<SecurityAppEventsResponse> {

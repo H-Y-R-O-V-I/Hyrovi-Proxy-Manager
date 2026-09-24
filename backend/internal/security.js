@@ -22,6 +22,8 @@ const RATE_LIMITS_FILE = `${SECURITY_DIR}/rate-limits.json`;
 const RATE_LIMIT_GEO_FILE = `${SECURITY_DIR}/rate-limited-ips.geo`;
 const ESCALATIONS_FILE = `${SECURITY_DIR}/escalations.json`;
 const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
+const APP_EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/app-events`;
+const GIB = 1024 * 1024 * 1024;
 const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v4`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
@@ -1850,6 +1852,96 @@ const buildIncidentCorrelation = ({ session, appEvents = [], actions = [], chall
 	};
 };
 
+const statFileSafe = async (filePath) => {
+	try {
+		const stat = await fs.promises.stat(filePath);
+		return {
+			exists: true,
+			bytes: stat.size,
+			modifiedAt: stat.mtime.toISOString(),
+		};
+	} catch (err) {
+		if (err.code === "ENOENT") return { exists: false, bytes: 0, modifiedAt: null };
+		throw err;
+	}
+};
+
+const statFlatDirectory = async (directory) => {
+	try {
+		const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+		const files = entries.filter((entry) => entry.isFile());
+		const stats = await Promise.all(files.map((entry) => fs.promises.stat(`${directory}/${entry.name}`)));
+		return {
+			exists: true,
+			files: files.length,
+			bytes: stats.reduce((total, stat) => total + stat.size, 0),
+		};
+	} catch (err) {
+		if (err.code === "ENOENT") return { exists: false, files: 0, bytes: 0 };
+		throw err;
+	}
+};
+
+const securityDiskHealth = async () => {
+	const stat = await fs.promises.statfs(SECURITY_DIR);
+	const totalBytes = Number(stat.blocks) * Number(stat.bsize);
+	const freeBytes = Number(stat.bavail) * Number(stat.bsize);
+	const usedBytes = Math.max(0, totalBytes - freeBytes);
+	const freePercent = totalBytes > 0 ? (freeBytes / totalBytes) * 100 : 0;
+	const usedPercent = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
+	const status = freeBytes < 2 * GIB || freePercent < 2 ? "critical" : freeBytes < 5 * GIB || freePercent < 10 ? "warning" : "ok";
+	return {
+		status,
+		totalBytes,
+		usedBytes,
+		freeBytes,
+		usedPercent: Number(usedPercent.toFixed(2)),
+		freePercent: Number(freePercent.toFixed(2)),
+	};
+};
+const alertOnStorageHealth = async () => {
+	try {
+		const disk = await securityDiskHealth();
+		if (disk.status === "ok") return null;
+		const severity = disk.status === "critical" ? "critical" : "high";
+		const openAlerts = await internalSecurityAlerts.listAlerts({ limit: 100, status: "open" });
+		const existing = openAlerts.find(
+			(alert) => alert.type === "storage_low_space" && alert.severity === severity,
+		);
+		if (existing) return existing;
+		return internalSecurityAlerts.createAlertBestEffort({
+			severity,
+			type: "storage_low_space",
+			title: `HYROVI Sec storage is ${disk.status}`,
+			detail: `${disk.usedPercent.toFixed(1)}% used; ${Math.round(disk.freeBytes / (1024 * 1024))} MiB free`,
+			dedupeKey: `hyrovi-sec-storage-low-space:${disk.status}`,
+		});
+	} catch (err) {
+		logger.error(`HYROVI Sec storage health check failed: ${err.message}`);
+		return null;
+	}
+};
+
+
+const securityStateFileStats = async () => {
+	const specs = [
+		["policy", POLICY_FILE],
+		["blocks", BLOCKS_FILE],
+		["rateLimits", RATE_LIMITS_FILE],
+		["escalations", ESCALATIONS_FILE],
+		["challenges", `${SECURITY_DIR}/challenges.json`],
+		["alerts", `${SECURITY_DIR}/alerts.json`],
+		["detectionRules", `${SECURITY_DIR}/detection-rules.json`],
+		["trustedDevices", `${SECURITY_DIR}/trusted-devices.json`],
+		["trustedDeviceState", `${SECURITY_DIR}/trusted-device-state.json`],
+	];
+	return Object.fromEntries(
+		await Promise.all(
+			specs.map(async ([name, filePath]) => [name, await statFileSafe(filePath)]),
+		),
+	);
+};
+
 const getEnabledHosts = (model) =>
 	model
 		.query()
@@ -1938,18 +2030,96 @@ const internalSecurity = {
 			readPolicyUnsafe()
 				.then((policy) => purgeArchivedEvents(policy.eventRetentionDays))
 				.catch((err) => logger.error("HYROVI Sec event retention failed:", err.message));
+		const checkStorageHealth = () => alertOnStorageHealth();
 		purge();
 		purgeRateLimits();
 		purgeEscalationStates();
 		purgeChallenges();
 		purgeArchive();
+		checkStorageHealth();
 		monitor();
 		setInterval(purge, 60_000).unref();
 		setInterval(purgeRateLimits, 60_000).unref();
 		setInterval(purgeEscalationStates, 60_000).unref();
 		setInterval(purgeChallenges, 60_000).unref();
 		setInterval(purgeArchive, 60 * 60_000).unref();
+		setInterval(checkStorageHealth, 15 * 60_000).unref();
 		setInterval(monitor, MONITOR_INTERVAL_MS).unref();
+	},
+
+	getDiagnostics: async (access) => {
+		await access.can("logs:list");
+		const [
+			disk,
+			securityLog,
+			actionLog,
+			eventArchive,
+			appEventArchive,
+			stateFiles,
+			blocks,
+			rateLimits,
+			challenges,
+			rawEscalations,
+			policy,
+			detectionRules,
+			alerts,
+			trustedDevices,
+			instrumentation,
+		] = await Promise.all([
+			securityDiskHealth(),
+			statFileSafe(SECURITY_LOG_FILE),
+			statFileSafe(SECURITY_ACTION_LOG_FILE),
+			statFlatDirectory(EVENT_ARCHIVE_DIR),
+			statFlatDirectory(APP_EVENT_ARCHIVE_DIR),
+			securityStateFileStats(),
+			readBlocksUnsafe().then(activeBlocks),
+			readRateLimitsUnsafe().then(activeBlocks),
+			internalSecurityChallenge.listChallenges(),
+			readEscalationsUnsafe(),
+			readPolicyUnsafe(),
+			internalSecurityDetectionRules.listRules(),
+			internalSecurityAlerts.listAlerts({ limit: 500, status: "open" }),
+			internalSecurityDevices.listDevices(),
+			statFileSafe(INSTRUMENTATION_MARKER),
+		]);
+		const escalations = pruneEscalationStates(rawEscalations, rateLimits, policy);
+		const activeDevices = trustedDevices.filter((device) => !device.revokedAt);
+
+		return {
+			generatedAt: new Date().toISOString(),
+			health: {
+				status: disk.status,
+				issues: [
+					...(disk.status === "critical" ? ["Security storage filesystem is critically low on free space"] : []),
+					...(disk.status === "warning" ? ["Security storage filesystem is low on free space"] : []),
+				],
+			},
+			storage: {
+				disk,
+				securityLog,
+				actionLog,
+				eventArchive,
+				appEventArchive,
+				stateFiles,
+			},
+			components: {
+				instrumented: instrumentation.exists,
+				emergencyBypass: emergencyBypassEnabled(),
+				monitorIntervalMs: MONITOR_INTERVAL_MS,
+				autoResponseEnabled: policy.autoBlockEnabled,
+			},
+			counts: {
+				activeBlocks: blocks.length,
+				activeRateLimits: rateLimits.length,
+				activeChallenges: challenges.length,
+				activeEscalations: Object.keys(escalations).length,
+				detectionRules: detectionRules.length,
+				enabledDetectionRules: detectionRules.filter((rule) => rule.enabled).length,
+				openAlerts: alerts.length,
+				trustedDevices: activeDevices.length,
+				revokedTrustedDevices: trustedDevices.length - activeDevices.length,
+			},
+		};
 	},
 
 	getEvents: async (access, options = {}) => {
