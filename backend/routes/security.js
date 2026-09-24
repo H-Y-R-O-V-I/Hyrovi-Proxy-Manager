@@ -5,6 +5,7 @@ import internalSecurityAlerts from "../internal/security_alerts.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
 import internalSecurityDetectionRules from "../internal/security_detection_rules.js";
+import internalSecurityRuleReviews from "../internal/security_rule_reviews.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
 
@@ -245,6 +246,36 @@ router.post("/detection-rules/simulate", async (req, res, next) => {
 });
 
 router
+	.route("/detection-rules/:rule_id/reviews/:request_id")
+	.put(async (req, res, next) => {
+		try {
+			res.set("Cache-Control", "no-store");
+			res.status(200).send(
+				await internalSecurity.reviewDetectionRuleHit(
+					res.locals.access,
+					req.params.rule_id,
+					req.params.request_id,
+					req.body?.verdict,
+				),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.delete(async (req, res, next) => {
+		try {
+			res.set("Cache-Control", "no-store");
+			res.status(200).send(
+				await internalSecurity.deleteDetectionRuleReview(res.locals.access, req.params.rule_id, req.params.request_id),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router
 	.route("/detection-rules/:rule_id")
 	.put(async (req, res, next) => {
 		try {
@@ -260,7 +291,9 @@ router
 	.delete(async (req, res, next) => {
 		try {
 			await res.locals.access.can("users:list");
-			res.status(200).send(await internalSecurityDetectionRules.deleteRule(req.params.rule_id));
+			const result = await internalSecurityDetectionRules.deleteRule(req.params.rule_id);
+			await internalSecurityRuleReviews.deleteReviewsForRule(req.params.rule_id);
+			res.status(200).send(result);
 		} catch (err) {
 			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
 			next(err);

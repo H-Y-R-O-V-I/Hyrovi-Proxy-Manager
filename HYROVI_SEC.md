@@ -38,7 +38,7 @@ The first implementation adds:
 - authenticated app/auth security-event ingest and admin visibility;
 - Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;
 - bounded operational security alerts with acknowledgement, deduplication and a separate read-only HYROVI One pull feed;
-- safe custom detection rules with literal host/path/method/status/User-Agent matchers, preview-first staged rollout, explainable risk scoring, optional soft-response eligibility, retained-event 1h/24h trend analytics and read-only draft simulation;
+- safe custom detection rules with literal host/path/method/status/User-Agent matchers, preview-first staged rollout, explainable risk scoring, optional soft-response eligibility, retained-event 1h/24h trend analytics, read-only draft simulation and structured rule-hit false-positive/expected/attack review metadata;
 - read-only system health/diagnostics with disk pressure, log/archive size and component-state visibility plus low-disk alerting;
 - a dedicated HYROVI Sec navigation page.
 
@@ -124,6 +124,7 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/trusted-device-state.json` (replay counters and last-seen state)
 - `/data/nginx/hyrovi-security/alerts.json` (bounded operational alert state)
 - `/data/nginx/hyrovi-security/detection-rules.json` (bounded custom detection rules)
+- `/data/nginx/hyrovi-security/rule-reviews.json` (bounded structured rule-hit review metadata)
 - `/data/logs/hyrovi-sec-actions.log` (bounded JSONL response audit history)
 - `/data/nginx/hyrovi-security/events/YYYY-MM-DD.jsonl` (bounded retained security-event archive)
 
@@ -144,7 +145,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 1. package the authentication-event and signed-device protocol into reusable client SDKs;
 2. connect HYROVI One to the read-only alert feed once its current worktree is clear, then add user-facing notification delivery;
 3. add ASN-aware controls on top of the completed IPv4/IPv6 CIDR controls;
-4. add rule-health/false-positive review workflows and longer-term trend summaries on top of the completed preview/promote/pause rollout;
+4. add longer-term rule-health trend summaries and optional operator-defined promotion gates on top of the completed structured false-positive/expected/attack review workflow;
 5. expand the completed Node challenge helper into additional client SDKs where needed and consider endpoint-specific challenge overrides.
 
 ## Upstream attribution

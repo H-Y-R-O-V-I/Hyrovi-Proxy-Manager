@@ -9,6 +9,7 @@ import internalSecurityAlerts from "./security_alerts.js";
 import internalSecurityChallenge from "./security_challenge.js";
 import internalSecurityDevices from "./security_devices.js";
 import internalSecurityDetectionRules from "./security_detection_rules.js";
+import internalSecurityRuleReviews from "./security_rule_reviews.js";
 import deadHostModel from "../models/dead_host.js";
 import proxyHostModel from "../models/proxy_host.js";
 import redirectionHostModel from "../models/redirection_host.js";
@@ -1977,6 +1978,7 @@ const internalSecurity = {
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
 		await internalSecurityDevices.prepare();
 		await internalSecurityDetectionRules.prepare();
+		await internalSecurityRuleReviews.prepare();
 		await internalSecurityAlerts.prepare();
 		try {
 			await fs.promises.access(BLOCKS_CONF_FILE);
@@ -2144,15 +2146,33 @@ const internalSecurity = {
 	getDetectionRuleAnalytics: async (access, options = {}) => {
 		await access.can("logs:list");
 		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIMIT, 1000));
-		const [policy, rules] = await Promise.all([
+		const [policy, rules, reviews] = await Promise.all([
 			readPolicyUnsafe(),
 			internalSecurityDetectionRules.listRules(),
+			internalSecurityRuleReviews.listReviews({ limit: 5000 }),
 		]);
 		const events = await loadEventHistory(limit, policy);
+		const reviewsByRule = new Map();
+		for (const review of reviews) {
+			if (!reviewsByRule.has(review.ruleId)) reviewsByRule.set(review.ruleId, []);
+			reviewsByRule.get(review.ruleId).push(review);
+		}
+		const analytics = internalSecurityDetectionRules.analyzeRules(rules, events).map((entry) => {
+			const ruleReviews = reviewsByRule.get(entry.ruleId) || [];
+			const reviewByRequestId = new Map(ruleReviews.map((review) => [review.requestId, review]));
+			return {
+				...entry,
+				reviews: internalSecurityRuleReviews.summarizeReviews(ruleReviews),
+				samples: entry.samples.map((sample) => ({
+					...sample,
+					verdict: sample.requestId ? reviewByRequestId.get(sample.requestId)?.verdict || null : null,
+				})),
+			};
+		});
 		return {
 			analyzedEvents: events.length,
 			limit,
-			rules: internalSecurityDetectionRules.analyzeRules(rules, events),
+			rules: analytics,
 		};
 	},
 
@@ -2166,6 +2186,34 @@ const internalSecurity = {
 			limit,
 			...internalSecurityDetectionRules.simulateRule(data, events),
 		};
+	},
+
+	reviewDetectionRuleHit: async (access, ruleId, requestId, verdict) => {
+		await access.can("users:list");
+		const normalizedRuleId = String(ruleId || "").trim();
+		const normalizedRequestId = String(requestId || "").trim();
+		const rules = await internalSecurityDetectionRules.listRules();
+		const rule = rules.find((entry) => entry.id === normalizedRuleId);
+		if (!rule) throw new errs.ItemNotFoundError(normalizedRuleId);
+
+		const policy = await readPolicyUnsafe();
+		const events = await loadEventHistory(MAX_EVENT_LIMIT, policy);
+		const event = events.find((entry) => entry.requestId === normalizedRequestId);
+		if (!event) throw new errs.ItemNotFoundError(normalizedRequestId);
+		const simulation = internalSecurityDetectionRules.simulateRule({ ...rule, stage: "preview" }, [event]);
+		if (simulation.hits !== 1) {
+			throw new errs.ValidationError("Request does not match the selected detection rule");
+		}
+		return internalSecurityRuleReviews.upsertReview({
+			ruleId: rule.id,
+			requestId: event.requestId,
+			verdict,
+		});
+	},
+
+	deleteDetectionRuleReview: async (access, ruleId, requestId) => {
+		await access.can("users:list");
+		return internalSecurityRuleReviews.deleteReview({ ruleId, requestId });
 	},
 
 	getEvents: async (access, options = {}) => {

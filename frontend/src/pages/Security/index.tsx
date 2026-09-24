@@ -3,6 +3,7 @@ import { IconBan, IconRefresh, IconShield } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import {
 	acknowledgeSecurityAlert,
+	clearSecurityDetectionRuleHitReview,
 	createSecurityBlock,
 	createSecurityDetectionRule,
 	createSecurityRateLimit,
@@ -40,7 +41,9 @@ import {
 	type SecurityHostMode,
 	type SecurityHostPolicyEntry,
 	type SecurityIncidentTimelineKind,
+	type SecurityRuleHitVerdict,
 	resetSecurityTrustedDeviceSequence,
+	reviewSecurityDetectionRuleHit,
 	revokeSecurityTrustedDevice,
 } from "src/api/backend";
 import { Button, HasPermission } from "src/components";
@@ -229,6 +232,7 @@ const Security = () => {
 	const [ruleUserAgent, setRuleUserAgent] = useState("");
 	const [ruleTransferText, setRuleTransferText] = useState("");
 	const [ruleImportMode, setRuleImportMode] = useState<"merge" | "replace">("merge");
+	const [selectedRuleReviewId, setSelectedRuleReviewId] = useState<string | null>(null);
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [hostPolicyDrafts, setHostPolicyDrafts] = useState<Record<number, HostPolicyDraft>>({});
@@ -351,6 +355,9 @@ const Security = () => {
 			ruleDraft.match.userAgentContains),
 	);
 
+	const selectedRuleReviewAnalytics =
+		detectionRuleAnalytics.data?.rules.find((entry) => entry.ruleId === selectedRuleReviewId) ?? null;
+
 	const refresh = async () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
@@ -432,6 +439,16 @@ const Security = () => {
 	const setDetectionRuleStage = useMutation({
 		mutationFn: ({ id, stage }: { id: string; stage: SecurityDetectionRuleStage }) =>
 			updateSecurityDetectionRule(id, { stage, enabled: stage === "active" }),
+		onSuccess: refresh,
+	});
+	const reviewDetectionRuleHit = useMutation({
+		mutationFn: ({ ruleId, requestId, verdict }: { ruleId: string; requestId: string; verdict: SecurityRuleHitVerdict }) =>
+			reviewSecurityDetectionRuleHit(ruleId, requestId, verdict),
+		onSuccess: refresh,
+	});
+	const clearDetectionRuleHitReview = useMutation({
+		mutationFn: ({ ruleId, requestId }: { ruleId: string; requestId: string }) =>
+			clearSecurityDetectionRuleHitReview(ruleId, requestId),
 		onSuccess: refresh,
 	});
 	const exportDetectionRules = useMutation({
@@ -1089,7 +1106,7 @@ const Security = () => {
 						<div>
 							<h3 className="card-title">Custom detection rules</h3>
 							<div className="text-secondary small">
-								Safe literal matchers only — no arbitrary regex or executable code. Observe rules add explainable risk; Soft rules may rate-limit after the normal risk threshold is reached, but never hard-block by themselves.
+								Safe literal matchers only — no arbitrary regex or executable code. New rules default to Preview, where matches and reviews are measured without changing live risk. Active Observe rules add explainable risk; Active Soft rules may rate-limit after the normal risk threshold is reached, but never hard-block by themselves.
 							</div>
 						</div>
 						<span className="badge bg-azure-lt">{detectionRules.data?.length ?? 0} rules</span>
@@ -1292,6 +1309,9 @@ const Security = () => {
 														<strong>{analytics.hits}</strong> total
 														<div className="text-secondary small">{analytics.hitsLast24Hours} /24h · {analytics.hitsLastHour} /1h</div>
 														<div className="text-secondary small">{analytics.uniqueIpsLast24Hours} IPs /24h · {analytics.uniqueHosts} hosts total</div>
+														<div className="text-secondary small">
+															Reviews: {analytics.reviews.confirmedAttack} attack · {analytics.reviews.expected} expected · {analytics.reviews.falsePositive} false positive
+														</div>
 														<div className="text-secondary small">{analytics.lastHitAt ? `last ${formatTime(analytics.lastHitAt)}` : "no matches"}</div>
 													</>
 												) : "—"}
@@ -1304,7 +1324,14 @@ const Security = () => {
 											<td className="text-end">
 												<div className="d-flex gap-1 justify-content-end">
 													<Button
-														className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"}
+														className="btn-outline-primary"
+														disabled={!analytics?.samples.length}
+														onClick={() => setSelectedRuleReviewId((current) => (current === rule.id ? null : rule.id))}
+													>
+														Review
+													</Button>
+													<Button
+														className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"
 														disabled={setDetectionRuleStage.isPending}
 														onClick={() =>
 															setDetectionRuleStage.mutate({
@@ -1329,6 +1356,81 @@ const Security = () => {
 							</tbody>
 						</table>
 					</div>
+					{selectedRuleReviewAnalytics ? (
+						<div className="card-body border-top">
+							<div className="d-flex align-items-start justify-content-between gap-3 mb-3">
+								<div>
+									<h4 className="mb-1">Review recent matches · {selectedRuleReviewAnalytics.name}</h4>
+									<div className="text-secondary small">
+										Classifications are metadata only. They do not automatically change risk, stage or enforcement.
+									</div>
+								</div>
+								<Button className="btn-outline-secondary" onClick={() => setSelectedRuleReviewId(null)}>Close</Button>
+							</div>
+							<div className="d-flex flex-wrap gap-2 mb-3">
+								<span className="badge bg-red-lt">{selectedRuleReviewAnalytics.reviews.confirmedAttack} confirmed attack</span>
+								<span className="badge bg-blue-lt">{selectedRuleReviewAnalytics.reviews.expected} expected</span>
+								<span className="badge bg-yellow-lt">{selectedRuleReviewAnalytics.reviews.falsePositive} false positive</span>
+							</div>
+							{reviewDetectionRuleHit.error ? <div className="text-red mb-2">{reviewDetectionRuleHit.error.message}</div> : null}
+							{clearDetectionRuleHitReview.error ? <div className="text-red mb-2">{clearDetectionRuleHitReview.error.message}</div> : null}
+							<div className="table-responsive">
+								<table className="table table-sm table-vcenter mb-0">
+									<thead>
+										<tr>
+											<th>Time</th><th>Request</th><th>Source</th><th>Verdict</th><th />
+										</tr>
+									</thead>
+									<tbody>
+										{selectedRuleReviewAnalytics.samples.map((sample) => (
+											<tr key={sample.requestId || `${sample.timestamp}-${sample.ip}-${sample.path}`}>
+												<td className="text-nowrap">{formatTime(sample.timestamp)}</td>
+												<td>
+													<div className="font-monospace">{sample.method} {sample.host}{sample.path}</div>
+													<div className="text-secondary small">HTTP {sample.status} · risk {sample.risk}</div>
+												</td>
+												<td className="font-monospace">{sample.ip}</td>
+												<td>{sample.verdict ? <span className="badge bg-secondary-lt">{sample.verdict.replace(/_/g, " ")}</span> : "unreviewed"}</td>
+												<td className="text-end">
+													<div className="d-flex flex-wrap gap-1 justify-content-end">
+														{(["confirmed_attack", "expected", "false_positive"] as SecurityRuleHitVerdict[]).map((verdict) => (
+															<Button
+																key={verdict}
+																className="btn-outline-secondary"
+																disabled={!sample.requestId || reviewDetectionRuleHit.isPending}
+																onClick={() => sample.requestId && reviewDetectionRuleHit.mutate({
+																	ruleId: selectedRuleReviewId || "",
+																	requestId: sample.requestId,
+																	verdict,
+																})}
+															>
+																{verdict === "confirmed_attack" ? "Attack" : verdict === "false_positive" ? "False positive" : "Expected"}
+															</Button>
+														))}
+														{sample.verdict ? (
+															<Button
+																className="btn-outline-danger"
+																disabled={!sample.requestId || clearDetectionRuleHitReview.isPending}
+																onClick={() => sample.requestId && clearDetectionRuleHitReview.mutate({
+																	ruleId: selectedRuleReviewId || "",
+																	requestId: sample.requestId,
+																})}
+															>
+																Clear
+															</Button>
+														) : null}
+													</div>
+												</td>
+											</tr>
+										))}
+										{selectedRuleReviewAnalytics.samples.length === 0 ? (
+											<tr><td colSpan={5} className="text-secondary">No retained match samples are available for review.</td></tr>
+										) : null}
+									</tbody>
+								</table>
+							</div>
+						</div>
+					) : null}
 				</div>
 
 				<div className="card mb-4">

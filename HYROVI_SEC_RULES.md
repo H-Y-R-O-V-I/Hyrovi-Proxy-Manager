@@ -149,12 +149,37 @@ The rule form also has a **Simulate** action. Simulation validates the current d
 
 Simulation is strictly read-only: it does not create a rule, change `detection-rules.json`, add risk to stored events, or create rate limits, challenges or blocks.
 
+## Rule-health reviews
+
+Operators can classify retained rule-hit samples as:
+
+- `confirmed_attack`;
+- `expected`;
+- `false_positive`.
+
+Reviews are metadata only. They do not automatically change a rule's score, response mode, rollout stage or enforcement state.
+
+The server accepts a review only when both the rule and retained request still exist **and** the request currently matches that rule. This prevents arbitrary request IDs from being attached to unrelated rules.
+
+Stored review records contain only:
+
+- a generated review ID;
+- rule ID;
+- request ID;
+- verdict;
+- created/updated timestamps.
+
+They do not duplicate the request IP, host, path, headers, body or authentication data. Re-reviewing the same rule/request pair updates the existing review instead of creating a duplicate. Deleting a detection rule deletes its stored reviews.
+
+The rule table shows stored review totals, while the review panel joins verdicts back onto the bounded retained match samples. Reviews can also be cleared.
+
 ## Storage and API
 
-Rules are stored in:
+Rules and review metadata are stored in:
 
 ```text
 /data/nginx/hyrovi-security/detection-rules.json
+/data/nginx/hyrovi-security/rule-reviews.json
 ```
 
 Admin endpoints:
@@ -166,11 +191,13 @@ GET    /api/security/detection-rules/export
 POST   /api/security/detection-rules/import
 GET    /api/security/detection-rules/analytics
 POST   /api/security/detection-rules/simulate
+PUT    /api/security/detection-rules/<rule-id>/reviews/<request-id>
+DELETE /api/security/detection-rules/<rule-id>/reviews/<request-id>
 PUT    /api/security/detection-rules/<rule-id>
 DELETE /api/security/detection-rules/<rule-id>
 ```
 
-Read access, analytics and simulation use the normal Nginx Proxy Manager `logs:list` permission. Persistent mutations use `users:list`.
+Read access, analytics and simulation use the normal Nginx Proxy Manager `logs:list` permission. Persistent mutations, including review verdicts, use `users:list`.
 
 The HYROVI Sec page provides preview-first creation plus Promote, Pause, Resume and Delete controls. Only `active` rules affect new live analysis. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
 

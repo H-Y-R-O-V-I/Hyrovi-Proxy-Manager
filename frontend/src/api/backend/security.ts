@@ -327,6 +327,7 @@ export interface SecurityAlertsResponse {
 
 export type SecurityDetectionRuleResponse = "observe" | "soft";
 export type SecurityDetectionRuleStage = "preview" | "active" | "paused";
+export type SecurityRuleHitVerdict = "confirmed_attack" | "expected" | "false_positive";
 
 export interface SecurityDetectionRuleMatch {
 	host: string | null;
@@ -373,6 +374,23 @@ export interface SecurityDetectionRuleHitSample {
 	ip: string;
 	risk: number;
 	severity: string;
+	verdict?: SecurityRuleHitVerdict | null;
+}
+
+export interface SecurityDetectionRuleReviewSummary {
+	total: number;
+	confirmedAttack: number;
+	expected: number;
+	falsePositive: number;
+}
+
+export interface SecurityDetectionRuleReview {
+	id: string;
+	ruleId: string;
+	requestId: string;
+	verdict: SecurityRuleHitVerdict;
+	createdAt: string;
+	updatedAt: string;
 }
 
 export interface SecurityDetectionRuleAnalyticsEntry {
@@ -393,6 +411,7 @@ export interface SecurityDetectionRuleAnalyticsEntry {
 	firstHitAt: string | null;
 	lastHitAt: string | null;
 	maxObservedRisk: number;
+	reviews: SecurityDetectionRuleReviewSummary;
 	samples: SecurityDetectionRuleHitSample[];
 }
 
@@ -402,7 +421,7 @@ export interface SecurityDetectionRuleAnalyticsResponse {
 	rules: SecurityDetectionRuleAnalyticsEntry[];
 }
 
-export interface SecurityDetectionRuleSimulation extends SecurityDetectionRuleAnalyticsEntry {
+export interface SecurityDetectionRuleSimulation extends Omit<SecurityDetectionRuleAnalyticsEntry, "reviews"> {
 	ruleId: null;
 	analyzedEvents: number;
 	limit: number;
@@ -504,6 +523,26 @@ export async function simulateSecurityDetectionRule(
 	limit = 1000,
 ): Promise<SecurityDetectionRuleSimulation> {
 	return await api.post({ url: "/security/detection-rules/simulate", params: { limit }, data });
+}
+
+export async function reviewSecurityDetectionRuleHit(
+	ruleId: string,
+	requestId: string,
+	verdict: SecurityRuleHitVerdict,
+): Promise<SecurityDetectionRuleReview> {
+	return await api.put({
+		url: `/security/detection-rules/${encodeURIComponent(ruleId)}/reviews/${encodeURIComponent(requestId)}`,
+		data: { verdict },
+	});
+}
+
+export async function clearSecurityDetectionRuleHitReview(
+	ruleId: string,
+	requestId: string,
+): Promise<{ success: boolean }> {
+	return await api.del({
+		url: `/security/detection-rules/${encodeURIComponent(ruleId)}/reviews/${encodeURIComponent(requestId)}`,
+	});
 }
 
 export async function acknowledgeSecurityAlert(id: string): Promise<SecurityAlert> {
