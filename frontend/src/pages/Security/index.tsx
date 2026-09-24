@@ -1331,7 +1331,7 @@ const Security = () => {
 														Review
 													</Button>
 													<Button
-														className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"
+														className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"}
 														disabled={setDetectionRuleStage.isPending}
 														onClick={() =>
 															setDetectionRuleStage.mutate({
