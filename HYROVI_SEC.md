@@ -22,11 +22,11 @@ The first implementation adds:
 - critical/suspicious request inspection in the admin UI;
 - manual timed IPv4/IPv6 soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
-- persistent Observe/Enforce auto-response policy with configurable risk threshold and block duration;
-- conservative automatic blocking only for high-confidence public source IPs;
+- persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;
+- conservative automatic response for public sources: suspicious attack signals can be soft-limited first, while hard blocks still require high-confidence signals;
 - protection against automatically blocking RFC1918/link-local/loopback source addresses;
-- trusted exact IP/CIDR sources that remain observable but are excluded from automatic blocking;
-- per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific auto-block threshold/duration;
+- trusted exact IP/CIDR sources that remain observable but are excluded from automatic rate limits and blocking;
+- per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds and durations;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
 - a dedicated HYROVI Sec navigation page.
@@ -81,6 +81,8 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/policy.json`
 
 Response config changes are serialized and written atomically. Nginx is validated/reloaded before a new rate-limit or block state is considered successful. If durable state persistence fails, the previous Nginx response config is restored. On backend startup, the JSON state is reconciled back into the generated Nginx files so interrupted updates cannot leave stale enforcement behind. Existing HTTP hosts are regenerated through the `instrumentation-v2` upgrade marker so upgraded installations receive the rate-limit hook without manually re-saving hosts.
+
+Automatic response defaults remain conservative: global soft restriction starts at risk 50 for 10 minutes, while hard blocking starts at risk 95 for 60 minutes. `Strict` host mode defaults to a lower soft threshold (45) and hard threshold (90). Thresholds alone are not enough: the event must also contain recognized attack/reconnaissance signals, and private/loopback or trusted sources are excluded.
 
 ## Next security phases
 

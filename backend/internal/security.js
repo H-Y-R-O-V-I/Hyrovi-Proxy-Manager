@@ -25,6 +25,8 @@ const MONITOR_INTERVAL_MS = 5_000;
 const PROCESSED_EVENT_LIMIT = 5_000;
 const DEFAULT_POLICY = Object.freeze({
 	autoBlockEnabled: false,
+	autoRateLimitThreshold: 50,
+	autoRateLimitMinutes: 10,
 	autoBlockThreshold: 95,
 	autoBlockMinutes: 60,
 	trustedSources: [],
@@ -86,11 +88,34 @@ const isTrustedSource = (ip, trustedSources = []) => {
 const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
 	const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
 	const mode = HOST_POLICY_MODES.has(source.mode) ? source.mode : "observe";
-	const defaultThreshold = mode === "strict" ? Math.min(globalPolicy.autoBlockThreshold || 95, 90) : globalPolicy.autoBlockThreshold || 95;
+	const defaultRateLimitThreshold =
+		mode === "strict"
+			? Math.min(globalPolicy.autoRateLimitThreshold || DEFAULT_POLICY.autoRateLimitThreshold, 45)
+			: globalPolicy.autoRateLimitThreshold || DEFAULT_POLICY.autoRateLimitThreshold;
+	const defaultBlockThreshold =
+		mode === "strict"
+			? Math.min(globalPolicy.autoBlockThreshold || DEFAULT_POLICY.autoBlockThreshold, 90)
+			: globalPolicy.autoBlockThreshold || DEFAULT_POLICY.autoBlockThreshold;
 	return {
 		mode,
-		autoBlockThreshold: clamp(Number.parseInt(source.autoBlockThreshold, 10) || defaultThreshold, 80, 100),
-		autoBlockMinutes: clamp(Number.parseInt(source.autoBlockMinutes, 10) || globalPolicy.autoBlockMinutes || 60, 1, 43_200),
+		autoRateLimitThreshold: clamp(
+			Number.parseInt(source.autoRateLimitThreshold, 10) || defaultRateLimitThreshold,
+			40,
+			100,
+		),
+		autoRateLimitMinutes: clamp(
+			Number.parseInt(source.autoRateLimitMinutes, 10) ||
+				globalPolicy.autoRateLimitMinutes ||
+				DEFAULT_POLICY.autoRateLimitMinutes,
+			1,
+			43_200,
+		),
+		autoBlockThreshold: clamp(Number.parseInt(source.autoBlockThreshold, 10) || defaultBlockThreshold, 80, 100),
+		autoBlockMinutes: clamp(
+			Number.parseInt(source.autoBlockMinutes, 10) || globalPolicy.autoBlockMinutes || DEFAULT_POLICY.autoBlockMinutes,
+			1,
+			43_200,
+		),
 	};
 };
 
@@ -364,6 +389,16 @@ const withSecurityConfigMutation = (operation) => {
 const normalizePolicy = (value = {}) => {
 	const normalized = {
 		autoBlockEnabled: value.autoBlockEnabled === true,
+		autoRateLimitThreshold: clamp(
+			Number.parseInt(value.autoRateLimitThreshold, 10) || DEFAULT_POLICY.autoRateLimitThreshold,
+			40,
+			100,
+		),
+		autoRateLimitMinutes: clamp(
+			Number.parseInt(value.autoRateLimitMinutes, 10) || DEFAULT_POLICY.autoRateLimitMinutes,
+			1,
+			43_200,
+		),
 		autoBlockThreshold: clamp(Number.parseInt(value.autoBlockThreshold, 10) || DEFAULT_POLICY.autoBlockThreshold, 80, 100),
 		autoBlockMinutes: clamp(Number.parseInt(value.autoBlockMinutes, 10) || DEFAULT_POLICY.autoBlockMinutes, 1, 43_200),
 		trustedSources: normalizeTrustedSources(value.trustedSources),
@@ -420,7 +455,13 @@ const rememberEvent = (event) => {
 };
 
 const eventIsAutoBlockCandidate = (event, policy) => {
-	if (event.risk < policy.autoBlockThreshold || isPrivateOrLoopback(event.ip) || isTrustedSource(event.ip, policy.trustedSources)) return false;
+	if (
+		event.risk < policy.autoBlockThreshold ||
+		isPrivateOrLoopback(event.ip) ||
+		isTrustedSource(event.ip, policy.trustedSources)
+	) {
+		return false;
+	}
 	const ids = new Set(event.signals.map((signal) => signal.id));
 	return (
 		ids.has("path_traversal") ||
@@ -428,6 +469,29 @@ const eventIsAutoBlockCandidate = (event, policy) => {
 		ids.has("reconnaissance_burst") ||
 		ids.has("auth_failure_burst") ||
 		(ids.has("sensitive_file_probe") && ids.has("scanner_user_agent"))
+	);
+};
+
+const eventIsAutoRateLimitCandidate = (event, policy) => {
+	if (
+		event.risk < policy.autoRateLimitThreshold ||
+		isPrivateOrLoopback(event.ip) ||
+		isTrustedSource(event.ip, policy.trustedSources)
+	) {
+		return false;
+	}
+	const ids = new Set(event.signals.map((signal) => signal.id));
+	return (
+		ids.has("path_traversal") ||
+		ids.has("injection_probe") ||
+		ids.has("sensitive_file_probe") ||
+		ids.has("request_burst") ||
+		ids.has("auth_failure_burst") ||
+		ids.has("path_enumeration") ||
+		ids.has("reconnaissance_burst") ||
+		(ids.has("scanner_user_agent") &&
+			(ids.has("cms_probe") || ids.has("access_denied") || ids.has("not_found"))) ||
+		(ids.has("unusual_method") && ids.has("access_denied"))
 	);
 };
 
@@ -650,6 +714,8 @@ const createHostPolicyContext = (policy, hosts = []) => {
 		proxyHostId: null,
 		mode: globalMode,
 		autoBlockEnabled: policy.autoBlockEnabled,
+		autoRateLimitThreshold: policy.autoRateLimitThreshold,
+		autoRateLimitMinutes: policy.autoRateLimitMinutes,
 		autoBlockThreshold: policy.autoBlockThreshold,
 		autoBlockMinutes: policy.autoBlockMinutes,
 		inherited: true,
@@ -721,31 +787,68 @@ const monitorThreats = async () => {
 
 	await withSecurityConfigMutation(async () => {
 		const blocks = await purgeExpiredUnsafe();
+		const rateLimits = await purgeExpiredRateLimitsUnsafe();
 		const blockedIps = new Set(blocks.map((block) => block.ip));
-		const additions = [];
+		const rateLimitedIps = new Set(rateLimits.map((entry) => entry.ip));
+		const blockAdditions = [];
+		const rateLimitAdditions = [];
+
 		for (const event of fresh) {
 			const effective = hostPolicyContext.resolve(event.host);
-			const candidatePolicy = { ...policy, autoBlockThreshold: effective.autoBlockThreshold };
-			if (!effective.autoBlockEnabled || blockedIps.has(event.ip) || !eventIsAutoBlockCandidate(event, candidatePolicy)) continue;
-			const block = createBlockRecord({
-				ip: event.ip,
-				durationMinutes: effective.autoBlockMinutes,
-				source: "auto-response",
-				reason: `Auto response (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals.map((signal) => signal.id).join(", ")}`,
-			});
-			additions.push(block);
-			blockedIps.add(event.ip);
+			if (!effective.autoBlockEnabled || blockedIps.has(event.ip)) continue;
+
+			const candidatePolicy = {
+				...policy,
+				autoRateLimitThreshold: effective.autoRateLimitThreshold,
+				autoBlockThreshold: effective.autoBlockThreshold,
+			};
+
+			if (eventIsAutoBlockCandidate(event, candidatePolicy)) {
+				const block = createBlockRecord({
+					ip: event.ip,
+					durationMinutes: effective.autoBlockMinutes,
+					source: "auto-response",
+					reason: `Auto response (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals
+						.map((signal) => signal.id)
+						.join(", ")}`,
+				});
+				blockAdditions.push(block);
+				blockedIps.add(event.ip);
+				continue;
+			}
+
+			if (
+				!rateLimitedIps.has(event.ip) &&
+				eventIsAutoRateLimitCandidate(event, candidatePolicy)
+			) {
+				const entry = createRateLimitRecord({
+					ip: event.ip,
+					durationMinutes: effective.autoRateLimitMinutes,
+					source: "auto-rate-limit",
+					reason: `Auto soft restriction (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals
+						.map((signal) => signal.id)
+						.join(", ")}`,
+				});
+				rateLimitAdditions.push(entry);
+				rateLimitedIps.add(event.ip);
+			}
 		}
 
-		if (additions.length === 0) return;
-		const next = [...blocks, ...additions];
-		await commitBlockState(blocks, next);
-		for (const block of additions) {
-			logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
+		if (rateLimitAdditions.length > 0) {
+			await commitRateLimitState(rateLimits, [...rateLimits, ...rateLimitAdditions]);
+			for (const entry of rateLimitAdditions) {
+				logger.warn(`HYROVI Sec auto-rate-limited ${entry.ip} until ${entry.expiresAt}: ${entry.reason}`);
+			}
+		}
+
+		if (blockAdditions.length > 0) {
+			await commitBlockState(blocks, [...blocks, ...blockAdditions]);
+			for (const block of blockAdditions) {
+				logger.warn(`HYROVI Sec auto-blocked ${block.ip} until ${block.expiresAt}: ${block.reason}`);
+			}
 		}
 	});
 };
-
 const getEnabledHosts = (model) =>
 	model
 		.query()
@@ -918,6 +1021,12 @@ const internalSecurity = {
 		return writePolicyUnsafe({
 			...current,
 			...(typeof data.autoBlockEnabled === "boolean" ? { autoBlockEnabled: data.autoBlockEnabled } : {}),
+			...(typeof data.autoRateLimitThreshold !== "undefined"
+				? { autoRateLimitThreshold: data.autoRateLimitThreshold }
+				: {}),
+			...(typeof data.autoRateLimitMinutes !== "undefined"
+				? { autoRateLimitMinutes: data.autoRateLimitMinutes }
+				: {}),
 			...(typeof data.autoBlockThreshold !== "undefined"
 				? { autoBlockThreshold: data.autoBlockThreshold }
 				: {}),
@@ -939,6 +1048,8 @@ const internalSecurity = {
 				policy: explicit,
 				effective: explicit || {
 					mode: globalMode,
+					autoRateLimitThreshold: policy.autoRateLimitThreshold,
+					autoRateLimitMinutes: policy.autoRateLimitMinutes,
 					autoBlockThreshold: policy.autoBlockThreshold,
 					autoBlockMinutes: policy.autoBlockMinutes,
 				},
@@ -954,6 +1065,18 @@ const internalSecurity = {
 		if (!host?.id) throw new errs.ItemNotFoundError(id);
 		if (typeof data.mode !== "undefined" && !HOST_POLICY_MODES.has(data.mode)) {
 			throw new errs.ValidationError("Security mode must be off, observe, protect or strict");
+		}
+		if (typeof data.autoRateLimitThreshold !== "undefined") {
+			const threshold = Number.parseInt(data.autoRateLimitThreshold, 10);
+			if (!Number.isInteger(threshold) || threshold < 40 || threshold > 100) {
+				throw new errs.ValidationError("Auto-rate-limit threshold must be between 40 and 100");
+			}
+		}
+		if (typeof data.autoRateLimitMinutes !== "undefined") {
+			const minutes = Number.parseInt(data.autoRateLimitMinutes, 10);
+			if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43_200) {
+				throw new errs.ValidationError("Auto-rate-limit duration must be between 1 and 43200 minutes");
+			}
 		}
 		if (typeof data.autoBlockThreshold !== "undefined") {
 			const threshold = Number.parseInt(data.autoBlockThreshold, 10);
@@ -974,12 +1097,15 @@ const internalSecurity = {
 		}
 		const existing = current.hostPolicies[String(id)] || {
 			mode: "observe",
+			autoRateLimitThreshold: current.autoRateLimitThreshold,
+			autoRateLimitMinutes: current.autoRateLimitMinutes,
 			autoBlockThreshold: current.autoBlockThreshold,
 			autoBlockMinutes: current.autoBlockMinutes,
 		};
 		const draft = { ...existing, ...data };
-		if (!current.hostPolicies[String(id)] && data.mode === "strict" && typeof data.autoBlockThreshold === "undefined") {
-			delete draft.autoBlockThreshold;
+		if (!current.hostPolicies[String(id)] && data.mode === "strict") {
+			if (typeof data.autoRateLimitThreshold === "undefined") delete draft.autoRateLimitThreshold;
+			if (typeof data.autoBlockThreshold === "undefined") delete draft.autoBlockThreshold;
 		}
 		const nextHostPolicy = normalizeHostPolicy(draft, current);
 		const updated = await writePolicyUnsafe({

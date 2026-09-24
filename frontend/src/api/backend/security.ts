@@ -40,6 +40,8 @@ export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
 
 export interface SecurityHostPolicy {
 	mode: SecurityHostMode;
+	autoRateLimitThreshold: number;
+	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
 }
@@ -53,6 +55,8 @@ export interface SecurityHostPolicyEntry {
 }
 export interface SecurityPolicy {
 	autoBlockEnabled: boolean;
+	autoRateLimitThreshold: number;
+	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
 	trustedSources: string[];

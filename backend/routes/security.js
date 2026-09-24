@@ -49,6 +49,8 @@ router
 			res.status(200).send(
 				await internalSecurity.updatePolicy(res.locals.access, {
 					autoBlockEnabled: req.body?.auto_block_enabled,
+					autoRateLimitThreshold: req.body?.auto_rate_limit_threshold,
+					autoRateLimitMinutes: req.body?.auto_rate_limit_minutes,
 					autoBlockThreshold: req.body?.auto_block_threshold,
 					autoBlockMinutes: req.body?.auto_block_minutes,
 					trustedSources: req.body?.trusted_sources,
@@ -76,6 +78,8 @@ router
 			res.status(200).send(
 				await internalSecurity.updateHostPolicy(res.locals.access, req.params.host_id, {
 					mode: req.body?.mode,
+					autoRateLimitThreshold: req.body?.auto_rate_limit_threshold,
+					autoRateLimitMinutes: req.body?.auto_rate_limit_minutes,
 					autoBlockThreshold: req.body?.auto_block_threshold,
 					autoBlockMinutes: req.body?.auto_block_minutes,
 				}),

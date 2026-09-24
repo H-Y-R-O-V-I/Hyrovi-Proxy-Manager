@@ -26,6 +26,8 @@ const POLL_MS = 5000;
 
 type HostPolicyDraft = {
 	mode: "inherit" | SecurityHostMode;
+	autoRateLimitThreshold: number;
+	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
 	autoBlockMinutes: number;
 };
@@ -34,6 +36,8 @@ const hostPolicyDraft = (host: SecurityHostPolicyEntry): HostPolicyDraft => {
 	const source = host.policy ?? host.effective;
 	return {
 		mode: host.policy?.mode ?? "inherit",
+		autoRateLimitThreshold: source.autoRateLimitThreshold,
+		autoRateLimitMinutes: source.autoRateLimitMinutes,
 		autoBlockThreshold: source.autoBlockThreshold,
 		autoBlockMinutes: source.autoBlockMinutes,
 	};
@@ -164,6 +168,8 @@ const Security = () => {
 			if (draft.mode === "inherit") return deleteSecurityHostPolicy(hostId);
 			return updateSecurityHostPolicy(hostId, {
 				mode: draft.mode,
+				autoRateLimitThreshold: draft.autoRateLimitThreshold,
+				autoRateLimitMinutes: draft.autoRateLimitMinutes,
 				autoBlockThreshold: draft.autoBlockThreshold,
 				autoBlockMinutes: draft.autoBlockMinutes,
 			});
@@ -235,13 +241,39 @@ const Security = () => {
 									</span>
 								</div>
 								<div className="text-secondary small mt-1">
-									Only high-confidence public source IPs at or above the configured risk threshold are auto-blocked. Trusted sources are excluded.
+									Automatic response soft-limits suspicious public sources first and hard-blocks only high-confidence attacks at the configured block threshold. Trusted sources are excluded.
 								</div>
 							</div>
 							<div className="d-flex flex-wrap align-items-center gap-2">
-								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-risk">Risk</label>
+								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-rate-risk">Soft risk</label>
 								<input
-									id="hyrovi-sec-auto-risk"
+									id="hyrovi-sec-auto-rate-risk"
+									className="form-control"
+									style={{ width: 88 }}
+									type="number"
+									min={40}
+									max={100}
+									defaultValue={policy.data?.autoRateLimitThreshold ?? 50}
+									onBlur={(event) =>
+										updatePolicy.mutate({ autoRateLimitThreshold: Number(event.target.value) })
+									}
+								/>
+								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-rate-minutes">Soft min</label>
+								<input
+									id="hyrovi-sec-auto-rate-minutes"
+									className="form-control"
+									style={{ width: 92 }}
+									type="number"
+									min={1}
+									max={43200}
+									defaultValue={policy.data?.autoRateLimitMinutes ?? 10}
+									onBlur={(event) =>
+										updatePolicy.mutate({ autoRateLimitMinutes: Number(event.target.value) })
+									}
+								/>
+								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-block-risk">Block risk</label>
+								<input
+									id="hyrovi-sec-auto-block-risk"
 									className="form-control"
 									style={{ width: 88 }}
 									type="number"
@@ -252,11 +284,11 @@ const Security = () => {
 										updatePolicy.mutate({ autoBlockThreshold: Number(event.target.value) })
 									}
 								/>
-								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-minutes">Minutes</label>
+								<label className="text-secondary small" htmlFor="hyrovi-sec-auto-block-minutes">Block min</label>
 								<input
-									id="hyrovi-sec-auto-minutes"
+									id="hyrovi-sec-auto-block-minutes"
 									className="form-control"
-									style={{ width: 100 }}
+									style={{ width: 92 }}
 									type="number"
 									min={1}
 									max={43200}
@@ -291,7 +323,7 @@ const Security = () => {
 									onChange={(event) => setTrustedSourcesText(event.target.value)}
 								/>
 								<div className="text-secondary small mt-1">
-									One exact IPv4/IPv6 address or CIDR per line. These requests remain visible, but automatic blocking will skip them.
+									One exact IPv4/IPv6 address or CIDR per line. These requests remain visible, but automatic rate limits and blocks will skip them.
 								</div>
 							</div>
 							<div className="col-12 col-lg-3 d-grid">
@@ -330,8 +362,10 @@ const Security = () => {
 								<tr>
 									<th>Proxy host</th>
 									<th>Mode</th>
-									<th>Auto-block risk</th>
-									<th>Block minutes</th>
+									<th>Soft risk</th>
+									<th>Soft min</th>
+									<th>Block risk</th>
+									<th>Block min</th>
 									<th>State</th>
 									<th />
 								</tr>
@@ -356,7 +390,10 @@ const Security = () => {
 														patchHostDraft(host, {
 															mode,
 															...(mode === "strict" && draft.mode !== "strict"
-																? { autoBlockThreshold: Math.min(draft.autoBlockThreshold, 90) }
+																? {
+																		autoRateLimitThreshold: Math.min(draft.autoRateLimitThreshold, 45),
+																		autoBlockThreshold: Math.min(draft.autoBlockThreshold, 90),
+																	}
 																: {}),
 														});
 													}}
@@ -367,6 +404,34 @@ const Security = () => {
 													<option value="protect">Protect</option>
 													<option value="strict">Strict</option>
 												</select>
+											</td>
+											<td>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-rate-risk-${host.id}`}>Auto-rate-limit risk</label>
+												<input
+													id={`hyrovi-sec-host-rate-risk-${host.id}`}
+													className="form-control"
+													style={{ width: 92 }}
+													type="number"
+													min={40}
+													max={100}
+													disabled={draft.mode === "inherit"}
+													value={draft.autoRateLimitThreshold}
+													onChange={(event) => patchHostDraft(host, { autoRateLimitThreshold: Number(event.target.value) })}
+												/>
+											</td>
+											<td>
+												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-rate-minutes-${host.id}`}>Auto-rate-limit minutes</label>
+												<input
+													id={`hyrovi-sec-host-rate-minutes-${host.id}`}
+													className="form-control"
+													style={{ width: 105 }}
+													type="number"
+													min={1}
+													max={43200}
+													disabled={draft.mode === "inherit"}
+													value={draft.autoRateLimitMinutes}
+													onChange={(event) => patchHostDraft(host, { autoRateLimitMinutes: Number(event.target.value) })}
+												/>
 											</td>
 											<td>
 												<label className="visually-hidden" htmlFor={`hyrovi-sec-host-risk-${host.id}`}>Auto-block risk</label>
@@ -413,7 +478,7 @@ const Security = () => {
 								})}
 								{!hostPolicies.isLoading && (hostPolicies.data?.length ?? 0) === 0 ? (
 									<tr>
-										<td colSpan={6} className="text-secondary">
+										<td colSpan={8} className="text-secondary">
 											No Proxy Hosts are available yet.
 										</td>
 									</tr>
