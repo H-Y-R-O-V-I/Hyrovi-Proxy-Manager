@@ -14,6 +14,7 @@ const DEFAULT_DIFFICULTY = 14;
 const MAX_VERIFY_COUNTER = 50_000_000;
 const MAX_VERIFY_ATTEMPTS = 25;
 const INTERNAL_HEADER_VALUE = "challenge-v1";
+const CHALLENGE_PATH = "/.well-known/hyrovi-sec/challenge";
 const VERIFY_PATH = "/.well-known/hyrovi-sec/challenge/verify";
 
 let mutationQueue = Promise.resolve();
@@ -210,13 +211,31 @@ const removeChallenge = ({ id, ip }) =>
 const listChallenges = () => withMutation(purgeExpiredUnsafe);
 
 const publicChallenge = (challenge) => ({
+	version: 1,
 	id: challenge.id,
 	nonce: challenge.nonce,
 	difficulty: challenge.difficulty,
 	expiresAt: challenge.expiresAt,
 	algorithm: "sha256-leading-zero-bits",
 	input: "<challenge-id>:<nonce>:<counter>",
+	challengePath: CHALLENGE_PATH,
 	verifyPath: VERIFY_PATH,
+	maxCounter: MAX_VERIFY_COUNTER,
+	attemptsRemaining: Math.max(0, challenge.maxAttempts - challenge.attempts),
+});
+
+const challengeResponseHeaders = (challenge) => ({
+	"X-Hyrovi-Sec-Challenge": "required",
+	"X-Hyrovi-Sec-Challenge-Version": String(challenge.version),
+	"X-Hyrovi-Sec-Challenge-ID": challenge.id,
+	"X-Hyrovi-Sec-Challenge-Algorithm": challenge.algorithm,
+	"X-Hyrovi-Sec-Challenge-Difficulty": String(challenge.difficulty),
+	"X-Hyrovi-Sec-Challenge-Expires": challenge.expiresAt,
+	"X-Hyrovi-Sec-Challenge-Input": challenge.input,
+	"X-Hyrovi-Sec-Challenge-Max-Counter": String(challenge.maxCounter),
+	"X-Hyrovi-Sec-Challenge-Attempts-Remaining": String(challenge.attemptsRemaining),
+	"X-Hyrovi-Sec-Challenge-Endpoint": challenge.challengePath,
+	"X-Hyrovi-Sec-Challenge-Verify": challenge.verifyPath,
 });
 
 const getChallengeForIp = (ip) =>
@@ -245,7 +264,14 @@ const verify = ({ ip, id, counter }) =>
 		const challenge = challenges.find((entry) => entry.ip === ip && entry.id === id);
 		if (!challenge) throw new errs.ItemNotFoundError("challenge");
 
-		const normalizedCounter = Number.parseInt(counter, 10);
+		let normalizedCounter;
+		if (typeof counter === "number") {
+			normalizedCounter = counter;
+		} else if (typeof counter === "string" && /^\d{1,8}$/.test(counter)) {
+			normalizedCounter = Number(counter);
+		} else {
+			throw new errs.ValidationError("Invalid challenge counter");
+		}
 		if (!Number.isSafeInteger(normalizedCounter) || normalizedCounter < 0 || normalizedCounter > MAX_VERIFY_COUNTER) {
 			throw new errs.ValidationError("Invalid challenge counter");
 		}
@@ -380,6 +406,8 @@ const internalSecurityChallenge = {
 	verify,
 	proxyContext,
 	renderHtml,
+	challengeResponseHeaders,
+	challengePath: CHALLENGE_PATH,
 	verifyPath: VERIFY_PATH,
 };
 

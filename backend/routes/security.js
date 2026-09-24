@@ -57,6 +57,7 @@ router.all("/challenge/page", async (req, res, next) => {
 		}
 
 		res.set("Cache-Control", "no-store");
+		res.set(internalSecurityChallenge.challengeResponseHeaders(challenge));
 		const wantsHtml = context.accept.includes("text/html");
 		if (!wantsHtml) {
 			res.set("Retry-After", "3");
@@ -78,6 +79,25 @@ router.all("/challenge/page", async (req, res, next) => {
 	}
 });
 
+router.get("/challenge/current", async (req, res, next) => {
+	try {
+		const context = internalSecurityChallenge.proxyContext(req.headers);
+		res.set("Cache-Control", "no-store");
+		const challenge = await internalSecurityChallenge.getChallengeForIp(context.ip);
+		if (!challenge) {
+			res.set("X-Hyrovi-Sec-Challenge", "none");
+			res.status(404).send({ error: { code: 404, message: "Not Found" } });
+			return;
+		}
+
+		res.set(internalSecurityChallenge.challengeResponseHeaders(challenge));
+		res.status(200).send({ challenge });
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
 router.post("/challenge/verify", async (req, res, next) => {
 	try {
 		const context = internalSecurityChallenge.proxyContext(req.headers);
@@ -87,6 +107,10 @@ router.post("/challenge/verify", async (req, res, next) => {
 			counter: req.body?.counter,
 		});
 		res.set("Cache-Control", "no-store");
+		res.set("X-Hyrovi-Sec-Challenge", result.verified ? "solved" : "required");
+		if (!result.verified) {
+			res.set("X-Hyrovi-Sec-Challenge-Attempts-Remaining", String(result.attemptsRemaining));
+		}
 		res.status(result.verified ? 200 : 400).send(result);
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
