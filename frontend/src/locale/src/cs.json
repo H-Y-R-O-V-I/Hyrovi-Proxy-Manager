@@ -204,22 +204,22 @@
 		"defaultMessage": "Tato sekce vyžaduje znalost Certbotu a jeho DNS doplňků. Prosím, podívejte se do dokumentace příslušného doplňku."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Na této doméně byl nalezen server, ale nezdá se, že jde o Nginx Proxy Manager. Ujistěte se, že vaše doména směřuje na IP, kde běží vaše instance NPM."
+		"defaultMessage": "Na této doméně byl nalezen server, ale nezdá se, že jde o HYROVI Proxy Manager. Ujistěte se, že vaše doména směřuje na IP, kde běží vaše instance HPM."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "Nepodařilo se ověřit dostupnost kvůli chybě komunikace se službou site24x7.com."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "Na této doméně není dostupný žádný server. Ujistěte se, že doména existuje a směřuje na IP adresu s NPM a pokud je to potřeba, port 80 je přesměrován ve vašem routeru."
+		"defaultMessage": "Na této doméně není dostupný žádný server. Ujistěte se, že doména existuje a směřuje na IP adresu s HPM a pokud je to potřeba, port 80 je přesměrován ve vašem routeru."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "Váš server je dostupný a vytvoření certifikátu by mělo být možné."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Na této doméně byl nalezen server, ale vrátil neočekávaný stavový kód {code}. Je to NPM server? Ujistěte se prosím, že doména směřuje na IP, kde běží vaše instance NPM."
+		"defaultMessage": "Na této doméně byl nalezen server, ale vrátil neočekávaný stavový kód {code}. Je to HPM server? Ujistěte se prosím, že doména směřuje na IP, kde běží vaše instance HPM."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Na této doméně byl nalezen server, ale vrátil neočekávaná data. Je to NPM server? Ujistěte se, že doména směřuje na IP, kde běží vaše instance NPM."
+		"defaultMessage": "Na této doméně byl nalezen server, ale vrátil neočekávaná data. Je to HPM server? Ujistěte se, že doména směřuje na IP, kde běží vaše instance HPM."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Výsledky testu"

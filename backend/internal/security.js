@@ -1668,6 +1668,163 @@ const attackSessionSummary = (session, blocks = [], rateLimits = [], challenges 
 	};
 };
 
+const buildAttackAnalytics = (events) => {
+	const suspiciousEvents = events.filter((event) => event.risk >= 40);
+	const trafficSourceMap = new Map();
+	const sourceMap = new Map();
+	const targetMap = new Map();
+	const hostMap = new Map();
+	const signalMap = new Map();
+	const methodMap = new Map();
+	const riskLevels = {
+		normal: 0,
+		low: 0,
+		medium: 0,
+		high: 0,
+		critical: 0,
+	};
+
+	for (const event of events) {
+		const severity = Object.hasOwn(riskLevels, event.severity) ? event.severity : "normal";
+		riskLevels[severity] += 1;
+
+		const sourceIp = event.ip || "(unknown)";
+		const trafficSource = trafficSourceMap.get(sourceIp) || {
+			ip: sourceIp,
+			requests: 0,
+			suspicious: 0,
+			critical: 0,
+			maxRisk: 0,
+			bytesSent: 0,
+			hosts: new Set(),
+			firstSeen: event.timestamp,
+			lastSeen: event.timestamp,
+		};
+		trafficSource.requests += 1;
+		trafficSource.suspicious += event.risk >= 40 ? 1 : 0;
+		trafficSource.critical += event.risk >= 80 ? 1 : 0;
+		trafficSource.maxRisk = Math.max(trafficSource.maxRisk, event.risk);
+		trafficSource.bytesSent += event.bytesSent || 0;
+		if (event.host) trafficSource.hosts.add(event.host);
+		if ((parseTimestamp(event.timestamp)?.getTime() || 0) < (parseTimestamp(trafficSource.firstSeen)?.getTime() || 0)) {
+			trafficSource.firstSeen = event.timestamp;
+		}
+		if ((parseTimestamp(event.timestamp)?.getTime() || 0) > (parseTimestamp(trafficSource.lastSeen)?.getTime() || 0)) {
+			trafficSource.lastSeen = event.timestamp;
+		}
+		trafficSourceMap.set(sourceIp, trafficSource);
+	}
+
+	for (const event of suspiciousEvents) {
+		const source = sourceMap.get(event.ip) || {
+			ip: event.ip,
+			requests: 0,
+			critical: 0,
+			maxRisk: 0,
+			hosts: new Set(),
+			firstSeen: event.timestamp,
+			lastSeen: event.timestamp,
+		};
+		source.requests += 1;
+		source.critical += event.risk >= 80 ? 1 : 0;
+		source.maxRisk = Math.max(source.maxRisk, event.risk);
+		if (event.host) source.hosts.add(event.host);
+		if ((parseTimestamp(event.timestamp)?.getTime() || 0) < (parseTimestamp(source.firstSeen)?.getTime() || 0)) {
+			source.firstSeen = event.timestamp;
+		}
+		if ((parseTimestamp(event.timestamp)?.getTime() || 0) > (parseTimestamp(source.lastSeen)?.getTime() || 0)) {
+			source.lastSeen = event.timestamp;
+		}
+		sourceMap.set(event.ip, source);
+
+		const hostName = event.host || "(unknown host)";
+		const host = hostMap.get(hostName) || {
+			host: hostName,
+			requests: 0,
+			critical: 0,
+			maxRisk: 0,
+			sources: new Set(),
+		};
+		host.requests += 1;
+		host.critical += event.risk >= 80 ? 1 : 0;
+		host.maxRisk = Math.max(host.maxRisk, event.risk);
+		if (event.ip) host.sources.add(event.ip);
+		hostMap.set(hostName, host);
+
+		const targetKey = `${hostName}|${event.path || "/"}`;
+		const target = targetMap.get(targetKey) || {
+			host: hostName,
+			path: event.path || "/",
+			requests: 0,
+			critical: 0,
+			maxRisk: 0,
+			sources: new Set(),
+			methods: new Set(),
+			statuses: new Set(),
+		};
+		target.requests += 1;
+		target.critical += event.risk >= 80 ? 1 : 0;
+		target.maxRisk = Math.max(target.maxRisk, event.risk);
+		if (event.ip) target.sources.add(event.ip);
+		if (event.method) target.methods.add(event.method);
+		if (event.status) target.statuses.add(event.status);
+		targetMap.set(targetKey, target);
+
+		if (event.method) methodMap.set(event.method, (methodMap.get(event.method) || 0) + 1);
+		for (const signal of event.signals || []) {
+			const signalEntry = signalMap.get(signal.id) || {
+				id: signal.id,
+				label: signal.label,
+				hits: 0,
+				maxScore: 0,
+				sources: new Set(),
+				hosts: new Set(),
+			};
+			signalEntry.hits += 1;
+			signalEntry.maxScore = Math.max(signalEntry.maxScore, Number(signal.score) || 0);
+			if (event.ip) signalEntry.sources.add(event.ip);
+			if (event.host) signalEntry.hosts.add(event.host);
+			signalMap.set(signal.id, signalEntry);
+		}
+	}
+
+	return {
+		suspiciousRequests: suspiciousEvents.length,
+		observedSources: [...trafficSourceMap.keys()].filter((ip) => ip !== "(unknown)").length,
+		uniqueSources: sourceMap.size,
+		uniqueTargets: targetMap.size,
+		riskLevels,
+		trafficSources: [...trafficSourceMap.values()]
+			.map((entry) => ({ ...entry, hosts: [...entry.hosts].sort() }))
+			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
+			.slice(0, 50),
+		topSources: [...sourceMap.values()]
+			.map((entry) => ({ ...entry, hosts: [...entry.hosts].sort() }))
+			.sort((left, right) => right.maxRisk - left.maxRisk || right.requests - left.requests)
+			.slice(0, 10),
+		topHosts: [...hostMap.values()]
+			.map((entry) => ({ ...entry, sources: entry.sources.size }))
+			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
+			.slice(0, 10),
+		topTargets: [...targetMap.values()]
+			.map((entry) => ({
+				...entry,
+				sources: entry.sources.size,
+				methods: [...entry.methods].sort(),
+				statuses: [...entry.statuses].sort((a, b) => a - b),
+			}))
+			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
+			.slice(0, 12),
+		topSignals: [...signalMap.values()]
+			.map((entry) => ({ ...entry, sources: entry.sources.size, hosts: entry.hosts.size }))
+			.sort((left, right) => right.hits - left.hits || right.maxScore - left.maxScore)
+			.slice(0, 12),
+		methods: [...methodMap.entries()]
+			.map(([method, requests]) => ({ method, requests }))
+			.sort((left, right) => right.requests - left.requests || left.method.localeCompare(right.method)),
+	};
+};
+
 const attackSessionDetail = (session, blocks = [], rateLimits = [], challenges = []) => {
 	const activeResponses = [];
 	for (const block of blocks) {
@@ -2307,6 +2464,7 @@ const internalSecurity = {
 			activeBlocks: blocks.length,
 			activeRateLimits: rateLimits.length,
 			activeEscalations,
+			analytics: buildAttackAnalytics(events),
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,

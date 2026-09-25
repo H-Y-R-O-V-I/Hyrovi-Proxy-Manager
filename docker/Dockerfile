@@ -59,8 +59,8 @@ ENTRYPOINT [ "/init" ]
 
 LABEL org.label-schema.schema-version="1.0" \
 	org.label-schema.license="MIT" \
-	org.label-schema.name="nginx-proxy-manager" \
-	org.label-schema.description="Docker container for managing Nginx proxy hosts with a simple, powerful interface " \
-	org.label-schema.url="https://github.com/jc21/nginx-proxy-manager" \
-	org.label-schema.vcs-url="https://github.com/jc21/nginx-proxy-manager.git" \
-	org.label-schema.cmd="docker run --rm -ti jc21/nginx-proxy-manager:latest"
+	org.label-schema.name="hyrovi-proxy-manager" \
+	org.label-schema.description="HYROVI Proxy Manager with traffic analytics and HYROVI Sec" \
+	org.label-schema.url="https://github.com/H-Y-R-O-V-I/Hyrovi-Proxy-Manager" \
+	org.label-schema.vcs-url="https://github.com/H-Y-R-O-V-I/Hyrovi-Proxy-Manager.git" \
+	org.label-schema.cmd="docker run --rm -ti hyrovi-proxy-manager:latest"

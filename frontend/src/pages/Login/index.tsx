@@ -1,12 +1,11 @@
 import { Field, Form, Formik } from "formik";
 import { useEffect, useRef, useState } from "react";
 import Alert from "react-bootstrap/Alert";
-import { Button, LocalePicker, Page, ThemeSwitcher } from "src/components";
+import { Button, HyroviBrand, LocalePicker, Page, ThemeSwitcher } from "src/components";
 import { useAuthState } from "src/context";
 import { useHealth } from "src/hooks";
 import { intl, T } from "src/locale";
 import { validateEmail, validateString } from "src/modules/Validations";
-import styles from "./index.module.css";
 
 function TwoFactorForm() {
 	const codeRef = useRef<HTMLInputElement>(null);
@@ -182,11 +181,7 @@ export default function Login() {
 		<Page className="page page-center">
 			<div className="container container-tight py-4">
 				<div className="d-flex justify-content-between align-items-center mb-4 ps-4 pe-3">
-					<img
-						className={styles.logo}
-						src="/images/logo-text-horizontal-grey.png"
-						alt="Nginx Proxy Manager"
-					/>
+					<HyroviBrand />
 					<div className="d-flex align-items-center gap-1">
 						<LocalePicker />
 						<ThemeSwitcher />

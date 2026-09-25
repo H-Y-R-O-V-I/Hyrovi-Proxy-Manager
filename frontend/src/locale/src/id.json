@@ -147,22 +147,22 @@
 		"defaultMessage": "Bagian ini memerlukan pengetahuan tentang Certbot dan plugin DNS-nya. Silakan merujuk dokumentasi plugin terkait."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Ada server yang ditemukan pada domain ini tetapi tampaknya bukan Nginx Proxy Manager. Pastikan domain Anda mengarah ke IP tempat instance NPM berjalan."
+		"defaultMessage": "Ada server yang ditemukan pada domain ini tetapi tampaknya bukan HYROVI Proxy Manager. Pastikan domain Anda mengarah ke IP tempat instance HPM berjalan."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "Gagal memeriksa keterjangkauan karena kesalahan komunikasi dengan site24x7.com."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "Tidak ada server yang tersedia pada domain ini. Pastikan domain Anda ada dan mengarah ke IP tempat instance NPM berjalan dan bila perlu port 80 diteruskan di router Anda."
+		"defaultMessage": "Tidak ada server yang tersedia pada domain ini. Pastikan domain Anda ada dan mengarah ke IP tempat instance HPM berjalan dan bila perlu port 80 diteruskan di router Anda."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "Server Anda dapat dijangkau dan pembuatan sertifikat seharusnya memungkinkan."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Ada server yang ditemukan pada domain ini tetapi mengembalikan kode status tak terduga {code}. Apakah itu server NPM? Pastikan domain Anda mengarah ke IP tempat instance NPM berjalan."
+		"defaultMessage": "Ada server yang ditemukan pada domain ini tetapi mengembalikan kode status tak terduga {code}. Apakah itu server HPM? Pastikan domain Anda mengarah ke IP tempat instance HPM berjalan."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Ada server yang ditemukan pada domain ini tetapi mengembalikan data yang tidak terduga. Apakah itu server NPM? Pastikan domain Anda mengarah ke IP tempat instance NPM berjalan."
+		"defaultMessage": "Ada server yang ditemukan pada domain ini tetapi mengembalikan data yang tidak terduga. Apakah itu server HPM? Pastikan domain Anda mengarah ke IP tempat instance HPM berjalan."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Hasil Uji"

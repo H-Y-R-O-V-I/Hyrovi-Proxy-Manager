@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { T } from "src/locale";
-import styles from "./Loading.module.css";
+import { HyroviBrand } from "./HyroviBrand";
 
 interface Props {
 	label?: string | ReactNode;
@@ -11,7 +11,7 @@ export function Loading({ label, noLogo }: Props) {
 		<div className="empty text-center">
 			{noLogo ? null : (
 				<div className="mb-3">
-					<img className={styles.logo} src="/images/logo-no-text.svg" alt="" />
+					<HyroviBrand />
 				</div>
 			)}
 			<div className="text-secondary mb-3">{label || <T id="loading" />}</div>

@@ -2,6 +2,7 @@
 
 import app from "./app.js";
 import internalCertificate from "./internal/certificate.js";
+import internalControlPlaneNodes from "./internal/control_plane_nodes.js";
 import internalIpRanges from "./internal/ip_ranges.js";
 import internalSecurity from "./internal/security.js";
 import { global as logger } from "./logger.js";
@@ -28,6 +29,11 @@ async function appStart() {
 		.then(() =>
 			internalSecurity.prepare().catch((err) => {
 				logger.error("HYROVI Sec instrumentation failed; proxy manager will continue:", err.message);
+			}),
+		)
+		.then(() =>
+			internalControlPlaneNodes.prepare().catch((err) => {
+				logger.error("HYROVI control-plane state failed to initialize; local proxy will continue:", err.message);
 			}),
 		)
 		.then(() => {

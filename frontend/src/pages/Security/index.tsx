@@ -1131,6 +1131,109 @@ const Security = () => {
 					</div>
 				</div>
 
+
+				<div className="card mb-4">
+					<div className="card-header d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2">
+						<div>
+							<h3 className="card-title">Attack analysis</h3>
+							<div className="text-secondary small">
+								Shows what is being attacked, how it is being attacked and which sources are responsible in the current analyzed window.
+							</div>
+						</div>
+						<div className="d-flex flex-wrap gap-2">
+							<span className="badge bg-yellow-lt">{overview.data?.analytics.suspiciousRequests ?? 0} suspicious</span>
+							<span className="badge bg-azure-lt">{overview.data?.analytics.uniqueSources ?? 0} sources</span>
+							<span className="badge bg-purple-lt">{overview.data?.analytics.uniqueTargets ?? 0} targets</span>
+						</div>
+					</div>
+					<div className="card-body border-bottom">
+						<div className="d-flex flex-wrap gap-2 align-items-center">
+							<span className="text-secondary small me-1">Risk distribution</span>
+							<span className="badge bg-green-lt">normal {overview.data?.analytics.riskLevels.normal ?? 0}</span>
+							<span className="badge bg-azure-lt">low {overview.data?.analytics.riskLevels.low ?? 0}</span>
+							<span className="badge bg-yellow-lt">medium {overview.data?.analytics.riskLevels.medium ?? 0}</span>
+							<span className="badge bg-orange-lt">high {overview.data?.analytics.riskLevels.high ?? 0}</span>
+							<span className="badge bg-red-lt">critical {overview.data?.analytics.riskLevels.critical ?? 0}</span>
+						</div>
+						{(overview.data?.analytics.methods.length ?? 0) > 0 ? (
+							<div className="d-flex flex-wrap gap-2 align-items-center mt-2">
+								<span className="text-secondary small me-1">Attack methods</span>
+								{overview.data?.analytics.methods.map((entry) => (
+									<span className="badge bg-secondary-lt" key={entry.method}>{entry.method} {entry.requests}</span>
+								))}
+							</div>
+						) : null}
+					</div>
+					<div className="row g-0">
+						<div className="col-12 col-xl-4 border-end">
+							<div className="p-3 border-bottom"><strong>Top attack sources</strong></div>
+							<div className="table-responsive">
+								<table className="table table-sm table-vcenter mb-0">
+									<thead><tr><th>Source</th><th>Hits</th><th>Risk</th></tr></thead>
+									<tbody>
+										{(overview.data?.analytics.topSources ?? []).slice(0, 8).map((entry) => (
+											<tr key={entry.ip}>
+												<td>
+													<div className="font-monospace">{entry.ip}</div>
+													<div className="text-secondary small">{entry.hosts.length} host{entry.hosts.length === 1 ? "" : "s"} · {entry.critical} critical</div>
+												</td>
+												<td>{entry.requests}</td>
+												<td><span className={`badge ${entry.maxRisk >= 80 ? "bg-red-lt" : "bg-yellow-lt"}`}>{entry.maxRisk}</span></td>
+											</tr>
+										))}
+										{!overview.isLoading && (overview.data?.analytics.topSources.length ?? 0) === 0 ? (
+											<tr><td colSpan={3} className="text-secondary">No suspicious sources in the analyzed window.</td></tr>
+										) : null}
+									</tbody>
+								</table>
+							</div>
+						</div>
+						<div className="col-12 col-xl-5 border-end">
+							<div className="p-3 border-bottom"><strong>Most attacked targets</strong></div>
+							<div className="table-responsive">
+								<table className="table table-sm table-vcenter mb-0">
+									<thead><tr><th>Host / path</th><th>How</th><th>Hits</th></tr></thead>
+									<tbody>
+										{(overview.data?.analytics.topTargets ?? []).slice(0, 8).map((entry) => (
+											<tr key={`${entry.host}|${entry.path}`}>
+												<td style={{ maxWidth: 360 }}>
+													<div className="fw-semibold text-break">{entry.host}</div>
+													<div className="font-monospace text-secondary small text-break">{entry.path}</div>
+												</td>
+												<td className="small">
+													<div>{entry.methods.join(", ") || "—"}</div>
+													<div className="text-secondary">{entry.sources} source{entry.sources === 1 ? "" : "s"} · risk {entry.maxRisk}</div>
+												</td>
+												<td>{entry.requests}</td>
+											</tr>
+										))}
+										{!overview.isLoading && (overview.data?.analytics.topTargets.length ?? 0) === 0 ? (
+											<tr><td colSpan={3} className="text-secondary">No suspicious targets in the analyzed window.</td></tr>
+										) : null}
+									</tbody>
+								</table>
+							</div>
+						</div>
+						<div className="col-12 col-xl-3">
+							<div className="p-3 border-bottom"><strong>Attack signals</strong></div>
+							<div className="list-group list-group-flush">
+								{(overview.data?.analytics.topSignals ?? []).slice(0, 8).map((entry) => (
+									<div className="list-group-item" key={entry.id}>
+										<div className="d-flex justify-content-between gap-2">
+											<span className="fw-semibold">{entry.label}</span>
+											<span className="badge bg-secondary-lt">{entry.hits}</span>
+										</div>
+										<div className="text-secondary small">{entry.sources} sources · {entry.hosts} hosts · signal +{entry.maxScore}</div>
+									</div>
+								))}
+								{!overview.isLoading && (overview.data?.analytics.topSignals.length ?? 0) === 0 ? (
+									<div className="list-group-item text-secondary">No attack signals in the analyzed window.</div>
+								) : null}
+							</div>
+						</div>
+					</div>
+				</div>
+
 				<div className="card mb-4">
 					<div className="card-header d-flex align-items-center justify-content-between">
 						<div>

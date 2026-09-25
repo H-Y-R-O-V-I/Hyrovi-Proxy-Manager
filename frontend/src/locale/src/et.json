@@ -216,22 +216,22 @@
 		"defaultMessage": "See osa eeldab Certboti ja selle DNS-pluginate tundmist. Vaata vastava plugina juhendit."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Sellel domeenil on küll server, aga see ei tundu olevat Nginx Proxy Manager. Vaata, et domeen osutaks IP-le, kus NPM tegelikult töötab."
+		"defaultMessage": "Sellel domeenil on küll server, aga see ei tundu olevat HYROVI Proxy Manager. Vaata, et domeen osutaks IP-le, kus HPM tegelikult töötab."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "Kättesaadavust ei saanud kontrollida, sest side site24x7.com-iga katkes."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "Sellel domeenil ei ole serverit. Vaata, et domeen olemas oleks, osutaks NPM-i IP-le ja vajadusel oleks ruuteris avatud port 80."
+		"defaultMessage": "Sellel domeenil ei ole serverit. Vaata, et domeen olemas oleks, osutaks HPM-i IP-le ja vajadusel oleks ruuteris avatud port 80."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "Server on kättesaadav, sertifikaadi saab ära teha."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Sellel domeenil on server, aga vastus tuli ootamatu koodiga {code}. Kas see on NPM? Vaata, et domeen osutaks IP-le, kus NPM töötab."
+		"defaultMessage": "Sellel domeenil on server, aga vastus tuli ootamatu koodiga {code}. Kas see on HPM? Vaata, et domeen osutaks IP-le, kus HPM töötab."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Sellel domeenil on server, aga vastuse sisu ei klapi. Kas see on NPM? Vaata, et domeen osutaks IP-le, kus NPM töötab."
+		"defaultMessage": "Sellel domeenil on server, aga vastuse sisu ei klapi. Kas see on HPM? Vaata, et domeen osutaks IP-le, kus HPM töötab."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Testi tulemused"

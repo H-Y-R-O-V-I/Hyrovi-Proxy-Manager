@@ -204,22 +204,22 @@
 		"defaultMessage": "Deze sectie vereist wat informatie over Certbot en zijn DNS plugins. Gebruik de documentatie van de bijbehorende plugins."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Er is een server gevonden op deze domeinnaam, maar dat lijkt niet Nginx Proxy Manager te zijn. Zorg ervoor dat je domein verwijst naar het IP waar je NPM-instantie draait."
+		"defaultMessage": "Er is een server gevonden op deze domeinnaam, maar dat lijkt niet HYROVI Proxy Manager te zijn. Zorg ervoor dat je domein verwijst naar het IP waar je HPM-instantie draait."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "Bereikbaarheid kan niet worden bepaald door een communicatiefout met site24x7.com."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "Er is geen server beschikbaar op dit domein. Zorg ervoor dat je domein bestaat en verwijst naar het IP waar je NPM-instantie draait en eventueel port 80 wordt doorgestuurd in je router."
+		"defaultMessage": "Er is geen server beschikbaar op dit domein. Zorg ervoor dat je domein bestaat en verwijst naar het IP waar je HPM-instantie draait en eventueel port 80 wordt doorgestuurd in je router."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "Je server is bereikbaar en certificaten kunnen worden aangemaakt."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Er is een server gevonden op deze domeinnaam, maar heeft een onverwachte statuscode ({code}) teruggegeven. Is dat de NPM-server? Zorg ervoor dat je domein verwijst naar het IP waar jouw NPM-instantie draait."
+		"defaultMessage": "Er is een server gevonden op deze domeinnaam, maar heeft een onverwachte statuscode ({code}) teruggegeven. Is dat de HPM-server? Zorg ervoor dat je domein verwijst naar het IP waar jouw HPM-instantie draait."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Er is een server gevonden op deze domeinnaam, maar heeft een onverwachte gegevens teruggegeven. Is dat de NPM-server? Zorg ervoor dat je domein verwijst naar het IP waar jouw NPM-instantie draait."
+		"defaultMessage": "Er is een server gevonden op deze domeinnaam, maar heeft een onverwachte gegevens teruggegeven. Is dat de HPM-server? Zorg ervoor dat je domein verwijst naar het IP waar jouw HPM-instantie draait."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Testresultaten"

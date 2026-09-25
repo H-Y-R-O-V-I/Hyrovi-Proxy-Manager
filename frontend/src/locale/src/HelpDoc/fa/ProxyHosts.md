@@ -2,6 +2,6 @@
 
 میزبان پراکسی (Proxy Host) نقطهٔ ورودی برای یک سرویس وب است که می‌خواهید درخواست‌ها را به آن فوروارد کنید.
 
-Proxy Host می‌تواند SSL/TLS Termination را نیز انجام دهد؛ بنابراین حتی اگر سرویس مقصد خودش SSL نداشته باشد، می‌توانید دسترسی HTTPS را در Nginx Proxy Manager فراهم کنید.
+Proxy Host می‌تواند SSL/TLS Termination را نیز انجام دهد؛ بنابراین حتی اگر سرویس مقصد خودش SSL نداشته باشد، می‌توانید دسترسی HTTPS را در HYROVI Proxy Manager فراهم کنید.
 
-Proxy Hostها رایج‌ترین قابلیت مورد استفاده در Nginx Proxy Manager هستند.
+Proxy Hostها رایج‌ترین قابلیت مورد استفاده در HYROVI Proxy Manager هستند.

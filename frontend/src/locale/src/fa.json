@@ -207,28 +207,28 @@
 		"defaultMessage": "این بخش نیازمند آشنایی با Certbot و افزونه‌های DNS آن است. لطفاً مستندات افزونهٔ مربوطه را بررسی کنید."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "در این دامنه یک سرور پیدا شد، اما به نظر نمی‌رسد Nginx Proxy Manager باشد. مطمئن شوید دامنه به IP سروری اشاره می‌کند که NPM روی آن اجرا می‌شود."
+		"defaultMessage": "در این دامنه یک سرور پیدا شد، اما به نظر نمی‌رسد HYROVI Proxy Manager باشد. مطمئن شوید دامنه به IP سروری اشاره می‌کند که HPM روی آن اجرا می‌شود."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "بررسی دسترسی‌پذیری به‌دلیل خطای ارتباط با site24x7.com انجام نشد."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "هیچ سروری در این دامنه در دسترس نیست. مطمئن شوید دامنه وجود دارد، به IP سروری اشاره می‌کند که NPM روی آن اجرا می‌شود و در صورت نیاز پورت 80 روی روتر به این سرور فوروارد شده است."
+		"defaultMessage": "هیچ سروری در این دامنه در دسترس نیست. مطمئن شوید دامنه وجود دارد، به IP سروری اشاره می‌کند که HPM روی آن اجرا می‌شود و در صورت نیاز پورت 80 روی روتر به این سرور فوروارد شده است."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "سرور شما در دسترس است و صدور گواهی باید امکان‌پذیر باشد."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "در این دامنه یک سرور پیدا شد، اما کد وضعیت غیرمنتظرهٔ {code} را برگرداند. آیا این سرور NPM است؟ مطمئن شوید دامنه به IP سروری اشاره می‌کند که NPM روی آن اجرا می‌شود."
+		"defaultMessage": "در این دامنه یک سرور پیدا شد، اما کد وضعیت غیرمنتظرهٔ {code} را برگرداند. آیا این سرور HPM است؟ مطمئن شوید دامنه به IP سروری اشاره می‌کند که HPM روی آن اجرا می‌شود."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "در این دامنه یک سرور پیدا شد، اما دادهٔ غیرمنتظره‌ای برگرداند. آیا این سرور NPM است؟ مطمئن شوید دامنه به IP سروری اشاره می‌کند که NPM روی آن اجرا می‌شود."
+		"defaultMessage": "در این دامنه یک سرور پیدا شد، اما دادهٔ غیرمنتظره‌ای برگرداند. آیا این سرور HPM است؟ مطمئن شوید دامنه به IP سروری اشاره می‌کند که HPM روی آن اجرا می‌شود."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "نتایج تست"
 	},
 	"certificates.http.warning": {
-		"defaultMessage": "این دامنه‌ها باید از قبل طوری تنظیم شده باشند که به این Nginx Proxy Manager اشاره کنند."
+		"defaultMessage": "این دامنه‌ها باید از قبل طوری تنظیم شده باشند که به این HYROVI Proxy Manager اشاره کنند."
 	},
 	"certificates.key-type": {
 		"defaultMessage": "نوع کلید"

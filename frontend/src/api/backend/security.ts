@@ -223,6 +223,60 @@ export interface SecurityDiagnostics {
 	};
 }
 
+export interface SecurityAttackAnalytics {
+	suspiciousRequests: number;
+	observedSources: number;
+	uniqueSources: number;
+	uniqueTargets: number;
+	riskLevels: Record<"normal" | "low" | "medium" | "high" | "critical", number>;
+	trafficSources: Array<{
+		ip: string;
+		requests: number;
+		suspicious: number;
+		critical: number;
+		maxRisk: number;
+		bytesSent: number;
+		hosts: string[];
+		firstSeen: string | null;
+		lastSeen: string | null;
+	}>;
+	topSources: Array<{
+		ip: string;
+		requests: number;
+		critical: number;
+		maxRisk: number;
+		hosts: string[];
+		firstSeen: string | null;
+		lastSeen: string | null;
+	}>;
+	topHosts: Array<{
+		host: string;
+		requests: number;
+		critical: number;
+		maxRisk: number;
+		sources: number;
+	}>;
+	topTargets: Array<{
+		host: string;
+		path: string;
+		requests: number;
+		critical: number;
+		maxRisk: number;
+		sources: number;
+		methods: string[];
+		statuses: number[];
+	}>;
+	topSignals: Array<{
+		id: string;
+		label: string;
+		hits: number;
+		maxScore: number;
+		sources: number;
+		hosts: number;
+	}>;
+	methods: Array<{ method: string; requests: number }>;
+}
+
 export interface SecurityOverview {
 	window: {
 		analyzedRequests: number;
@@ -237,6 +291,7 @@ export interface SecurityOverview {
 	activeBlocks: number;
 	activeRateLimits: number;
 	activeEscalations: SecurityEscalationState[];
+	analytics: SecurityAttackAnalytics;
 	automation: SecurityPolicy & {
 		mode: "observe" | "enforce";
 		emergencyBypass: boolean;

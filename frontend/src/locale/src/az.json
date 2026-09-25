@@ -207,22 +207,22 @@
 		"defaultMessage": "Bu bölmə Certbot və onun DNS plaginləri haqqında müəyyən bilik tələb edir. Zəhmət olmasa müvafiq plaginlərin sənədləri ilə tanış olun."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Bu domendə server tapıldı, lakin bu Nginx Proxy Manager kimi görünmür. Zəhmət olmasa domeninizin NPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə əmin olun."
+		"defaultMessage": "Bu domendə server tapıldı, lakin bu HYROVI Proxy Manager kimi görünmür. Zəhmət olmasa domeninizin HPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə əmin olun."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "site24x7.com ilə əlaqə xətası səbəbindən əlçatanlığı yoxlamaq mümkün olmadı."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "Bu domendə heç bir server mövcud deyil. Zəhmət olmasa domeninizin mövcud olduğuna, NPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə və lazım gələrsə routerinizdə 80 portunun yönləndirildiyinə əmin olun."
+		"defaultMessage": "Bu domendə heç bir server mövcud deyil. Zəhmət olmasa domeninizin mövcud olduğuna, HPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə və lazım gələrsə routerinizdə 80 portunun yönləndirildiyinə əmin olun."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "Serveriniz əlçatandır və sertifikat yaratmaq mümkün olmalıdır."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Bu domendə server tapıldı, lakin gözlənilməz status kodu qaytardı: {code}. Bu NPM serveridirmi? Zəhmət olmasa domeninizin NPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə əmin olun."
+		"defaultMessage": "Bu domendə server tapıldı, lakin gözlənilməz status kodu qaytardı: {code}. Bu HPM serveridirmi? Zəhmət olmasa domeninizin HPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə əmin olun."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Bu domendə server tapıldı, lakin gözlənilməz məlumat qaytardı. Bu NPM serveridirmi? Zəhmət olmasa domeninizin NPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə əmin olun."
+		"defaultMessage": "Bu domendə server tapıldı, lakin gözlənilməz məlumat qaytardı. Bu HPM serveridirmi? Zəhmət olmasa domeninizin HPM instansiyanızın işlədiyi IP-yə yönləndirildiyinə əmin olun."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Test nəticələri"

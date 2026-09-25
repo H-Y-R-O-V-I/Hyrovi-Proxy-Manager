@@ -147,22 +147,22 @@
 		"defaultMessage": "Този раздел изисква познания за Certbot и неговите DNS плъгини. Моля, консултирайте се с документацията."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Сървър е намерен на този домейн, но не изглежда да е Nginx Proxy Manager. Уверете се, че домейнът сочи към IP адреса, където работи NPM."
+		"defaultMessage": "Сървър е намерен на този домейн, но не изглежда да е HYROVI Proxy Manager. Уверете се, че домейнът сочи към IP адреса, където работи HPM."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "Неуспешна проверка поради грешка в комуникацията със site24x7.com."
 	},
 	"certificates.http.reachability-not-resolved": {
-		"defaultMessage": "Няма достъпен сървър на този домейн. Проверете, че домейнът съществува и сочи към IP-та, където се изпълнява NPM, и ако е необходимо, че порт 80 е пренасочен."
+		"defaultMessage": "Няма достъпен сървър на този домейн. Проверете, че домейнът съществува и сочи към IP-та, където се изпълнява HPM, и ако е необходимо, че порт 80 е пренасочен."
 	},
 	"certificates.http.reachability-ok": {
 		"defaultMessage": "Вашият сървър е достъпен и създаването на сертификати е възможно."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Намерен е сървър, но върна неочакван код {code}. Това NPM ли е? Уверете се, че домейнът сочи към вашия NPM сървър."
+		"defaultMessage": "Намерен е сървър, но върна неочакван код {code}. Това HPM ли е? Уверете се, че домейнът сочи към вашия HPM сървър."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Намерен е сървър, но върна неочаквани данни. Това NPM ли е? Уверете се, че домейнът сочи към вашия NPM сървър."
+		"defaultMessage": "Намерен е сървър, но върна неочаквани данни. Това HPM ли е? Уверете се, че домейнът сочи към вашия HPM сървър."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Резултати от теста"

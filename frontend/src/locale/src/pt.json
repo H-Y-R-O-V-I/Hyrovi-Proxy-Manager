@@ -147,7 +147,7 @@
 		"defaultMessage": "Esta secção requer conhecimentos sobre o Certbot e os seus plugins DNS. Consulte a documentação dos plugins."
 	},
 	"certificates.http.reachability-404": {
-		"defaultMessage": "Foi encontrado um servidor neste domínio, mas não parece ser o Nginx Proxy Manager. Certifique-se de que o domínio aponta para o IP onde a sua instância está a correr."
+		"defaultMessage": "Foi encontrado um servidor neste domínio, mas não parece ser o HYROVI Proxy Manager. Certifique-se de que o domínio aponta para o IP onde a sua instância está a correr."
 	},
 	"certificates.http.reachability-failed-to-check": {
 		"defaultMessage": "Falha ao verificar acessibilidade devido a um erro de comunicação com site24x7.com."
@@ -159,10 +159,10 @@
 		"defaultMessage": "O servidor está acessível e a criação de certificados deverá ser possível."
 	},
 	"certificates.http.reachability-other": {
-		"defaultMessage": "Foi encontrado um servidor neste domínio, mas devolveu um código inesperado ({code}). Será o servidor NPM? Confirme que o domínio aponta para o IP correto."
+		"defaultMessage": "Foi encontrado um servidor neste domínio, mas devolveu um código inesperado ({code}). Será o servidor HPM? Confirme que o domínio aponta para o IP correto."
 	},
 	"certificates.http.reachability-wrong-data": {
-		"defaultMessage": "Foi encontrado um servidor neste domínio, mas devolveu dados inesperados. Será o servidor NPM? Confirme que o domínio aponta para o IP correto."
+		"defaultMessage": "Foi encontrado um servidor neste domínio, mas devolveu dados inesperados. Será o servidor HPM? Confirme que o domínio aponta para o IP correto."
 	},
 	"certificates.http.test-results": {
 		"defaultMessage": "Resultados do Teste"

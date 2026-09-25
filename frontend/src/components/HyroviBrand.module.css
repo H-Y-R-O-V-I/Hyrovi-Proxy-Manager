@@ -1,0 +1,53 @@
+.brand {
+	display: inline-flex;
+	align-items: center;
+	gap: .7rem;
+	color: inherit;
+	min-width: 0;
+}
+
+.mark {
+	display: inline-grid;
+	place-items: center;
+	width: 2.15rem;
+	height: 2.15rem;
+	border: 1px solid color-mix(in srgb, var(--tblr-primary) 50%, var(--tblr-border-color));
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--tblr-primary) 12%, var(--tblr-bg-surface));
+	color: var(--tblr-primary);
+	font-size: 1rem;
+	font-weight: 800;
+	letter-spacing: -.04em;
+	flex: 0 0 auto;
+}
+
+.wordmark {
+	display: flex;
+	flex-direction: column;
+	line-height: 1.05;
+	min-width: 0;
+}
+
+.wordmark strong {
+	font-size: 1rem;
+	font-weight: 800;
+	letter-spacing: .08em;
+}
+
+.wordmark small {
+	margin-top: .22rem;
+	font-size: .67rem;
+	font-weight: 600;
+	letter-spacing: .07em;
+	text-transform: uppercase;
+	color: var(--tblr-secondary);
+}
+
+.compact .mark {
+	width: 1.9rem;
+	height: 1.9rem;
+}
+
+.compact .wordmark strong {
+	font-size: .92rem;
+}

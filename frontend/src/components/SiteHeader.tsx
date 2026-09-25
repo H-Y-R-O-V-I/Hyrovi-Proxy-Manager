@@ -1,10 +1,9 @@
 import { IconLock, IconLogout, IconShieldLock, IconUser } from "@tabler/icons-react";
-import { LocalePicker, NavLink, ThemeSwitcher } from "src/components";
+import { HyroviBrand, LocalePicker, NavLink, ThemeSwitcher } from "src/components";
 import { useAuthState } from "src/context";
 import { useUser } from "src/hooks";
 import { T } from "src/locale";
 import { showChangePasswordModal, showTwoFactorModal, showUserModal } from "src/modals";
-import styles from "./SiteHeader.module.css";
 
 export function SiteHeader() {
 	const { data: currentUser } = useUser("me");
@@ -27,16 +26,7 @@ export function SiteHeader() {
 				</button>
 				<div className="navbar-brand navbar-brand-autodark pe-0 pe-md-3">
 					<NavLink to="/">
-						<div className={styles.logo}>
-							<img
-								src="/images/logo-no-text.svg"
-								width={40}
-								height={40}
-								className="navbar-brand-image"
-								alt="Logo"
-							/>
-						</div>
-						Nginx Proxy Manager
+						<HyroviBrand compact />
 					</NavLink>
 				</div>
 				<div className="navbar-nav flex-row order-md-last">

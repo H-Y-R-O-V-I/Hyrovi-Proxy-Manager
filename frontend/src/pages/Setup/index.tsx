@@ -4,7 +4,7 @@ import { Field, Form, Formik } from "formik";
 import { useState } from "react";
 import { Alert } from "react-bootstrap";
 import { createUser } from "src/api/backend";
-import { Button, LocalePicker, Page, ThemeSwitcher } from "src/components";
+import { Button, HyroviBrand, LocalePicker, Page, ThemeSwitcher } from "src/components";
 import { useAuthState } from "src/context";
 import { intl, T } from "src/locale";
 import { validateEmail, validateString } from "src/modules/Validations";
@@ -66,11 +66,7 @@ export default function Setup() {
 			</div>
 			<div className="container container-tight py-4">
 				<div className="text-center mb-4">
-					<img
-						className={styles.logo}
-						src="/images/logo-text-horizontal-grey.png"
-						alt="Nginx Proxy Manager"
-					/>
+					<HyroviBrand />
 				</div>
 				<div className="card card-md">
 					<Alert variant="danger" show={!!errorMsg} onClose={() => setErrorMsg(null)} dismissible>

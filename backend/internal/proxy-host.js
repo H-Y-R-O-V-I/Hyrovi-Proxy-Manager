@@ -2,6 +2,7 @@ import _ from "lodash";
 import errs from "../lib/error.js";
 import { castJsonIfNeed } from "../lib/helpers.js";
 import utils from "../lib/utils.js";
+import certificateModel from "../models/certificate.js";
 import proxyHostModel from "../models/proxy_host.js";
 import internalAuditLog from "./audit-log.js";
 import internalCertificate from "./certificate.js";
@@ -12,6 +13,32 @@ const omissions = () => {
 	return ["is_deleted", "owner.is_deleted"];
 };
 
+const isHyroviDomain = (domain) => {
+	const normalized = String(domain || "").trim().toLowerCase().replace(/\.$/, "");
+	return normalized === "hyrovi.com" || normalized.endsWith(".hyrovi.com");
+};
+
+const applyHyroviWildcardCertificate = async (data, fallbackDomainNames = []) => {
+	const domainNames = Array.isArray(data.domain_names) ? data.domain_names : fallbackDomainNames;
+	if (!domainNames.length || !domainNames.every(isHyroviDomain)) {
+		return data;
+	}
+
+	const certificates = await certificateModel.query().where("is_deleted", 0);
+	const wildcardCertificate = certificates.find(
+		(certificate) =>
+			Array.isArray(certificate.domain_names) &&
+			certificate.domain_names.includes("*.hyrovi.com") &&
+			certificate.domain_names.includes("hyrovi.com"),
+	);
+
+	if (wildcardCertificate?.id) {
+		data.certificate_id = wildcardCertificate.id;
+	}
+
+	return data;
+};
+
 const internalProxyHost = {
 	/**
 	 * @param   {Access}  access
@@ -20,7 +47,7 @@ const internalProxyHost = {
 	 */
 	create: (access, data) => {
 		let thisData = data;
-		const createCertificate = thisData.certificate_id === "new";
+		let createCertificate = thisData.certificate_id === "new";
 
 		if (createCertificate) {
 			delete thisData.certificate_id;
@@ -46,9 +73,13 @@ const internalProxyHost = {
 					});
 				});
 			})
-			.then(() => {
+			.then(async () => {
 				// At this point the domains should have been checked
 				thisData.owner_user_id = access.token.getUserId(1);
+				thisData = await applyHyroviWildcardCertificate(thisData);
+				if (thisData.certificate_id) {
+					createCertificate = false;
+				}
 				thisData = internalHost.cleanSslHstsData(thisData);
 
 				// Fix for db field not having a default value
@@ -115,7 +146,7 @@ const internalProxyHost = {
 	 */
 	update: (access, data) => {
 		let thisData = data;
-		const createCertificate = thisData.certificate_id === "new";
+		let createCertificate = thisData.certificate_id === "new";
 
 		if (createCertificate) {
 			delete thisData.certificate_id;
@@ -147,12 +178,17 @@ const internalProxyHost = {
 			.then(() => {
 				return internalProxyHost.get(access, { id: thisData.id });
 			})
-			.then((row) => {
+			.then(async (row) => {
 				if (row.id !== thisData.id) {
 					// Sanity check that something crazy hasn't happened
 					throw new errs.InternalValidationError(
 						`Proxy Host could not be updated, IDs do not match: ${row.id} !== ${thisData.id}`,
 					);
+				}
+
+				thisData = await applyHyroviWildcardCertificate(thisData, row.domain_names);
+				if (thisData.certificate_id) {
+					createCertificate = false;
 				}
 
 				if (createCertificate) {

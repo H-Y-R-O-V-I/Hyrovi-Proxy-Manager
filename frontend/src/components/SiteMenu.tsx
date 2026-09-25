@@ -49,6 +49,13 @@ const menuItems: MenuItem[] = [
 		permissionSection: ADMIN,
 	},
 	{
+		to: "/nodes",
+		icon: IconDeviceDesktop,
+		label: "hyrovi-nodes",
+		labelText: "HYROVI Nodes",
+		permissionSection: ADMIN,
+	},
+	{
 		icon: IconDeviceDesktop,
 		label: "hosts",
 		items: [

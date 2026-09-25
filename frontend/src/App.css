@@ -116,3 +116,31 @@ label.row {
     margin-left: 0;
   }
 }
+/* HYROVI visual system: compact, square-edged and operations-focused. */
+:root {
+	--hyrovi-panel-radius: 6px;
+}
+
+.card,
+.modal-content,
+.dropdown-menu,
+.form-control,
+.form-select,
+.btn {
+	border-radius: var(--hyrovi-panel-radius);
+}
+
+.navbar {
+	border-bottom: 1px solid var(--tblr-border-color);
+	background: color-mix(in srgb, var(--tblr-bg-surface) 94%, transparent);
+	backdrop-filter: blur(14px);
+}
+
+.card {
+	box-shadow: none;
+}
+
+.table > :not(caption) > * > * {
+	padding-top: .7rem;
+	padding-bottom: .7rem;
+}
