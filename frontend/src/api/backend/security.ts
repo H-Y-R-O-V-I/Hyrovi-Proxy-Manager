@@ -15,6 +15,8 @@ export interface SecurityEvent {
 	status: number;
 	ip: string;
 	userAgent: string;
+	referrer: string;
+	accept: string;
 	requestLength: number;
 	bytesSent: number;
 	requestTime: number;
@@ -408,6 +410,46 @@ export interface SecurityAttackAnalytics {
 	methods: Array<{ method: string; requests: number }>;
 }
 
+
+export interface SecurityWebAnalytics {
+	pageViews: number;
+	visitors: number;
+	sessions: number;
+	pagesPerSession: number;
+	bounceRate: number;
+	avgSessionDurationMs: number;
+	referrers: {
+		direct: number;
+		internal: number;
+		external: number;
+		topExternal: Array<{ host: string; count: number }>;
+	};
+	devices: Array<{ name: string; count: number }>;
+	browsers: Array<{ name: string; count: number }>;
+	operatingSystems: Array<{ name: string; count: number }>;
+	topPages: Array<{
+		host: string;
+		path: string;
+		pageViews: number;
+		visitors: number;
+		avgRequestTimeMs: number;
+	}>;
+	entryPages: Array<{ host: string; path: string; sessions: number }>;
+	exitPages: Array<{ host: string; path: string; sessions: number }>;
+	sites: Array<{
+		host: string;
+		requests: number;
+		pageViews: number;
+		suspicious: number;
+		errors: number;
+		bytesSent: number;
+		visitors: number;
+		sessions: number;
+		errorRate: number;
+		avgRequestTimeMs: number;
+	}>;
+}
+
 export interface SecurityOverview {
 	window: {
 		analyzedRequests: number;
@@ -427,6 +469,7 @@ export interface SecurityOverview {
 	activeRateLimits: number;
 	activeEscalations: SecurityEscalationState[];
 	analytics: SecurityAttackAnalytics;
+	webAnalytics: SecurityWebAnalytics;
 	automation: SecurityPolicy & {
 		mode: "observe" | "enforce";
 		emergencyBypass: boolean;

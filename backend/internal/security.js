@@ -284,6 +284,8 @@ const normalizeEvent = (raw) => {
 		status,
 		ip: raw.remote_addr || "",
 		userAgent: raw.user_agent || "",
+		referrer: raw.referer || "",
+		accept: raw.accept || "",
 		requestLength,
 		bytesSent,
 		requestTime,
@@ -1843,6 +1845,237 @@ const buildAnalyticsTimeline = (events, sinceMinutes = 0) => {
 	}));
 };
 
+const STATIC_ASSET_PATH = /\.(?:avif|bmp|css|gif|ico|jpe?g|js|json|map|mjs|mp3|mp4|ogg|pdf|png|svg|ttf|webm|webp|woff2?)(?:$|\?)/i;
+const ANALYTICS_SESSION_GAP_MS = 30 * 60 * 1000;
+
+const likelyBrowserUserAgent = (userAgent) =>
+	/(mozilla\/|safari\/|chrome\/|chromium\/|firefox\/|edg\/|opera\/|opr\/)/i.test(String(userAgent || ""));
+
+const isLikelyPageView = (event) => {
+	if (!["GET", "HEAD"].includes(event.method)) return false;
+	if (event.risk >= 40 || event.status >= 400 || event.status < 200) return false;
+	if (STATIC_ASSET_PATH.test(event.path || "")) return false;
+	if (String(event.path || "").startsWith("/.well-known/hyrovi-sec/")) return false;
+	const accept = String(event.accept || "").toLowerCase();
+	if (accept) return accept.includes("text/html") || accept.includes("application/xhtml+xml");
+	return likelyBrowserUserAgent(event.userAgent);
+};
+
+const classifyDevice = (userAgent) => {
+	const ua = String(userAgent || "");
+	if (/bot|crawler|spider|scanner|headless/i.test(ua)) return "Bot / automation";
+	if (/ipad|tablet/i.test(ua)) return "Tablet";
+	if (/iphone|ipod|android.*mobile|mobile/i.test(ua)) return "Mobile";
+	if (/android/i.test(ua)) return "Tablet";
+	return "Desktop";
+};
+
+const classifyBrowser = (userAgent) => {
+	const ua = String(userAgent || "");
+	if (/Home Assistant/i.test(ua)) return "Home Assistant";
+	if (/curl\//i.test(ua)) return "curl";
+	if (/wget\//i.test(ua)) return "wget";
+	if (/bot|crawler|spider|scanner|headless/i.test(ua)) return "Bot / automation";
+	if (/Edg\//i.test(ua)) return "Edge";
+	if (/OPR\/|Opera/i.test(ua)) return "Opera";
+	if (/Firefox\//i.test(ua)) return "Firefox";
+	if (/Chrome\/|CriOS\//i.test(ua)) return "Chrome";
+	if (/Safari\//i.test(ua)) return "Safari";
+	return "Other";
+};
+
+const classifyOperatingSystem = (userAgent) => {
+	const ua = String(userAgent || "");
+	if (/iPhone|iPad|iPod/i.test(ua)) return "iOS / iPadOS";
+	if (/Android/i.test(ua)) return "Android";
+	if (/Windows/i.test(ua)) return "Windows";
+	if (/Mac OS X|Macintosh/i.test(ua)) return "macOS";
+	if (/Linux/i.test(ua)) return "Linux";
+	return "Other";
+};
+
+const safeReferrerHost = (value) => {
+	const raw = String(value || "").trim();
+	if (!raw || raw === "-") return "";
+	try {
+		return new URL(raw).hostname.toLowerCase();
+	} catch {
+		return "";
+	}
+};
+
+const buildWebAnalytics = (events) => {
+	const pageEvents = events
+		.filter(isLikelyPageView)
+		.sort((left, right) => (parseTimestamp(left.timestamp)?.getTime() || 0) - (parseTimestamp(right.timestamp)?.getTime() || 0));
+	const visitors = new Set();
+	const sessionMap = new Map();
+	const pageMap = new Map();
+	const siteMap = new Map();
+	const referrerMap = new Map();
+	const deviceMap = new Map();
+	const browserMap = new Map();
+	const osMap = new Map();
+	let directReferrals = 0;
+	let internalReferrals = 0;
+	let externalReferrals = 0;
+
+	for (const event of events) {
+		const host = event.host || "(unknown host)";
+		const row = siteMap.get(host) || {
+			host,
+			requests: 0,
+			pageViews: 0,
+			suspicious: 0,
+			errors: 0,
+			bytesSent: 0,
+			requestTimeMsTotal: 0,
+			requestTimeSamples: 0,
+			visitorKeys: new Set(),
+			sessionKeys: new Set(),
+		};
+		row.requests += 1;
+		row.suspicious += event.risk >= 40 ? 1 : 0;
+		row.errors += event.status >= 400 ? 1 : 0;
+		row.bytesSent += Math.max(0, Number(event.bytesSent) || 0);
+		row.requestTimeMsTotal += Math.max(0, Number(event.requestTime) || 0) * 1000;
+		row.requestTimeSamples += 1;
+		siteMap.set(host, row);
+	}
+
+	for (const event of pageEvents) {
+		const host = event.host || "(unknown host)";
+		const visitorKey = `${event.ip || "(unknown)"}|${String(event.userAgent || "").slice(0, 240)}`;
+		const siteVisitorKey = `${host}|${visitorKey}`;
+		const timestamp = parseTimestamp(event.timestamp)?.getTime() || 0;
+		visitors.add(siteVisitorKey);
+
+		const site = siteMap.get(host);
+		if (site) {
+			site.pageViews += 1;
+			site.visitorKeys.add(siteVisitorKey);
+		}
+
+		const existingSessions = sessionMap.get(siteVisitorKey) || [];
+		let session = existingSessions.at(-1);
+		if (!session || timestamp - session.lastAt > ANALYTICS_SESSION_GAP_MS) {
+			session = {
+				key: `${siteVisitorKey}|${timestamp}`,
+				host,
+				visitorKey: siteVisitorKey,
+				firstAt: timestamp,
+				lastAt: timestamp,
+				pageViews: 0,
+				entryPath: event.path || "/",
+				exitPath: event.path || "/",
+			};
+			existingSessions.push(session);
+			sessionMap.set(siteVisitorKey, existingSessions);
+			site?.sessionKeys.add(session.key);
+		}
+		session.lastAt = Math.max(session.lastAt, timestamp);
+		session.pageViews += 1;
+		session.exitPath = event.path || "/";
+
+		const pageKey = `${host}|${event.path || "/"}`;
+		const page = pageMap.get(pageKey) || {
+			host,
+			path: event.path || "/",
+			pageViews: 0,
+			visitors: new Set(),
+			totalRequestTimeMs: 0,
+		};
+		page.pageViews += 1;
+		page.visitors.add(siteVisitorKey);
+		page.totalRequestTimeMs += Math.max(0, Number(event.requestTime) || 0) * 1000;
+		pageMap.set(pageKey, page);
+
+		const referrerHost = safeReferrerHost(event.referrer);
+		if (!referrerHost) {
+			directReferrals += 1;
+		} else if (referrerHost === host || referrerHost.endsWith(`.${host}`) || host.endsWith(`.${referrerHost}`)) {
+			internalReferrals += 1;
+		} else {
+			externalReferrals += 1;
+			referrerMap.set(referrerHost, (referrerMap.get(referrerHost) || 0) + 1);
+		}
+
+		const device = classifyDevice(event.userAgent);
+		const browser = classifyBrowser(event.userAgent);
+		const os = classifyOperatingSystem(event.userAgent);
+		deviceMap.set(device, (deviceMap.get(device) || 0) + 1);
+		browserMap.set(browser, (browserMap.get(browser) || 0) + 1);
+		osMap.set(os, (osMap.get(os) || 0) + 1);
+	}
+
+	const sessions = [...sessionMap.values()].flat();
+	const totalSessionDurationMs = sessions.reduce((sum, session) => sum + Math.max(0, session.lastAt - session.firstAt), 0);
+	const bounceSessions = sessions.filter((session) => session.pageViews <= 1).length;
+	const entryMap = new Map();
+	const exitMap = new Map();
+	for (const session of sessions) {
+		const entryKey = `${session.host}|${session.entryPath}`;
+		const exitKey = `${session.host}|${session.exitPath}`;
+		entryMap.set(entryKey, (entryMap.get(entryKey) || 0) + 1);
+		exitMap.set(exitKey, (exitMap.get(exitKey) || 0) + 1);
+	}
+
+	const rankedCounts = (map, keyName, limit = 10) =>
+		[...map.entries()]
+			.map(([key, count]) => ({ [keyName]: key, count }))
+			.sort((left, right) => right.count - left.count || String(left[keyName]).localeCompare(String(right[keyName])))
+			.slice(0, limit);
+
+	const pathFromCompoundKey = (key) => {
+		const split = key.indexOf("|");
+		return split >= 0 ? { host: key.slice(0, split), path: key.slice(split + 1) } : { host: "", path: key };
+	};
+
+	return {
+		pageViews: pageEvents.length,
+		visitors: visitors.size,
+		sessions: sessions.length,
+		pagesPerSession: sessions.length > 0 ? pageEvents.length / sessions.length : 0,
+		bounceRate: sessions.length > 0 ? bounceSessions / sessions.length : 0,
+		avgSessionDurationMs: sessions.length > 0 ? totalSessionDurationMs / sessions.length : 0,
+		referrers: {
+			direct: directReferrals,
+			internal: internalReferrals,
+			external: externalReferrals,
+			topExternal: rankedCounts(referrerMap, "host", 12),
+		},
+		devices: rankedCounts(deviceMap, "name", 8),
+		browsers: rankedCounts(browserMap, "name", 10),
+		operatingSystems: rankedCounts(osMap, "name", 10),
+		topPages: [...pageMap.values()]
+			.map(({ visitors: pageVisitors, totalRequestTimeMs, ...entry }) => ({
+				...entry,
+				visitors: pageVisitors.size,
+				avgRequestTimeMs: entry.pageViews > 0 ? Math.round(totalRequestTimeMs / entry.pageViews) : 0,
+			}))
+			.sort((left, right) => right.pageViews - left.pageViews || right.visitors - left.visitors)
+			.slice(0, 20),
+		entryPages: [...entryMap.entries()]
+			.map(([key, sessions]) => ({ ...pathFromCompoundKey(key), sessions }))
+			.sort((left, right) => right.sessions - left.sessions)
+			.slice(0, 12),
+		exitPages: [...exitMap.entries()]
+			.map(([key, sessions]) => ({ ...pathFromCompoundKey(key), sessions }))
+			.sort((left, right) => right.sessions - left.sessions)
+			.slice(0, 12),
+		sites: [...siteMap.values()]
+			.map(({ visitorKeys, sessionKeys, requestTimeMsTotal, requestTimeSamples, ...entry }) => ({
+				...entry,
+				visitors: visitorKeys.size,
+				sessions: sessionKeys.size,
+				errorRate: entry.requests > 0 ? entry.errors / entry.requests : 0,
+				avgRequestTimeMs: requestTimeSamples > 0 ? Math.round(requestTimeMsTotal / requestTimeSamples) : 0,
+			}))
+			.sort((left, right) => right.pageViews - left.pageViews || right.requests - left.requests)
+			.slice(0, 100),
+	};
+};
+
 const buildAttackAnalytics = (events, options = {}) => {
 	const suspiciousEvents = events.filter((event) => event.risk >= 40);
 	const trafficSourceMap = new Map();
@@ -2854,6 +3087,7 @@ const internalSecurity = {
 			activeRateLimits: rateLimits.length,
 			activeEscalations,
 			analytics: buildAttackAnalytics(events, filters),
+			webAnalytics: buildWebAnalytics(events),
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,

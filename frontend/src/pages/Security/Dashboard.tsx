@@ -22,9 +22,28 @@ const formatBytes = (value: number) => {
 	if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
 	return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 };
+const formatDuration = (value: number) => {
+	if (!Number.isFinite(value) || value <= 0) return "0s";
+	const seconds = Math.round(value / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const rest = seconds % 60;
+	return minutes < 60 ? `${minutes}m ${rest}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+};
 
 type Bucket = { at: number; requests: number; suspicious: number };
 type SourceAssessmentLevel = "normal" | "suspicious" | "likely_attack";
+type AnalyticsView = "overview" | "sites" | "visitors" | "behavior" | "performance" | "threats" | "requests";
+
+const ANALYTICS_VIEWS: Array<{ id: AnalyticsView; label: string; description: string }> = [
+	{ id: "overview", label: "Overview", description: "Traffic summary" },
+	{ id: "sites", label: "Sites", description: "Matomo-style site analytics" },
+	{ id: "visitors", label: "Visitors", description: "Clients and devices" },
+	{ id: "behavior", label: "Behavior", description: "Pages and referrers" },
+	{ id: "performance", label: "Performance", description: "Latency and HTTP health" },
+	{ id: "threats", label: "Threats", description: "Incidents and detection" },
+	{ id: "requests", label: "Requests", description: "Raw request explorer" },
+];
 
 type SourceAssessment = {
 	level: SourceAssessmentLevel;
@@ -207,6 +226,8 @@ export default function SecurityDashboard() {
 	const [selectedSourceIp, setSelectedSourceIp] = useState<string | null>(null);
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [incidentFilter, setIncidentFilter] = useState<"all" | "crawler" | "blocked" | "critical" | "unanswered">("all");
+	const [analyticsView, setAnalyticsView] = useState<AnalyticsView>("overview");
+	const [filtersOpen, setFiltersOpen] = useState(false);
 
 	const overview = useQuery({
 		queryKey: ["security-overview", search, ip, host, method, status, minRisk, groupId, sinceMinutes],
@@ -460,6 +481,49 @@ export default function SecurityDashboard() {
 		return [...map.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 	}, [sourceDetail.data]);
 
+	const summaryMetrics = useMemo(() => {
+		const data = overview.data;
+		const web = data?.webAnalytics;
+		const metric = (label: string, value: string | number, note?: string) => ({ label, value, note });
+		switch (analyticsView) {
+			case "sites":
+				return [
+					metric("Sites", web?.sites.length ?? 0), metric("Page views", web?.pageViews ?? 0), metric("Visitors", web?.visitors ?? 0),
+					metric("Visits", web?.sessions ?? 0), metric("Pages / visit", (web?.pagesPerSession ?? 0).toFixed(1)), metric("Bounce rate", `${Math.round((web?.bounceRate ?? 0) * 100)}%`),
+				];
+			case "visitors":
+				return [
+					metric("Visitors", web?.visitors ?? 0, "IP + user-agent estimate"), metric("Visits", web?.sessions ?? 0), metric("Avg visit", formatDuration(web?.avgSessionDurationMs ?? 0)),
+					metric("Source IPs", data?.analytics.observedSources ?? 0), metric("External entries", web?.referrers.external ?? 0), metric("Direct entries", web?.referrers.direct ?? 0),
+				];
+			case "behavior":
+				return [
+					metric("Page views", web?.pageViews ?? 0), metric("Unique paths", data?.analytics.uniquePaths ?? 0), metric("Pages / visit", (web?.pagesPerSession ?? 0).toFixed(1)),
+					metric("Bounce rate", `${Math.round((web?.bounceRate ?? 0) * 100)}%`), metric("External referrers", web?.referrers.external ?? 0), metric("Internal transitions", web?.referrers.internal ?? 0),
+				];
+			case "performance":
+				return [
+					metric("Average", `${data?.analytics.performance.avgMs ?? 0} ms`), metric("P95", `${data?.analytics.performance.p95Ms ?? 0} ms`), metric("P99", `${data?.analytics.performance.p99Ms ?? 0} ms`),
+					metric("Slow ≥1s", data?.analytics.performance.slowOver1s ?? 0), metric("5xx", data?.analytics.http.statusFamilies.find((row) => row.family === "5xx")?.requests ?? 0), metric("Response traffic", formatBytes(totalBytes)),
+				];
+			case "threats":
+				return [
+					metric("Suspicious", data?.suspicious ?? 0), metric("Critical", data?.critical ?? 0), metric("Attack sessions", attackSessions.length),
+					metric("Crawler attacks", crawlerAttackCount), metric("Active blocks", data?.activeBlocks ?? 0), metric("Unanswered", unansweredIncidents),
+				];
+			case "requests":
+				return [
+					metric("Matching requests", data?.requests ?? 0, `${events.data?.length ?? 0} loaded into table`), metric("Source IPs", data?.analytics.observedSources ?? 0),
+					metric("Destinations", destinationCount), metric("Response traffic", formatBytes(totalBytes)),
+				];
+			default:
+				return [
+					metric("Requests", data?.requests ?? 0), metric("Page views", web?.pageViews ?? 0, "estimated browser views"), metric("Visitors", web?.visitors ?? 0, "IP + user-agent estimate"),
+					metric("Suspicious", data?.suspicious ?? 0), metric("Peak rate", `${data?.analytics.peakRequestsPerMinute ?? 0}/min`), metric("P95 latency", `${data?.analytics.performance.p95Ms ?? 0} ms`),
+				];
+		}
+	}, [analyticsView, attackSessions.length, crawlerAttackCount, destinationCount, events.data?.length, overview.data, totalBytes, unansweredIncidents]);
+
 	const openSource = (sourceIp: string) => {
 		setSelectedRequestId(null);
 		setSelectedSessionId(null);
@@ -508,39 +572,109 @@ export default function SecurityDashboard() {
 			<button type="button" className="btn btn-outline-secondary" onClick={refresh}><IconRefresh size={17} /> Refresh</button>
 		</div>
 
+		<div className={styles.analyticsNav}>
+			{ANALYTICS_VIEWS.map((view) => <button type="button" key={view.id} className={analyticsView === view.id ? styles.analyticsNavActive : ""} onClick={() => setAnalyticsView(view.id)}>
+				<strong>{view.label}</strong><small>{view.description}</small>
+			</button>)}
+		</div>
+
 		{overview.data?.window.analysisLimitReached ? <div className="alert alert-warning py-2 px-3">
 			The backend analysis reached {overview.data.window.analysisLimit.toLocaleString()} loaded events. Counts for this filter may be partial; the request table is independently capped at {overview.data.window.listLimit.toLocaleString()} rows.
 		</div> : null}
 
 		<div className={styles.metrics}>
-			<div className={styles.metric}><div className={styles.metricLabel}>Requests in window</div><div className={styles.metricValue}>{overview.data?.requests ?? events.data?.length ?? 0}</div><small>{overview.data && (events.data?.length ?? 0) < overview.data.requests ? `${(events.data?.length ?? 0).toLocaleString()} listed` : "full listed window"}</small></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Unique source IPs</div><div className={styles.metricValue}>{overview.data?.analytics.observedSources ?? sourceStats.length}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Suspicious</div><div className={styles.metricValue}>{overview.data?.suspicious ?? (events.data ?? []).filter((event) => event.risk >= 40).length}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Attack sessions</div><div className={styles.metricValue}>{attackSessions.length}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Crawler attacks</div><div className={styles.metricValue}>{crawlerAttackCount}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Active blocks</div><div className={styles.metricValue}>{overview.data?.activeBlocks ?? 0}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Unanswered incidents</div><div className={styles.metricValue}>{unansweredIncidents}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Destinations</div><div className={styles.metricValue}>{destinationCount}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Response traffic</div><div className={styles.metricValue}>{formatBytes(totalBytes)}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Peak rate</div><div className={styles.metricValue}>{overview.data?.analytics.peakRequestsPerMinute ?? 0}/min</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>P95 latency</div><div className={styles.metricValue}>{overview.data?.analytics.performance.p95Ms ?? 0} ms</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>5xx responses</div><div className={styles.metricValue}>{overview.data?.analytics.http.statusFamilies.find((row) => row.family === "5xx")?.requests ?? 0}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Unique paths</div><div className={styles.metricValue}>{overview.data?.analytics.uniquePaths ?? 0}</div></div>
+			{summaryMetrics.map((row) => <div className={styles.metric} key={row.label}>
+				<div className={styles.metricLabel}>{row.label}</div>
+				<div className={styles.metricValue}>{row.value}</div>
+				{row.note ? <small>{row.note}</small> : null}
+			</div>)}
 		</div>
 
-		<div className={styles.filters}>
+		<div className={styles.filterBar}>
+			<select className="form-select" value={sinceMinutes} onChange={(e) => setSinceMinutes(Number(e.target.value))}><option value={15}>15 min</option><option value={60}>1 hour</option><option value={360}>6 hours</option><option value={1440}>24 hours</option><option value={10080}>7 days</option></select>
+			<select className="form-select" value={host} onChange={(e) => setHost(e.target.value)}><option value="">All sites</option>{hostOptions.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select>
+			<div className={styles.filterBarActions}>
+				<button type="button" className={`btn ${filtersOpen ? "btn-secondary" : "btn-outline-secondary"}`} onClick={() => setFiltersOpen((value) => !value)}>{filtersOpen ? "Hide filters" : "More filters"}</button>
+				<button type="button" className="btn btn-outline-secondary" onClick={clearFilters}><IconFilterOff size={16} /> Clear</button>
+			</div>
+		</div>
+
+		<div className={styles.filters} hidden={!filtersOpen}>
 			<input className="form-control" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search path, host, request ID…" />
 			<input className="form-control font-monospace" value={ip} onChange={(e) => setIp(e.target.value)} placeholder="Source IP" />
-			<select className="form-select" value={host} onChange={(e) => setHost(e.target.value)}><option value="">All hosts</option>{hostOptions.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select>
 			<select className="form-select" value={method} onChange={(e) => setMethod(e.target.value)}><option value="">Method</option>{["GET","POST","PUT","PATCH","DELETE","OPTIONS"].map((entry) => <option key={entry}>{entry}</option>)}</select>
 			<input className="form-control" type="number" min={0} max={599} value={status || ""} onChange={(e) => setStatus(Number(e.target.value) || 0)} placeholder="Status" />
 			<select className="form-select" value={minRisk} onChange={(e) => setMinRisk(Number(e.target.value))}><option value={0}>All risk</option><option value={20}>Risk 20+</option><option value={40}>Risk 40+</option><option value={60}>Risk 60+</option><option value={80}>Risk 80+</option></select>
-			<select className="form-select" value={sinceMinutes} onChange={(e) => setSinceMinutes(Number(e.target.value))}><option value={15}>15 min</option><option value={60}>1 hour</option><option value={360}>6 hours</option><option value={1440}>24 hours</option><option value={10080}>7 days</option></select>
 			<select className="form-select" value={groupId} onChange={(e) => setGroupId(e.target.value)}><option value="">All groups</option>{(groups.data ?? []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select>
-			<button type="button" className="btn btn-outline-secondary" onClick={clearFilters}><IconFilterOff size={16} /> Clear</button>
 		</div>
 
-		<div className={styles.gridTwo}>
+		<div className={styles.panel} hidden={analyticsView !== "sites"}>
+			<div className={styles.panelHeader}>
+				<div><h3>Sites / host analytics</h3><small className="text-secondary">Matomo-style web metrics per proxy host. Page views exclude suspicious traffic and static assets.</small></div>
+				<span className="text-secondary small">click a site to filter</span>
+			</div>
+			<div className="table-responsive">
+				<table className="table table-vcenter mb-0">
+					<thead><tr><th>Site</th><th>Page views</th><th>Visitors</th><th>Visits</th><th>Requests</th><th>Errors</th><th>Avg latency</th><th>Traffic</th></tr></thead>
+					<tbody>
+						{(overview.data?.webAnalytics.sites ?? []).map((row) => <tr key={row.host}>
+							<td><button type="button" className="btn btn-link p-0 text-start" onClick={() => setHost(row.host)}><strong>{row.host}</strong></button></td>
+							<td>{row.pageViews}</td><td>{row.visitors}</td><td>{row.sessions}</td><td>{row.requests}</td>
+							<td><span className={row.errorRate >= .2 ? "text-danger" : ""}>{row.errors} <small className="text-secondary">({Math.round(row.errorRate * 100)}%)</small></span></td>
+							<td>{row.avgRequestTimeMs} ms</td><td>{formatBytes(row.bytesSent)}</td>
+						</tr>)}
+						{(overview.data?.webAnalytics.sites.length ?? 0) === 0 ? <tr><td colSpan={8} className="p-4 text-secondary">No site traffic matches this filter.</td></tr> : null}
+					</tbody>
+				</table>
+			</div>
+		</div>
+
+		<div className={styles.analysisGrid} hidden={analyticsView !== "visitors"}>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Top source IPs</h3><span className="text-secondary small">click a client to inspect</span></div>
+				<div className={styles.sourceList}>{sourceRows.map((row) => <button type="button" className={`${styles.sourceRow} btn btn-link text-start text-reset`} key={row.source} onClick={() => openSource(row.source)}><span><span className={styles.mono}>{row.source}</span><small>{row.hostCount} hosts · {formatBytes(row.bytes)} · peak {row.peakRequestsPerMinute}/min</small></span><span>{row.requests} req<small>{row.suspicious} suspicious</small></span><span><span className={`badge ${assessmentBadgeClass(row.level)}`}>{row.label}</span><small className="text-end">risk {row.maxRisk} · {row.uniquePaths} paths</small></span></button>)}{sourceRows.length === 0 ? <div className="p-3 text-secondary">No clients in this filter.</div> : null}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Devices</h3><span className="text-secondary small">page-view classification</span></div>
+				<div className={styles.analysisList}>{(overview.data?.webAnalytics.devices ?? []).map((row) => <div key={row.name}><span><strong>{row.name}</strong></span><span><strong>{row.count}</strong></span></div>)}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Browsers / clients</h3><span className="text-secondary small">page-view classification</span></div>
+				<div className={styles.analysisList}>{(overview.data?.webAnalytics.browsers ?? []).map((row) => <div key={row.name}><span><strong>{row.name}</strong></span><span><strong>{row.count}</strong></span></div>)}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Operating systems</h3><span className="text-secondary small">page-view classification</span></div>
+				<div className={styles.analysisList}>{(overview.data?.webAnalytics.operatingSystems ?? []).map((row) => <div key={row.name}><span><strong>{row.name}</strong></span><span><strong>{row.count}</strong></span></div>)}</div>
+			</div>
+		</div>
+
+		{analyticsView === "behavior" ? <div className="alert alert-info py-2 px-3 mb-0">Referrer and Accept-header tracking starts with this HYROVI build. Older retained log events can still contribute to page estimates, but historical referrer attribution is unavailable.</div> : null}
+		<div className={styles.analysisGrid} hidden={analyticsView !== "behavior"}>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Top pages</h3><span className="text-secondary small">estimated HTML page views</span></div>
+				<div className={styles.rankList}>{(overview.data?.webAnalytics.topPages ?? []).map((row) => <button type="button" key={[row.host, row.path].join("|")} onClick={() => { setHost(row.host); setSearch(row.path); }}><span><strong className={styles.mono}>{row.path}</strong><small>{row.host} · {row.visitors} visitors · avg {row.avgRequestTimeMs} ms</small></span><span><strong>{row.pageViews}</strong><small>views</small></span></button>)}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Referrers</h3><span className="text-secondary small">where page visits came from</span></div>
+				<div className={styles.statusGrid}>
+					<div><span>Direct</span><strong>{overview.data?.webAnalytics.referrers.direct ?? 0}</strong></div>
+					<div><span>External</span><strong>{overview.data?.webAnalytics.referrers.external ?? 0}</strong></div>
+					<div><span>Internal</span><strong>{overview.data?.webAnalytics.referrers.internal ?? 0}</strong></div>
+					<div><span>Sources</span><strong>{overview.data?.webAnalytics.referrers.topExternal.length ?? 0}</strong></div>
+				</div>
+				<div className={styles.analysisList}>{(overview.data?.webAnalytics.referrers.topExternal ?? []).map((row) => <div key={row.host}><span><strong>{row.host}</strong></span><span><strong>{row.count}</strong></span></div>)}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Landing pages</h3><span className="text-secondary small">first page in a 30-minute visit</span></div>
+				<div className={styles.rankList}>{(overview.data?.webAnalytics.entryPages ?? []).map((row) => <button type="button" key={[row.host, row.path].join("|")} onClick={() => { setHost(row.host); setSearch(row.path); }}><span><strong className={styles.mono}>{row.path}</strong><small>{row.host}</small></span><span><strong>{row.sessions}</strong><small>visits</small></span></button>)}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Exit pages</h3><span className="text-secondary small">last page in a 30-minute visit</span></div>
+				<div className={styles.rankList}>{(overview.data?.webAnalytics.exitPages ?? []).map((row) => <button type="button" key={[row.host, row.path].join("|")} onClick={() => { setHost(row.host); setSearch(row.path); }}><span><strong className={styles.mono}>{row.path}</strong><small>{row.host}</small></span><span><strong>{row.sessions}</strong><small>visits</small></span></button>)}</div>
+			</div>
+		</div>
+
+		<div className={styles.gridTwo} hidden={analyticsView !== "overview"}>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Request volume</h3><div><div className={styles.chartLegend}><span className={styles.legendItem}>All requests</span><span className={styles.legendItem}>Risk 40+</span></div>{overview.data && (events.data?.length ?? 0) < overview.data.requests ? <small className="text-secondary">Chart: latest {(events.data?.length ?? 0).toLocaleString()} of {overview.data.requests.toLocaleString()}</small> : null}</div></div>
 				<svg className={styles.chart} viewBox="0 0 1000 190" preserveAspectRatio="none" role="img" aria-label="Request volume timeline">
@@ -555,7 +689,7 @@ export default function SecurityDashboard() {
 			</div>
 		</div>
 
-		<div className={styles.gridTwo}>
+		<div className={styles.gridTwo} hidden={analyticsView !== "performance"}>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Latency trend</h3><span className="text-secondary small">average request time per bucket</span></div>
 				<svg className={styles.chartCompact} viewBox="0 0 1000 150" preserveAspectRatio="none" role="img" aria-label="Latency over time">
@@ -574,7 +708,7 @@ export default function SecurityDashboard() {
 			</div>
 		</div>
 
-		<div className={styles.panel}>
+		<div className={styles.panel} hidden={analyticsView !== "threats"}>
 			<div className={styles.panelHeader}>
 				<h3>Attack / incident sessions</h3>
 				<div className={styles.incidentHeaderTools}>
@@ -604,7 +738,7 @@ export default function SecurityDashboard() {
 			</div>
 		</div>
 
-		<div className={styles.insightGrid}>
+		<div className={styles.insightGrid} hidden={analyticsView !== "overview"}>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Top destinations</h3><span className="text-secondary small">all analyzed traffic</span></div>
 				<div className={styles.rankList}>{hostStats.map((row) => <button type="button" key={row.name} onClick={() => setHost(row.name)}><span><strong>{row.name || "unknown"}</strong><small>{row.sourceCount} sources · {formatBytes(row.bytes)} · avg {row.avgRequestTimeMs} ms</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious</small></span></button>)}{hostStats.length === 0 ? <div className="p-3 text-secondary">No destinations in this filter.</div> : null}</div>
@@ -619,7 +753,7 @@ export default function SecurityDashboard() {
 			</div>
 		</div>
 
-		<div className={styles.analysisGrid}>
+		<div className={styles.analysisGrid} hidden={analyticsView !== "performance"}>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Performance / latency</h3><span className="text-secondary small">full analyzed window</span></div>
 				<div className={styles.statusGrid}>
@@ -654,24 +788,24 @@ export default function SecurityDashboard() {
 			</div>
 		</div>
 
-		<div className={styles.analysisGrid}>
-			<div className={styles.panel}>
+		<div className={styles.analysisGrid} hidden={!(["behavior", "visitors", "threats"] as AnalyticsView[]).includes(analyticsView)}>
+			<div className={styles.panel} hidden={analyticsView !== "behavior"}>
 				<div className={styles.panelHeader}><h3>Top paths</h3><span className="text-secondary small">all requests, not only suspicious</span></div>
 				<div className={styles.rankList}>{(overview.data?.analytics.topPaths ?? []).slice(0, 10).map((row) => <button type="button" key={`${row.host}|${row.path}`} onClick={() => { setHost(row.host); setSearch(row.path); }}><span><strong className={styles.mono}>{row.path}</strong><small>{row.host} · {row.sources} sources · {row.methods.join(", ") || "—"}</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious · risk {row.maxRisk}</small></span></button>)}{(overview.data?.analytics.topPaths.length ?? 0) === 0 ? <div className="p-3 text-secondary">No path data in this window.</div> : null}</div>
 			</div>
 
-			<div className={styles.panel}>
+			<div className={styles.panel} hidden={analyticsView !== "visitors"}>
 				<div className={styles.panelHeader}><h3>User agents</h3><span className="text-secondary small">clients and automation</span></div>
 				<div className={styles.rankList}>{(overview.data?.analytics.topUserAgents ?? []).slice(0, 10).map((row) => <button type="button" key={row.userAgent} onClick={() => setSearch(row.userAgent)}><span><strong className={styles.uaText}>{row.userAgent}</strong><small>{row.sources} sources · max risk {row.maxRisk}</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious</small></span></button>)}{(overview.data?.analytics.topUserAgents.length ?? 0) === 0 ? <div className="p-3 text-secondary">No user-agent data in this window.</div> : null}</div>
 			</div>
 
-			<div className={styles.panel}>
+			<div className={styles.panel} hidden={analyticsView !== "threats"}>
 				<div className={styles.panelHeader}><h3>Detection signals</h3><span className="text-secondary small">why traffic is classified</span></div>
 				<div className={styles.analysisList}>{(overview.data?.analytics.topSignals ?? []).slice(0, 10).map((row) => <div key={row.id}><span><strong>{row.label}</strong><small>{humanizeSignal(row.id)} · {row.sources} sources · {row.hosts} hosts</small></span><span><strong>{row.hits}</strong><small>max score {row.maxScore}</small></span></div>)}{(overview.data?.analytics.topSignals.length ?? 0) === 0 ? <div className="p-3 text-secondary">No detection signals in this window.</div> : null}</div>
 			</div>
 		</div>
 
-		<div className={styles.panel}>
+		<div className={styles.panel} hidden={analyticsView !== "requests"}>
 			<div className={styles.panelHeader}><h3>Request timeline</h3><span className="text-secondary small">{events.isFetching ? "Updating…" : `${events.data?.length ?? 0} requests`}</span></div>
 			<div className={`${styles.timeline} table-responsive`}><table className="table table-vcenter"><thead><tr><th>Time</th><th>Source</th><th>Request → destination</th><th>Group</th><th>Status</th><th>Risk</th><th>Traffic</th><th /></tr></thead><tbody>
 				{(events.data ?? []).map((event, index) => <tr key={event.requestId || `${event.timestamp}-${index}`}>

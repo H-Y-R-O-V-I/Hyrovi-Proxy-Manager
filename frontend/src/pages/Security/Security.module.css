@@ -1,17 +1,26 @@
 .shell { display: flex; flex-direction: column; gap: 18px; }
+.shell [hidden] { display: none !important; }
 .tabs { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--tblr-border-color); border-radius: 6px; width: fit-content; background: var(--tblr-bg-surface); }
 .tab { border: 0; background: transparent; color: var(--tblr-secondary); padding: 8px 14px; border-radius: 4px; font-weight: 600; }
 .tabActive { background: var(--tblr-bg-surface-secondary); color: var(--tblr-body-color); }
 .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .hero h1 { margin: 0; font-size: 1.55rem; }
 .hero p { margin: 5px 0 0; color: var(--tblr-secondary); }
+.analyticsNav { display: flex; gap: 4px; overflow-x: auto; padding: 4px; border: 1px solid var(--tblr-border-color); border-radius: 6px; background: var(--tblr-bg-surface); scrollbar-width: thin; }
+.analyticsNav button { flex: 0 0 auto; min-width: 112px; border: 0; background: transparent; color: var(--tblr-secondary); padding: 8px 10px; border-radius: 4px; text-align: left; }
+.analyticsNav button:hover { background: var(--tblr-bg-surface-secondary); color: var(--tblr-body-color); }
+.analyticsNav button strong, .analyticsNav button small { display: block; }
+.analyticsNav button small { margin-top: 2px; font-size: .66rem; color: var(--tblr-secondary); }
+.analyticsNav .analyticsNavActive { background: var(--tblr-bg-surface-secondary); color: var(--tblr-body-color); box-shadow: inset 0 0 0 1px var(--tblr-border-color); }
 
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .metric { border: 1px solid var(--tblr-border-color); border-radius: 6px; padding: 14px; background: var(--tblr-bg-surface); min-width: 0; }
 .metricLabel { color: var(--tblr-secondary); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
 .metricValue { font-size: 1.65rem; font-weight: 700; margin-top: 4px; overflow-wrap: anywhere; }
 .metric small { display: block; margin-top: 3px; color: var(--tblr-secondary); font-size: .68rem; }
-.filters { display: grid; grid-template-columns: 1.4fr 1fr 1fr .7fr .7fr .7fr 1fr auto; gap: 8px; padding: 12px; border: 1px solid var(--tblr-border-color); border-radius: 6px; background: var(--tblr-bg-surface); }
+.filterBar { display: grid; grid-template-columns: minmax(120px, 180px) minmax(220px, 1fr) auto; gap: 8px; align-items: center; padding: 10px 12px; border: 1px solid var(--tblr-border-color); border-radius: 6px; background: var(--tblr-bg-surface); }
+.filterBarActions { display: flex; gap: 7px; justify-content: flex-end; }
+.filters { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 1fr) minmax(130px, .7fr) minmax(120px, .7fr) minmax(140px, .8fr) minmax(160px, 1fr); gap: 8px; padding: 12px; border: 1px solid var(--tblr-border-color); border-radius: 6px; background: var(--tblr-bg-surface); }
 .gridTwo { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 12px; }
 .insightGrid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr) minmax(220px, .8fr); gap: 12px; }
 .analysisGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -180,13 +189,20 @@
 
 @media (max-width: 991px) {
 	.metrics, .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.filterBar { grid-template-columns: 160px minmax(0, 1fr); }
+	.filterBarActions { grid-column: 1 / -1; justify-content: flex-start; }
 	.gridTwo, .groupLayout { grid-template-columns: 1fr; }
 	.hostGridHeader { align-items: stretch; flex-direction: column; }
 	.hostTools { justify-content: flex-start; }
 }
 
 @media (max-width: 575px) {
-	.metrics, .filters, .editorGrid, .hostGrid, .groupMetrics, .policyPreview, .insightGrid, .analysisGrid { grid-template-columns: 1fr; }
+	.metrics, .filters, .editorGrid, .hostGrid, .groupMetrics, .policyPreview, .insightGrid, .analysisGrid, .filterBar { grid-template-columns: 1fr; }
+	.filterBarActions { grid-column: auto; width: 100%; }
+	.filterBarActions .btn { flex: 1; }
+	.analyticsNav { margin-left: -2px; margin-right: -2px; }
+	.analyticsNav button { min-width: 104px; }
+	.analyticsNav button small { display: none; }
 	.insightGrid > :first-child { grid-column: auto; }
 	.policyPreview > div + div { border-left: 0; border-top: 1px solid var(--tblr-border-color); }
 	.hero { flex-direction: column; }
