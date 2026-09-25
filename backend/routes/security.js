@@ -424,7 +424,17 @@ router.get("/diagnostics", async (req, res, next) => {
 
 router.get("/overview", async (req, res, next) => {
 	try {
-		const data = await internalSecurity.getOverview(res.locals.access);
+		const data = await internalSecurity.getOverview(res.locals.access, {
+			minRisk: req.query.min_risk,
+			maxRisk: req.query.max_risk,
+			host: req.query.host,
+			ip: req.query.ip,
+			method: req.query.method,
+			status: req.query.status,
+			groupId: req.query.group_id,
+			search: req.query.search,
+			sinceMinutes: req.query.since_minutes,
+		});
 		res.status(200).send(data);
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);

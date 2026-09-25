@@ -208,7 +208,11 @@ export default function SecurityDashboard() {
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 	const [incidentFilter, setIncidentFilter] = useState<"all" | "crawler" | "blocked" | "critical" | "unanswered">("all");
 
-	const overview = useQuery({ queryKey: ["security-overview"], queryFn: getSecurityOverview, refetchInterval: 5000 });
+	const overview = useQuery({
+		queryKey: ["security-overview", search, ip, host, method, status, minRisk, groupId, sinceMinutes],
+		queryFn: () => getSecurityOverview({ search, ip, host, method, status: status || undefined, minRisk, groupId, sinceMinutes }),
+		refetchInterval: 5000,
+	});
 	const groups = useQuery({ queryKey: ["security-host-groups"], queryFn: getSecurityHostGroups, refetchInterval: 15000 });
 	const events = useQuery({
 		queryKey: ["security-dashboard-events", search, ip, host, method, status, minRisk, groupId, sinceMinutes],
@@ -230,6 +234,12 @@ export default function SecurityDashboard() {
 	const sourceDetail = useQuery({
 		queryKey: ["security-source-detail", selectedSourceIp],
 		queryFn: () => getSecurityEvents({ limit: 2000, ip: selectedSourceIp || undefined, sinceMinutes: 60 }),
+		enabled: Boolean(selectedSourceIp),
+		refetchInterval: selectedSourceIp ? 5000 : false,
+	});
+	const sourceOverview = useQuery({
+		queryKey: ["security-source-overview", selectedSourceIp],
+		queryFn: () => getSecurityOverview({ ip: selectedSourceIp || undefined, sinceMinutes: 60 }),
 		enabled: Boolean(selectedSourceIp),
 		refetchInterval: selectedSourceIp ? 5000 : false,
 	});
@@ -272,9 +282,9 @@ export default function SecurityDashboard() {
 		return true;
 	}), [attackSessions, incidentFilter]);
 	const unansweredIncidents = useMemo(() => attackSessions.filter((session) => session.activeResponse === null).length, [attackSessions]);
-	const crawlerAttackCount = useMemo(() => sourceStats.filter((row) => row.crawlerAttack).length, [sourceStats]);
-	const totalBytes = useMemo(() => (events.data ?? []).reduce((sum, event) => sum + Math.max(0, event.bytesSent || 0), 0), [events.data]);
-	const destinationCount = useMemo(() => new Set((events.data ?? []).map((event) => event.host).filter(Boolean)).size, [events.data]);
+	const crawlerAttackCount = useMemo(() => attackSessions.filter((session) => session.signals.includes("crawler_attack")).length, [attackSessions]);
+	const totalBytes = overview.data?.analytics.responseBytes ?? (events.data ?? []).reduce((sum, event) => sum + Math.max(0, event.bytesSent || 0), 0);
+	const destinationCount = overview.data?.analytics.observedHosts ?? new Set((events.data ?? []).map((event) => event.host).filter(Boolean)).size;
 	const hostStats = useMemo(() => {
 		const map = new Map<string, { requests: number; suspicious: number; maxRisk: number; sources: Set<string>; bytes: number }>();
 		for (const event of events.data ?? []) {
@@ -310,6 +320,11 @@ export default function SecurityDashboard() {
 	const suspiciousPoints = polyline(buckets.map((bucket) => bucket.suspicious));
 
 	const sourceAssessment = useMemo(() => assessSource(sourceDetail.data ?? []), [sourceDetail.data]);
+	const sourceOverviewRow = useMemo(
+		() => sourceOverview.data?.analytics.trafficSources.find((row) => row.ip === selectedSourceIp) ?? null,
+		[sourceOverview.data, selectedSourceIp],
+	);
+	const sourceListIsSampled = (sourceOverview.data?.requests ?? 0) > (sourceDetail.data?.length ?? 0);
 	const sourceDestinations = useMemo(() => {
 		const map = new Map<string, { requests: number; suspicious: number; maxRisk: number }>();
 		for (const event of sourceDetail.data ?? []) {
@@ -451,10 +466,14 @@ export default function SecurityDashboard() {
 			<button type="button" className="btn btn-outline-secondary" onClick={refresh}><IconRefresh size={17} /> Refresh</button>
 		</div>
 
+		{overview.data?.window.analysisLimitReached ? <div className="alert alert-warning py-2 px-3">
+			The backend analysis reached {overview.data.window.analysisLimit.toLocaleString()} loaded events. Counts for this filter may be partial; the request table is independently capped at {overview.data.window.listLimit.toLocaleString()} rows.
+		</div> : null}
+
 		<div className={styles.metrics}>
-			<div className={styles.metric}><div className={styles.metricLabel}>Requests in window</div><div className={styles.metricValue}>{events.data?.length ?? 0}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Unique source IPs</div><div className={styles.metricValue}>{sourceStats.length}</div></div>
-			<div className={styles.metric}><div className={styles.metricLabel}>Suspicious</div><div className={styles.metricValue}>{(events.data ?? []).filter((event) => event.risk >= 40).length}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Requests in window</div><div className={styles.metricValue}>{overview.data?.requests ?? events.data?.length ?? 0}</div><small>{overview.data && (events.data?.length ?? 0) < overview.data.requests ? `${(events.data?.length ?? 0).toLocaleString()} listed` : "full listed window"}</small></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Unique source IPs</div><div className={styles.metricValue}>{overview.data?.analytics.observedSources ?? sourceStats.length}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Suspicious</div><div className={styles.metricValue}>{overview.data?.suspicious ?? (events.data ?? []).filter((event) => event.risk >= 40).length}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Attack sessions</div><div className={styles.metricValue}>{attackSessions.length}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Crawler attacks</div><div className={styles.metricValue}>{crawlerAttackCount}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Active blocks</div><div className={styles.metricValue}>{overview.data?.activeBlocks ?? 0}</div></div>
@@ -477,7 +496,7 @@ export default function SecurityDashboard() {
 
 		<div className={styles.gridTwo}>
 			<div className={styles.panel}>
-				<div className={styles.panelHeader}><h3>Request volume</h3><div className={styles.chartLegend}><span className={styles.legendItem}>All requests</span><span className={styles.legendItem}>Risk 40+</span></div></div>
+				<div className={styles.panelHeader}><h3>Request volume</h3><div><div className={styles.chartLegend}><span className={styles.legendItem}>All requests</span><span className={styles.legendItem}>Risk 40+</span></div>{overview.data && (events.data?.length ?? 0) < overview.data.requests ? <small className="text-secondary">Chart: latest {(events.data?.length ?? 0).toLocaleString()} of {overview.data.requests.toLocaleString()}</small> : null}</div></div>
 				<svg className={styles.chart} viewBox="0 0 1000 190" preserveAspectRatio="none" role="img" aria-label="Request volume timeline">
 					<line x1="0" y1="180" x2="1000" y2="180" stroke="currentColor" opacity="0.15" />
 					<polyline points={requestPoints} fill="none" stroke="currentColor" strokeWidth="4" vectorEffect="non-scaling-stroke" />
@@ -576,19 +595,20 @@ export default function SecurityDashboard() {
 						</p>
 					</div>
 
+					{sourceListIsSampled ? <div className="alert alert-info py-2 px-3 mb-0">This client has {sourceOverview.data?.requests.toLocaleString()} matching requests in the 60-minute analysis. Detailed path/rate fields below use the latest {(sourceDetail.data?.length ?? 0).toLocaleString()} listed requests.</div> : null}
 					<div className={styles.detailGrid}>
-						<div><span>Requests · 60m</span><strong>{sourceAssessment.requests}</strong></div>
-						<div><span>Peak request rate</span><strong>{sourceAssessment.peakRequestsPerMinute}/60s</strong></div>
-						<div><span>Suspicious requests</span><strong>{sourceAssessment.suspicious}</strong></div>
-						<div><span>Max risk</span><strong>{sourceAssessment.maxRisk}</strong></div>
-						<div><span>Denied 401/403</span><strong>{sourceAssessment.denied}</strong></div>
-						<div><span>404 responses</span><strong>{sourceAssessment.missing}</strong></div>
-						<div><span>Destinations</span><strong>{sourceAssessment.hostCount}</strong></div>
-						<div><span>Unique paths</span><strong>{sourceAssessment.uniquePaths}</strong></div>
-						<div><span>First seen · 60m</span><strong>{formatTime(sourceAssessment.firstSeen)}</strong></div>
-						<div><span>Last seen</span><strong>{formatTime(sourceAssessment.lastSeen)}</strong></div>
+						<div><span>Requests · 60m</span><strong>{sourceOverview.data?.requests ?? sourceAssessment.requests}</strong></div>
+						<div><span>{sourceListIsSampled ? "Peak rate · listed" : "Peak request rate"}</span><strong>{sourceAssessment.peakRequestsPerMinute}/60s</strong></div>
+						<div><span>Suspicious requests</span><strong>{sourceOverview.data?.suspicious ?? sourceAssessment.suspicious}</strong></div>
+						<div><span>Max risk</span><strong>{sourceOverviewRow?.maxRisk ?? sourceAssessment.maxRisk}</strong></div>
+						<div><span>{sourceListIsSampled ? "Denied 401/403 · listed" : "Denied 401/403"}</span><strong>{sourceAssessment.denied}</strong></div>
+						<div><span>{sourceListIsSampled ? "404 responses · listed" : "404 responses"}</span><strong>{sourceAssessment.missing}</strong></div>
+						<div><span>Destinations</span><strong>{sourceOverview.data?.analytics.observedHosts ?? sourceAssessment.hostCount}</strong></div>
+						<div><span>{sourceListIsSampled ? "Unique paths · listed" : "Unique paths"}</span><strong>{sourceAssessment.uniquePaths}</strong></div>
+						<div><span>First seen · 60m</span><strong>{formatTime(sourceOverviewRow?.firstSeen ?? sourceAssessment.firstSeen)}</strong></div>
+						<div><span>Last seen</span><strong>{formatTime(sourceOverviewRow?.lastSeen ?? sourceAssessment.lastSeen)}</strong></div>
 						<div><span>Crawler detected</span><strong>{sourceAssessment.crawlerDetected ? "Yes" : "No"}</strong></div>
-						<div><span>Response traffic</span><strong>{formatBytes(sourceAssessment.bytes)}</strong></div>
+						<div><span>Response traffic</span><strong>{formatBytes(sourceOverview.data?.analytics.responseBytes ?? sourceAssessment.bytes)}</strong></div>
 					</div>
 
 					{sourceActiveBlock ? <div className={styles.detailSection}>

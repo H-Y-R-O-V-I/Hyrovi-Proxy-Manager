@@ -249,7 +249,7 @@ const SecuritySettings = () => {
 
 	const overview = useQuery({
 		queryKey: ["security-overview"],
-		queryFn: getSecurityOverview,
+		queryFn: () => getSecurityOverview(),
 		refetchInterval: POLL_MS,
 	});
 	const diagnostics = useQuery({

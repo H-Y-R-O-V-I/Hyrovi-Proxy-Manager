@@ -29,9 +29,11 @@ const GIB = 1024 * 1024 * 1024;
 const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v6`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
+const MAX_ANALYSIS_SCAN_BYTES = 8 * 1024 * 1024;
 const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 250;
-const MAX_EVENT_LIMIT = 2000;
+const MAX_EVENT_LIST_LIMIT = 2000;
+const MAX_ANALYSIS_EVENT_LIMIT = 20_000;
 const SESSION_WINDOW_MS = 5 * 60 * 1000;
 const REQUEST_CONTEXT_WINDOW_MS = 60_000;
 const MONITOR_INTERVAL_MS = 5_000;
@@ -251,12 +253,13 @@ const readTail = async (filePath, maxBytes = MAX_SCAN_BYTES) => {
 	}
 };
 
-const readSecurityEventWindow = async () => {
-	const current = await readTail(SECURITY_LOG_FILE, MAX_SCAN_BYTES);
+const readSecurityEventWindow = async (maxBytes = MAX_SCAN_BYTES) => {
+	const boundedMaxBytes = clamp(Number(maxBytes) || MAX_SCAN_BYTES, 64 * 1024, MAX_ANALYSIS_SCAN_BYTES);
+	const current = await readTail(SECURITY_LOG_FILE, boundedMaxBytes);
 	const currentBytes = Buffer.byteLength(current, "utf8");
-	if (currentBytes >= MAX_SCAN_BYTES) return current;
+	if (currentBytes >= boundedMaxBytes) return current;
 
-	const previous = await readTail(`${SECURITY_LOG_FILE}.1`, MAX_SCAN_BYTES - currentBytes);
+	const previous = await readTail(`${SECURITY_LOG_FILE}.1`, boundedMaxBytes - currentBytes);
 	if (!previous) return current;
 	if (!current) return previous;
 	return `${previous.replace(/\n$/, "")}\n${current}`;
@@ -467,9 +470,9 @@ const enrichEvents = (events, detectionRules = []) => {
 	});
 };
 
-const loadLiveEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
+const loadLiveEvents = async (limit = DEFAULT_EVENT_LIMIT, maxBytes = MAX_SCAN_BYTES) => {
 	const [text, detectionRules] = await Promise.all([
-		readSecurityEventWindow(),
+		readSecurityEventWindow(maxBytes),
 		internalSecurityDetectionRules.listRulesForAnalysis(),
 	]);
 	if (!text) return [];
@@ -482,7 +485,7 @@ const loadLiveEvents = async (limit = DEFAULT_EVENT_LIMIT) => {
 		.filter((event) => event.ip && event.host);
 
 	const enriched = enrichEvents(parsed, detectionRules);
-	return enriched.slice(-clamp(limit, 1, MAX_EVENT_LIMIT)).reverse();
+	return enriched.slice(-clamp(limit, 1, MAX_ANALYSIS_EVENT_LIMIT)).reverse();
 };
 
 const rememberArchivedEvent = (event) => {
@@ -633,9 +636,9 @@ const purgeArchivedEvents = async (retentionDays) =>
 		return removed;
 	});
 
-const loadEventHistory = async (limit, policy) => {
+const loadEventHistory = async (limit, policy, liveMaxBytes = MAX_SCAN_BYTES) => {
 	const [live, archived] = await Promise.all([
-		loadLiveEvents(limit),
+		loadLiveEvents(limit, liveMaxBytes),
 		loadArchivedEvents(limit, policy.eventRetentionDays),
 	]);
 	const byId = new Map();
@@ -1417,7 +1420,7 @@ const decorateEventsWithHostPolicy = (events, context) =>
 		})
 		.filter((event) => event.securityMode !== "off");
 const monitorThreats = async () => {
-	const events = await loadLiveEvents(MAX_EVENT_LIMIT);
+	const events = await loadLiveEvents(MAX_EVENT_LIST_LIMIT);
 	const policy = await readPolicyUnsafe();
 	if (!monitorPrimed) {
 		await persistArchivedEventsBestEffort(events, policy);
@@ -1783,6 +1786,8 @@ const buildAttackAnalytics = (events) => {
 	const hostMap = new Map();
 	const signalMap = new Map();
 	const methodMap = new Map();
+	const observedHostSet = new Set();
+	let responseBytes = 0;
 	const riskLevels = {
 		normal: 0,
 		low: 0,
@@ -1793,6 +1798,8 @@ const buildAttackAnalytics = (events) => {
 
 	for (const event of events) {
 		const severity = Object.hasOwn(riskLevels, event.severity) ? event.severity : "normal";
+		if (event.host) observedHostSet.add(event.host);
+		responseBytes += Math.max(0, Number(event.bytesSent) || 0);
 		riskLevels[severity] += 1;
 
 		const sourceIp = event.ip || "(unknown)";
@@ -1898,6 +1905,8 @@ const buildAttackAnalytics = (events) => {
 	return {
 		suspiciousRequests: suspiciousEvents.length,
 		observedSources: [...trafficSourceMap.keys()].filter((ip) => ip !== "(unknown)").length,
+		observedHosts: observedHostSet.size,
+		responseBytes,
 		uniqueSources: sourceMap.size,
 		uniqueTargets: targetMap.size,
 		riskLevels,
@@ -2236,6 +2245,45 @@ const getEnabledHosts = (model) =>
 		.withGraphFetched(`[${model.defaultExpand.join(", ")}]`)
 		.orderBy(...model.defaultOrder);
 
+const normalizeEventFilterOptions = (options = {}) => {
+	const minRisk = clamp(Number.parseInt(options.minRisk, 10) || 0, 0, 100);
+	const maxRisk = clamp(Number.parseInt(options.maxRisk, 10) || 100, minRisk, 100);
+	const sinceMinutes = clamp(Number.parseInt(options.sinceMinutes, 10) || 0, 0, 43_200);
+	return {
+		minRisk,
+		maxRisk,
+		host: normalizeHostname(options.host),
+		ip: String(options.ip || "").trim(),
+		method: String(options.method || "").trim().toUpperCase(),
+		status: Number.parseInt(options.status, 10),
+		groupId: String(options.groupId || "").trim(),
+		search: String(options.search || "").trim().toLowerCase(),
+		since: sinceMinutes ? Date.now() - sinceMinutes * 60_000 : 0,
+		sinceMinutes,
+	};
+};
+
+const filterSecurityEvents = (events, options = {}) => {
+	const filters = normalizeEventFilterOptions(options);
+	return events.filter((event) => {
+		if (event.risk < filters.minRisk || event.risk > filters.maxRisk) return false;
+		if (filters.host && normalizeHostname(event.host) !== filters.host) return false;
+		if (filters.ip && !String(event.ip || "").includes(filters.ip)) return false;
+		if (filters.method && event.method !== filters.method) return false;
+		if (Number.isInteger(filters.status) && filters.status > 0 && event.status !== filters.status) return false;
+		if (filters.groupId && event.groupId !== filters.groupId) return false;
+		if (filters.since && (!event.timestamp || new Date(event.timestamp).getTime() < filters.since)) return false;
+		if (filters.search) {
+			const haystack = [event.host, event.path, event.ip, event.method, event.userAgent, event.requestId]
+				.filter(Boolean)
+				.join(" ")
+				.toLowerCase();
+			if (!haystack.includes(filters.search)) return false;
+		}
+		return true;
+	});
+};
+
 const internalSecurity = {
 	prepare: async () => {
 		await ensureSecurityDir();
@@ -2410,7 +2458,7 @@ const internalSecurity = {
 
 	getDetectionRuleAnalytics: async (access, options = {}) => {
 		await access.can("logs:list");
-		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIMIT, 1000));
+		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIST_LIMIT, 1000));
 		const [policy, rules, reviews] = await Promise.all([
 			readPolicyUnsafe(),
 			internalSecurityDetectionRules.listRules(),
@@ -2446,7 +2494,7 @@ const internalSecurity = {
 
 	getDetectionRuleSimulation: async (access, data, options = {}) => {
 		await access.can("logs:list");
-		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIMIT, 1000));
+		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIST_LIMIT, 1000));
 		const policy = await readPolicyUnsafe();
 		const events = await loadEventHistory(limit, policy);
 		const simulation = internalSecurityDetectionRules.simulateRule(data, events);
@@ -2472,7 +2520,7 @@ const internalSecurity = {
 		if (!rule) throw new errs.ItemNotFoundError(normalizedRuleId);
 
 		const policy = await readPolicyUnsafe();
-		const events = await loadEventHistory(MAX_EVENT_LIMIT, policy);
+		const events = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
 		const event = events.find((entry) => entry.requestId === normalizedRequestId);
 		if (!event) throw new errs.ItemNotFoundError(normalizedRequestId);
 		const simulation = internalSecurityDetectionRules.simulateRule({ ...rule, stage: "preview" }, [event]);
@@ -2530,39 +2578,14 @@ const internalSecurity = {
 
 	getEvents: async (access, options = {}) => {
 		await access.can("logs:list");
-		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIMIT);
-		const minRisk = clamp(Number.parseInt(options.minRisk, 10) || 0, 0, 100);
-		const maxRisk = clamp(Number.parseInt(options.maxRisk, 10) || 100, minRisk, 100);
-		const host = normalizeHostname(options.host);
-		const ip = String(options.ip || "").trim();
-		const method = String(options.method || "").trim().toUpperCase();
-		const status = Number.parseInt(options.status, 10);
-		const groupId = String(options.groupId || "").trim();
-		const search = String(options.search || "").trim().toLowerCase();
-		const sinceMinutes = clamp(Number.parseInt(options.sinceMinutes, 10) || 0, 0, 43_200);
-		const since = sinceMinutes ? Date.now() - sinceMinutes * 60_000 : 0;
+		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIST_LIMIT);
 		const policy = await readPolicyUnsafe();
-		const events = await loadEventHistory(limit, policy);
+		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
-		return decorateEventsWithHostPolicy(events, hostPolicyContext).filter((event) => {
-			if (event.risk < minRisk || event.risk > maxRisk) return false;
-			if (host && normalizeHostname(event.host) !== host) return false;
-			if (ip && !String(event.ip || "").includes(ip)) return false;
-			if (method && event.method !== method) return false;
-			if (Number.isInteger(status) && status > 0 && event.status !== status) return false;
-			if (groupId && event.groupId !== groupId) return false;
-			if (since && (!event.timestamp || new Date(event.timestamp).getTime() < since)) return false;
-			if (search) {
-				const haystack = [event.host, event.path, event.ip, event.method, event.userAgent, event.requestId]
-					.filter(Boolean)
-					.join(" ")
-					.toLowerCase();
-				if (!haystack.includes(search)) return false;
-			}
-			return true;
-		});
+		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
+		return filterSecurityEvents(events, options).slice(0, limit);
 	},
-	getOverview: async (access) => {
+	getOverview: async (access, options = {}) => {
 		await access.can("logs:list");
 		const [blocks, rateLimits, challenges, policy, rawEscalations] = await Promise.all([
 			purgeExpired(),
@@ -2573,9 +2596,18 @@ const internalSecurity = {
 		]);
 		const activeEscalations = Object.values(pruneEscalationStates(rawEscalations, rateLimits, policy))
 			.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
+		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
-		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
+		const decoratedEvents = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
+		const filters = normalizeEventFilterOptions(options);
+		const events = filterSecurityEvents(decoratedEvents, options);
+		const oldestLoadedMs = rawEvents.reduce((oldest, event) => {
+			const timestamp = parseTimestamp(event.timestamp)?.getTime();
+			return Number.isFinite(timestamp) ? Math.min(oldest, timestamp) : oldest;
+		}, Number.POSITIVE_INFINITY);
+		const analysisLimitReached =
+			rawEvents.length >= MAX_ANALYSIS_EVENT_LIMIT &&
+			(!filters.since || !Number.isFinite(oldestLoadedMs) || oldestLoadedMs > filters.since);
 		const suspicious = events.filter((event) => event.risk >= 40);
 		const critical = events.filter((event) => event.risk >= 80);
 		const publicSessions = buildAttackSessions(events)
@@ -2586,7 +2618,11 @@ const internalSecurity = {
 		return {
 			window: {
 				analyzedRequests: events.length,
-				maxBytes: MAX_SCAN_BYTES,
+				loadedRequests: rawEvents.length,
+				listLimit: MAX_EVENT_LIST_LIMIT,
+				analysisLimit: MAX_ANALYSIS_EVENT_LIMIT,
+				analysisLimitReached,
+				maxBytes: MAX_ANALYSIS_SCAN_BYTES,
 				sessionWindowMs: SESSION_WINDOW_MS,
 				eventRetentionDays: policy.eventRetentionDays,
 				eventArchiveMinRisk: policy.eventArchiveMinRisk,
@@ -2619,7 +2655,7 @@ const internalSecurity = {
 			readEscalationsUnsafe(),
 		]);
 		const escalation = pruneEscalationStates(rawEscalations, rateLimits, policy);
-		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
+		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const session = buildAttackSessions(events).find((entry) => entry.id === sessionId);
@@ -2659,7 +2695,7 @@ const internalSecurity = {
 			readEscalationsUnsafe(),
 		]);
 		const escalation = pruneEscalationStates(rawEscalations, rateLimits, policy);
-		const rawEvents = await loadEventHistory(MAX_EVENT_LIMIT, policy);
+		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const event = events.find((entry) => entry.requestId === id);

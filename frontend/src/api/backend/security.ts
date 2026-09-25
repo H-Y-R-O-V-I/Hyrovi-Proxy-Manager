@@ -290,6 +290,8 @@ export interface SecurityDiagnostics {
 export interface SecurityAttackAnalytics {
 	suspiciousRequests: number;
 	observedSources: number;
+	observedHosts: number;
+	responseBytes: number;
 	uniqueSources: number;
 	uniqueTargets: number;
 	riskLevels: Record<"normal" | "low" | "medium" | "high" | "critical", number>;
@@ -344,6 +346,10 @@ export interface SecurityAttackAnalytics {
 export interface SecurityOverview {
 	window: {
 		analyzedRequests: number;
+		loadedRequests: number;
+		listLimit: number;
+		analysisLimit: number;
+		analysisLimitReached: boolean;
 		maxBytes: number;
 		sessionWindowMs: number;
 		eventRetentionDays: number;
@@ -607,8 +613,21 @@ export interface SecurityBlock {
 	expiresAt: string;
 }
 
-export async function getSecurityOverview(): Promise<SecurityOverview> {
-	return await api.get({ url: "/security/overview" });
+export async function getSecurityOverview(filters: Omit<SecurityEventFilters, "limit"> = {}): Promise<SecurityOverview> {
+	return await api.get({
+		url: "/security/overview",
+		params: {
+			minRisk: filters.minRisk,
+			maxRisk: filters.maxRisk,
+			host: filters.host,
+			ip: filters.ip,
+			method: filters.method,
+			status: filters.status,
+			groupId: filters.groupId,
+			search: filters.search,
+			sinceMinutes: filters.sinceMinutes,
+		},
+	});
 }
 
 export async function getSecurityDiagnostics(): Promise<SecurityDiagnostics> {

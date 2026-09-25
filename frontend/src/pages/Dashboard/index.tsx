@@ -44,7 +44,7 @@ const Dashboard = () => {
 	const navigate = useNavigate();
 	const security = useQuery({
 		queryKey: ["security-overview"],
-		queryFn: getSecurityOverview,
+		queryFn: () => getSecurityOverview(),
 		enabled: isAdmin,
 		refetchInterval: 5000,
 		retry: false,
