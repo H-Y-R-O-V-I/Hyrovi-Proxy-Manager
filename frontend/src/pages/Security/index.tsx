@@ -1422,7 +1422,7 @@ const Security = () => {
 										className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"}
 										disabled={
 											rule.stage === "preview"
-												? promoteDetectionRule.isPending || (rule.promotionGate.enabled && (!analytics || !analytics.promotionGate.ready))
+												? promoteDetectionRule.isPending || (rule.promotionGate.enabled && !analytics?.promotionGate.ready)
 												: setDetectionRuleStage.isPending
 										}
 										title={
@@ -1508,20 +1508,20 @@ const Security = () => {
 									</div>
 									<div className="row g-2">
 										<div className="col-6 col-lg-2">
-											<label className="form-label">Min hits</label>
-											<input className="form-control" name="gate_min_hits" type="number" min={0} max={1000} defaultValue={selectedRuleReviewRule.promotionGate.minObservedHits} />
+											<label className="form-label" htmlFor="hyrovi-sec-review-gate-min-hits">Min hits</label>
+											<input id="hyrovi-sec-review-gate-min-hits" className="form-control" name="gate_min_hits" type="number" min={0} max={1000} defaultValue={selectedRuleReviewRule.promotionGate.minObservedHits} />
 										</div>
 										<div className="col-6 col-lg-2">
-											<label className="form-label">Min reviews</label>
-											<input className="form-control" name="gate_min_reviews" type="number" min={0} max={100} defaultValue={selectedRuleReviewRule.promotionGate.minReviews} />
+											<label className="form-label" htmlFor="hyrovi-sec-review-gate-min-reviews">Min reviews</label>
+											<input id="hyrovi-sec-review-gate-min-reviews" className="form-control" name="gate_min_reviews" type="number" min={0} max={100} defaultValue={selectedRuleReviewRule.promotionGate.minReviews} />
 										</div>
 										<div className="col-6 col-lg-3">
-											<label className="form-label">Min confirmed attacks</label>
-											<input className="form-control" name="gate_min_confirmed" type="number" min={0} max={100} defaultValue={selectedRuleReviewRule.promotionGate.minConfirmedAttacks} />
+											<label className="form-label" htmlFor="hyrovi-sec-review-gate-min-confirmed">Min confirmed attacks</label>
+											<input id="hyrovi-sec-review-gate-min-confirmed" className="form-control" name="gate_min_confirmed" type="number" min={0} max={100} defaultValue={selectedRuleReviewRule.promotionGate.minConfirmedAttacks} />
 										</div>
 										<div className="col-6 col-lg-3">
-											<label className="form-label">Max false positive %</label>
-											<input className="form-control" name="gate_max_fp" type="number" min={0} max={100} step={0.1} defaultValue={selectedRuleReviewRule.promotionGate.maxFalsePositivePercent} />
+											<label className="form-label" htmlFor="hyrovi-sec-review-gate-max-fp">Max false positive %</label>
+											<input id="hyrovi-sec-review-gate-max-fp" className="form-control" name="gate_max_fp" type="number" min={0} max={100} step={0.1} defaultValue={selectedRuleReviewRule.promotionGate.maxFalsePositivePercent} />
 										</div>
 										<div className="col-12 col-lg-2 d-grid align-items-end">
 											<button className="btn btn-outline-primary" type="submit" disabled={updateDetectionRuleGate.isPending}>Save gate</button>
