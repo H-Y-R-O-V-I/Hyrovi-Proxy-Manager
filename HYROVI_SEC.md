@@ -32,6 +32,8 @@ The first implementation adds:
 - protection against automatically blocking RFC1918/link-local/loopback source addresses;
 - trusted exact IP/CIDR sources that remain observable but are excluded from automatic rate limits and blocking;
 - per-proxy-host security modes (`Off`, `Observe`, `Protect`, `Strict`) stored outside the NPM schema, with host-specific soft/hard thresholds, response durations, challenge duration and proof-of-work difficulty;
+- host groups that apply shared IP/CIDR access controls and shared security modes to many Proxy Hosts at once;
+- per-host IP access overrides with `inherit`, `open`, `allowlist` and `denylist` semantics; effective access precedence is host override → group → open default;
 - endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
@@ -118,6 +120,8 @@ HYROVI Sec owns:
 - `/data/nginx/hyrovi-security/rate-limits.json`
 - `/data/nginx/hyrovi-security/rate-limited-ips.geo`
 - `/data/nginx/hyrovi-security/policy.json`
+- `/data/nginx/hyrovi-security/host-groups.json` (group membership plus direct host access overrides)
+- `/data/nginx/hyrovi-security/host-groups-http.conf` and `host-acl/*.conf` (generated Nginx IP/CIDR enforcement)
 - `/data/nginx/hyrovi-security/escalations.json` (persistent soft-limit escalation counters)
 - `/data/nginx/hyrovi-security/challenges.json` (active adaptive challenge state)
 - `/data/nginx/hyrovi-security/trusted-devices.json` (trusted Ed25519 public keys and app scopes)

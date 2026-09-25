@@ -565,6 +565,38 @@ router
 		}
 	});
 router
+	.route("/host-access/:host_id")
+	.get(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurityHostGroups.getHostAccess(res.locals.access, req.params.host_id));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.put(async (req, res, next) => {
+		try {
+			res.status(200).send(
+				await internalSecurityHostGroups.updateHostAccess(res.locals.access, req.params.host_id, {
+					accessMode: req.body?.access_mode,
+					sources: req.body?.sources,
+				}),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.delete(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurityHostGroups.deleteHostAccess(res.locals.access, req.params.host_id));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router
 	.route("/host-groups")
 	.get(async (req, res, next) => {
 		try {

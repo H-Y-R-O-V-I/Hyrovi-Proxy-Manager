@@ -18,6 +18,7 @@ import {
 	SSLOptionsFields,
 } from "src/components";
 import {
+	getSecurityHostAccess,
 	getSecurityHostPolicy,
 	getSecurityHostPolicyDefaults,
 	type SecurityHostMode,
@@ -48,6 +49,11 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		queryFn: () => getSecurityHostPolicy(id as number),
 		enabled: id !== "new",
 	});
+	const securityHostAccess = useQuery({
+		queryKey: ["security-host-access", id],
+		queryFn: () => getSecurityHostAccess(id as number),
+		enabled: id !== "new",
+	});
 	const { mutate: setProxyHost } = useSetProxyHost();
 	const [errorMsg, setErrorMsg] = useState<ReactNode | null>(null);
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -58,6 +64,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		setErrorMsg(null);
 
 		const {
+			hyroviAccessMode,
+			hyroviAccessSources,
 			hyroviSecurityMode,
 			hyroviAutoRateLimitThreshold,
 			hyroviAutoRateLimitMinutes,
@@ -68,6 +76,17 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 			hyroviEndpointRules,
 			...proxyHostValues
 		} = values;
+
+		const hyroviSecurityAccess = {
+			accessMode: hyroviAccessMode,
+			sources:
+				hyroviAccessMode === "allowlist" || hyroviAccessMode === "denylist"
+					? String(hyroviAccessSources || "")
+							.split(/[\n,]+/)
+							.map((source) => source.trim())
+							.filter(Boolean)
+					: [],
+		};
 
 		const hyroviSecurityPolicy: SecurityHostPolicy | null | undefined =
 			hyroviSecurityMode === "inherit"
@@ -94,6 +113,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 			id: id === "new" ? undefined : id,
 			...proxyHostValues,
 			hyroviSecurityPolicy,
+			hyroviSecurityAccess,
 		} as ProxyHostMutationInput;
 
 		setProxyHost(payload, {
@@ -109,8 +129,10 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		});
 	};
 
-	const securityIsLoading = securityDefaults.isLoading || (id !== "new" && securityHostPolicy.isLoading);
-	const securityError = securityDefaults.error || (id !== "new" ? securityHostPolicy.error : null);
+	const securityIsLoading =
+		securityDefaults.isLoading || (id !== "new" && (securityHostPolicy.isLoading || securityHostAccess.isLoading));
+	const securityError =
+		securityDefaults.error || (id !== "new" ? securityHostPolicy.error || securityHostAccess.error : null);
 	const effectiveSecurity = securityHostPolicy.data?.policy ?? securityHostPolicy.data?.effective ?? securityDefaults.data;
 
 	return (
@@ -144,6 +166,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hstsSubdomains: data?.hstsSubdomains || false,
 							trustForwardedProto: data?.trustForwardedProto || false,
 							// HYROVI Sec tab
+							hyroviAccessMode: securityHostAccess.data?.accessMode ?? "inherit",
+							hyroviAccessSources: (securityHostAccess.data?.sources ?? []).join("\n"),
 							hyroviSecurityMode: securityHostPolicy.data?.policy?.mode ?? "inherit",
 							hyroviAutoRateLimitThreshold: effectiveSecurity?.autoRateLimitThreshold ?? 50,
 							hyroviAutoRateLimitMinutes: effectiveSecurity?.autoRateLimitMinutes ?? 10,
@@ -419,6 +443,74 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 												<SSLOptionsFields color="bg-lime" forProxyHost={true} />
 											</div>
 											<div className="tab-pane" id="tab-hyrovi-security" role="tabpanel">
+								<div className="border-bottom pb-3 mb-3">
+									<div className="d-flex align-items-center justify-content-between gap-3 mb-2">
+										<div>
+											<h4 className="mb-1">IP access control</h4>
+											<div className="text-secondary small">
+												Restrict this site by real client IP. A host override takes priority over its group.
+											</div>
+										</div>
+										{id !== "new" && securityHostAccess.data ? (
+											<span className="badge bg-secondary-lt">
+												Effective: {securityHostAccess.data.effectiveAccessMode}
+											</span>
+										) : null}
+									</div>
+
+									<div className="row g-3">
+										<div className="col-md-5">
+											<label className="form-label" htmlFor="hyroviAccessMode">
+												Access policy
+											</label>
+											<Field as="select" id="hyroviAccessMode" name="hyroviAccessMode" className="form-select">
+												<option value="inherit">Inherit group / default</option>
+												<option value="open">Open to all IPs</option>
+												<option value="allowlist">Allow only listed IPs</option>
+												<option value="denylist">Block listed IPs</option>
+											</Field>
+										</div>
+										{values.hyroviAccessMode === "allowlist" || values.hyroviAccessMode === "denylist" ? (
+											<div className="col-md-7">
+												<label className="form-label" htmlFor="hyroviAccessSources">
+													IP addresses / CIDR ranges
+												</label>
+												<Field
+													as="textarea"
+													id="hyroviAccessSources"
+													name="hyroviAccessSources"
+													className="form-control font-monospace"
+													rows={4}
+													placeholder={"192.168.178.0/24\n100.64.0.0/10\n203.0.113.42"}
+												/>
+												<div className="form-hint">One entry per line or comma-separated. IPv4 and IPv6 CIDR are supported.</div>
+											</div>
+										) : null}
+									</div>
+
+									{values.hyroviAccessMode === "inherit" && id !== "new" && securityHostAccess.data ? (
+										<div className="alert alert-secondary py-2 mt-3 mb-0">
+											{securityHostAccess.data.group ? (
+												<>
+													Inherited from group <strong>{securityHostAccess.data.group.name}</strong>:{" "}
+													<strong>{securityHostAccess.data.effectiveAccessMode}</strong>
+													{securityHostAccess.data.effectiveSources.length
+														? ` · ${securityHostAccess.data.effectiveSources.length} IP/CIDR rules`
+														: ""}
+												</>
+											) : (
+												<>No group access rule applies. Effective access is <strong>open</strong>.</>
+											)}
+										</div>
+									) : null}
+
+									{values.hyroviAccessMode === "open" && securityHostAccess.data?.group ? (
+										<div className="alert alert-warning py-2 mt-3 mb-0">
+											This host explicitly overrides the <strong>{securityHostAccess.data.group.name}</strong> group access restriction and remains open.
+										</div>
+									) : null}
+								</div>
+
 								<div className="mb-3">
 									<label className="form-label" htmlFor="hyroviSecurityMode">
 										Protection mode

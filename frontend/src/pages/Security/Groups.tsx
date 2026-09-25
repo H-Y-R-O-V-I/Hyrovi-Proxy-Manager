@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import {
 	createSecurityHostGroup,
 	deleteSecurityHostGroup,
+	getSecurityEvents,
 	getSecurityHostGroups,
 	getSecurityHostPolicies,
 	updateSecurityHostGroup,
@@ -50,6 +51,13 @@ export default function SecurityGroups() {
 	const hosts = useQuery({ queryKey: ["security-host-policies"], queryFn: getSecurityHostPolicies });
 	const [draft, setDraft] = useState<Draft>(emptyDraft);
 	const [error, setError] = useState("");
+	const [hostSearch, setHostSearch] = useState("");
+	const groupTraffic = useQuery({
+		queryKey: ["security-group-traffic", draft.id],
+		queryFn: () => getSecurityEvents({ limit: 2000, groupId: draft.id || undefined, sinceMinutes: 60 }),
+		enabled: Boolean(draft.id),
+		refetchInterval: draft.id ? 10_000 : false,
+	});
 
 	useEffect(() => {
 		if (!draft.id) return;
@@ -66,11 +74,30 @@ export default function SecurityGroups() {
 		return result;
 	}, [draft.id, groups.data]);
 
+	const visibleHosts = useMemo(() => {
+		const needle = hostSearch.trim().toLowerCase();
+		if (!needle) return hosts.data ?? [];
+		return (hosts.data ?? []).filter(
+			(host) => host.domainNames.join(" ").toLowerCase().includes(needle) || String(host.id).includes(needle),
+		);
+	}, [hostSearch, hosts.data]);
+
+	const trafficSummary = useMemo(() => {
+		const rows = groupTraffic.data ?? [];
+		return {
+			requests: rows.length,
+			sources: new Set(rows.map((event) => event.ip)).size,
+			suspicious: rows.filter((event) => event.risk >= 40).length,
+			critical: rows.filter((event) => event.risk >= 80).length,
+		};
+	}, [groupTraffic.data]);
+
 	const refresh = async () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-host-groups"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-dashboard-events"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-group-traffic"] }),
 		]);
 	};
 
@@ -86,23 +113,33 @@ export default function SecurityGroups() {
 				securityMode: draft.securityMode,
 			};
 			if (!payload.name) throw new Error("Group name is required");
-			if (payload.accessMode === "allowlist" && payload.sources.length === 0) throw new Error("Allowlist requires at least one IP or CIDR");
+			if (payload.accessMode === "allowlist" && payload.sources.length === 0) {
+				throw new Error("Allowlist requires at least one IP or CIDR");
+			}
 			return draft.id ? updateSecurityHostGroup(draft.id, payload) : createSecurityHostGroup(payload);
 		},
-		onSuccess: async (group) => { await refresh(); setDraft(draftFromGroup(group)); },
+		onSuccess: async (group) => {
+			await refresh();
+			setDraft(draftFromGroup(group));
+		},
 		onError: (err) => setError(err instanceof Error ? err.message : "Could not save group"),
 	});
 
 	const remove = useMutation({
 		mutationFn: deleteSecurityHostGroup,
-		onSuccess: async () => { setDraft(emptyDraft()); await refresh(); },
+		onSuccess: async () => {
+			setDraft(emptyDraft());
+			await refresh();
+		},
 		onError: (err) => setError(err instanceof Error ? err.message : "Could not delete group"),
 	});
 
 	const toggleHost = (hostId: number) => {
 		setDraft((current) => ({
 			...current,
-			hostIds: current.hostIds.includes(hostId) ? current.hostIds.filter((id) => id !== hostId) : [...current.hostIds, hostId],
+			hostIds: current.hostIds.includes(hostId)
+				? current.hostIds.filter((id) => id !== hostId)
+				: [...current.hostIds, hostId],
 		}));
 	};
 
@@ -120,17 +157,38 @@ export default function SecurityGroups() {
 
 		<div className={styles.groupLayout}>
 			<div className={styles.groupList}>
-				{(groups.data ?? []).map((group) => <button type="button" key={group.id} className={`${styles.groupItem} ${draft.id === group.id ? styles.groupItemActive : ""}`} onClick={() => { setDraft(draftFromGroup(group)); setError(""); }}>
-					<div className="fw-bold">{group.name}</div>
-					<div className={styles.groupMeta}>{group.hostIds.length} hosts · {group.accessMode} · security {group.securityMode}</div>
+				{(groups.data ?? []).map((group) => <button
+					type="button"
+					key={group.id}
+					className={`${styles.groupItem} ${draft.id === group.id ? styles.groupItemActive : ""}`}
+					onClick={() => { setDraft(draftFromGroup(group)); setError(""); }}
+				>
+					<div className={styles.groupTitleRow}>
+						<div className="fw-bold">{group.name}</div>
+						<span className={`${styles.accessBadge} ${group.accessMode !== "open" ? styles.accessBadgeActive : ""}`}>{group.accessMode}</span>
+					</div>
+					<div className={styles.groupMeta}>{group.hostIds.length} hosts · {group.sources.length} IP/CIDR · security {group.securityMode}</div>
 				</button>)}
 				{!groups.isLoading && (groups.data?.length ?? 0) === 0 ? <div className="p-3 text-secondary">No groups yet. Create one to manage hosts together.</div> : null}
 			</div>
 
 			<div className={styles.editor}>
-				<div className="d-flex align-items-start justify-content-between gap-3 mb-3"><div><h3 className="mb-1">{draft.id ? "Edit group" : "New group"}</h3><div className="text-secondary small">Host-specific rules still override the group; otherwise group policy overrides global defaults.</div></div>{draft.id ? <button type="button" className="btn btn-outline-danger btn-sm" disabled={remove.isPending} onClick={() => remove.mutate(draft.id as string)}><IconTrash size={15} /> Delete</button> : null}</div>
+				<div className="d-flex align-items-start justify-content-between gap-3 mb-3">
+					<div>
+						<h3 className="mb-1">{draft.id ? "Edit group" : "New group"}</h3>
+						<div className="text-secondary small">Group IP access is always enforced. Explicit per-host security mode settings can override the group security mode.</div>
+					</div>
+					{draft.id ? <button type="button" className="btn btn-outline-danger btn-sm" disabled={remove.isPending} onClick={() => remove.mutate(draft.id as string)}><IconTrash size={15} /> Delete</button> : null}
+				</div>
 
 				{error ? <div className="alert alert-danger py-2">{error}</div> : null}
+
+				{draft.id ? <div className={styles.groupMetrics}>
+					<div><span>Requests · 1h</span><strong>{trafficSummary.requests}</strong></div>
+					<div><span>Sources · 1h</span><strong>{trafficSummary.sources}</strong></div>
+					<div><span>Suspicious</span><strong>{trafficSummary.suspicious}</strong></div>
+					<div><span>Critical</span><strong>{trafficSummary.critical}</strong></div>
+				</div> : null}
 
 				<div className={styles.editorGrid}>
 					<div><label className="form-label" htmlFor="security-group-name">Name</label><input id="security-group-name" className="form-control" value={draft.name} onChange={(e) => setDraft((current) => ({ ...current, name: e.target.value }))} placeholder="Private services" /></div>
@@ -140,9 +198,44 @@ export default function SecurityGroups() {
 					<div><label className="form-label" htmlFor="security-group-sources">IPs / CIDRs</label><textarea id="security-group-sources" className="form-control font-monospace" rows={4} value={draft.sourcesText} disabled={draft.accessMode === "open"} onChange={(e) => setDraft((current) => ({ ...current, sourcesText: e.target.value }))} placeholder={draft.accessMode === "allowlist" ? "192.168.178.0/24\n203.0.113.10" : "203.0.113.0/24"} /><div className="form-hint">IPv4 and IPv6 addresses or CIDRs. Cloudflare traffic uses the restored real client IP.</div></div>
 				</div>
 
-				<div className="mt-4"><div className="form-label">Proxy hosts in this group</div><div className={styles.hostGrid}>
-					{(hosts.data ?? []).map((host) => { const elsewhere = assignedElsewhere.get(host.id); return <label key={host.id} className={styles.hostChoice}><input type="checkbox" className="form-check-input mt-1" checked={draft.hostIds.includes(host.id)} onChange={() => toggleHost(host.id)} /><span><span className="d-block fw-medium">{host.domainNames.join(", ") || `Host #${host.id}`}</span><span className="text-secondary small">#{host.id}{elsewhere ? ` · currently ${elsewhere} (will move)` : ""}</span></span></label>; })}
-				</div></div>
+				<div className="mt-4">
+					<div className={styles.hostGridHeader}>
+						<div>
+							<div className="form-label mb-0">Proxy hosts in this group</div>
+							<div className="text-secondary small">A host can be in one security group. Selecting a host from another group moves it here.</div>
+						</div>
+						<div className={styles.hostTools}>
+							<div className={styles.hostSearch}><IconSearch size={15} /><input value={hostSearch} onChange={(event) => setHostSearch(event.target.value)} placeholder="Search hosts" /></div>
+							<button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setDraft((current) => ({ ...current, hostIds: [...new Set([...current.hostIds, ...visibleHosts.map((host) => host.id)])] }))}>Select visible</button>
+							<button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setDraft((current) => ({ ...current, hostIds: current.hostIds.filter((id) => !visibleHosts.some((host) => host.id === id)) }))}>Clear visible</button>
+						</div>
+					</div>
+					<div className={styles.hostGrid}>
+						{visibleHosts.map((host) => {
+							const elsewhere = assignedElsewhere.get(host.id);
+							return <label key={host.id} className={`${styles.hostChoice} ${draft.hostIds.includes(host.id) ? styles.hostChoiceSelected : ""}`}>
+								<input type="checkbox" className="form-check-input mt-1" checked={draft.hostIds.includes(host.id)} onChange={() => toggleHost(host.id)} />
+								<span>
+									<span className="d-block fw-medium">{host.domainNames.join(", ") || `Host #${host.id}`}</span>
+									<span className="text-secondary small">#{host.id}{elsewhere ? ` · currently ${elsewhere} (will move)` : ""}</span>
+								</span>
+							</label>;
+						})}
+						{visibleHosts.length === 0 ? <div className="p-2 text-secondary">No proxy hosts match this search.</div> : null}
+					</div>
+				</div>
+
+				<div className={styles.policyPreview}>
+					<div>
+						<span>Effective group access</span>
+						<strong>{draft.accessMode === "open" ? "Open to all source IPs" : draft.accessMode === "allowlist" ? `Only ${parseSources(draft.sourcesText).length} listed IP/CIDR entries can connect` : `${parseSources(draft.sourcesText).length} listed IP/CIDR entries are blocked`}</strong>
+					</div>
+					<div>
+						<span>Security inheritance</span>
+						<strong>{draft.securityMode === "inherit" ? "Global security mode" : `${draft.securityMode} for group hosts`}</strong>
+						<small>Explicit per-host security policies can still override the security mode. Group IP access always remains enforced.</small>
+					</div>
+				</div>
 
 				<div className={styles.actions}><button type="button" className="btn btn-outline-secondary" onClick={resetDraft}>Reset</button><button type="button" className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Applying…" : "Save & apply"}</button></div>
 			</div>

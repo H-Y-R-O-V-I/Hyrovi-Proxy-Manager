@@ -170,6 +170,25 @@ export interface SecurityHostPolicyEntry {
 	effective: SecurityHostPolicy;
 }
 
+export type SecurityHostAccessMode = "inherit" | "open" | "allowlist" | "denylist";
+
+export interface SecurityHostAccessGroupRef {
+	id: string;
+	name: string;
+	accessMode: "open" | "allowlist" | "denylist";
+	sources: string[];
+}
+
+export interface SecurityHostAccessPolicy {
+	hostId: number;
+	accessMode: SecurityHostAccessMode;
+	sources: string[];
+	policySource: "host" | "group" | "default";
+	effectiveAccessMode: "open" | "allowlist" | "denylist";
+	effectiveSources: string[];
+	group: SecurityHostAccessGroupRef | null;
+}
+
 export interface SecurityHostGroupHost {
 	id: number;
 	domainNames: string[];
@@ -743,6 +762,21 @@ export async function updateSecurityHostPolicy(
 
 export async function deleteSecurityHostPolicy(id: number): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/host-policies/${encodeURIComponent(id)}` });
+}
+
+export async function getSecurityHostAccess(id: number): Promise<SecurityHostAccessPolicy> {
+	return await api.get({ url: `/security/host-access/${encodeURIComponent(id)}` });
+}
+
+export async function updateSecurityHostAccess(
+	id: number,
+	data: Pick<SecurityHostAccessPolicy, "accessMode" | "sources">,
+): Promise<SecurityHostAccessPolicy> {
+	return await api.put({ url: `/security/host-access/${encodeURIComponent(id)}`, data });
+}
+
+export async function deleteSecurityHostAccess(id: number): Promise<SecurityHostAccessPolicy> {
+	return await api.del({ url: `/security/host-access/${encodeURIComponent(id)}` });
 }
 
 export async function getSecurityHostGroups(): Promise<SecurityHostGroup[]> {
