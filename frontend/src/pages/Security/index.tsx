@@ -1425,11 +1425,6 @@ const Security = () => {
 												? promoteDetectionRule.isPending || (rule.promotionGate.enabled && !analytics?.promotionGate.ready)
 												: setDetectionRuleStage.isPending
 										}
-										title={
-											rule.stage === "preview" && rule.promotionGate.enabled && analytics && !analytics.promotionGate.ready
-												? "Promotion gate is not satisfied"
-												: undefined
-										}
 										onClick={() => {
 											if (rule.stage === "preview") {
 												promoteDetectionRule.mutate(rule.id);
