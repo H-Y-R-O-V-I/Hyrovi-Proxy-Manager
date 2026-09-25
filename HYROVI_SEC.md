@@ -35,7 +35,7 @@ The first implementation adds:
 - endpoint-specific path-prefix rules per Proxy Host, using longest-prefix matching to override the host mode for sensitive routes;
 - transactional rollback if Nginx validation/reload or durable response-state persistence fails;
 - automatic expiry of timed rate limits and blocks;
-- authenticated app/auth security-event ingest and admin visibility;
+- authenticated app/auth security-event ingest and admin visibility, with a dependency-free Node 22+ token/Ed25519 client helper;
 - Ed25519 trusted-device identities for app/auth events, with per-device app scopes, monotonic replay counters, revocation and reset epochs;
 - bounded operational security alerts with acknowledgement, deduplication and a separate read-only HYROVI One pull feed;
 - safe custom detection rules with literal host/path/method/status/User-Agent matchers, preview-first staged rollout, explainable risk scoring, optional soft-response eligibility, retained-event 1h/24h trend analytics, read-only draft simulation and structured rule-hit false-positive/expected/attack review metadata;
@@ -142,7 +142,7 @@ The admin UI shows a prominent `BYPASS` warning when this mode is active. To res
 
 ## Next security phases
 
-1. package the authentication-event and signed-device protocol into reusable client SDKs;
+1. expand the completed Node app-event/signing helper into additional HYROVI runtime SDKs where needed;
 2. connect HYROVI One to the read-only alert feed once its current worktree is clear, then add user-facing notification delivery;
 3. add ASN-aware controls on top of the completed IPv4/IPv6 CIDR controls;
 4. add longer-term rule-health trend summaries and optional operator-defined promotion gates on top of the completed structured false-positive/expected/attack review workflow;

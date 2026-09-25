@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import errs from "../lib/error.js";
+import { signingMessage, stableJson } from "./security_device_protocol.js";
 
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const DEVICES_FILE = `${SECURITY_DIR}/trusted-devices.json`;
@@ -9,7 +10,6 @@ const MAX_DEVICES = 200;
 const MAX_ALLOWED_APPS = 32;
 const MAX_PUBLIC_KEY_BYTES = 8192;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
-const SIGNATURE_CONTEXT = "HYROVI-SEC-DEVICE-V1";
 
 let mutationQueue = Promise.resolve();
 
@@ -107,31 +107,6 @@ const normalizePublicKey = (value) => {
 	const der = key.export({ type: "spki", format: "der" });
 	const fingerprint = createHash("sha256").update(der).digest("hex");
 	return { pem, fingerprint };
-};
-
-const stableJson = (value) => {
-	if (value === null) return "null";
-	if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
-	switch (typeof value) {
-		case "string":
-		case "boolean":
-		case "number":
-			return JSON.stringify(value);
-		case "object": {
-			const entries = Object.keys(value)
-				.sort()
-				.filter((key) => typeof value[key] !== "undefined")
-				.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`);
-			return `{${entries.join(",")}}`;
-		}
-		default:
-			return "null";
-	}
-};
-
-const signingMessage = ({ deviceId, sequence, timestamp, body }) => {
-	const bodyHash = createHash("sha256").update(stableJson(body ?? {})).digest("hex");
-	return [SIGNATURE_CONTEXT, deviceId, String(sequence), String(timestamp), bodyHash].join("\n");
 };
 
 const headerValue = (headers, name) => {

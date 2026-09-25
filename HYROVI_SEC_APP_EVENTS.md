@@ -57,6 +57,20 @@ Replay protection is persistent. A sequence must be strictly greater than the pr
 
 If any device-signature header is present, HYROVI Sec treats the request as device-authenticated and fails closed on invalid or incomplete signatures rather than falling back to the shared token.
 
+## Node 22+ client helper
+
+A dependency-free reference client is included at:
+
+```text
+clients/hyrovi-sec-events-node.mjs
+```
+
+It supports shared-token ingest and Ed25519 trusted-device signing, exports the same canonical-JSON/signing-message protocol used by the server, and can generate an Ed25519 keypair plus the SHA-256 public-key fingerprint used by HYROVI Sec.
+
+For trusted-device mode, applications should provide a durable monotonic sequence provider. The next sequence must be persisted before the signed request is sent. The helper intentionally performs no automatic transport retry for signed events: after a timeout or connection loss, the server may already have accepted the sequence, so blindly reusing it would be a replay and incrementing/retrying automatically could hide a delivery gap.
+
+See [clients/README.md](clients/README.md) for token and trusted-device examples.
+
 ## Allowed event types
 
 The initial allowlist is:
@@ -133,7 +147,7 @@ For events without a request ID, HYROVI Sec can still correlate a reported clien
 
 Attack-session correlation also checks all proxy request IDs in the session timeline.
 
-Existing generated custom-location configs are upgraded through the `instrumentation-v3` marker so the request-ID header is added without manually re-saving every Proxy Host.
+Existing generated host configs are upgraded through the current HYROVI Sec instrumentation marker so the request-ID header remains present without manually re-saving every Proxy Host.
 
 ## Storage and retention
 

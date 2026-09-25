@@ -1,4 +1,4 @@
-# HYROVI Sec challenge clients
+# HYROVI Sec clients
 
 ## Node.js helper
 
@@ -46,3 +46,74 @@ The helper:
 The helper does not automatically loop if a request is challenged again after successful verification. It throws `HyroviChallengeError` with code `RECHALLENGED` instead.
 
 An `AbortSignal` can be passed through the helper options to stop request handling and proof search. `onProgress` can be used to expose long-running proof progress without changing the proof algorithm.
+
+
+## App/auth security-event helper
+
+`hyrovi-sec-events-node.mjs` is a dependency-free Node 22+ client for `POST /api/security/app-events/ingest`.
+
+It supports both HYROVI Sec authentication modes:
+
+- shared ingest token;
+- Ed25519 trusted-device signatures.
+
+Token example:
+
+```js
+import { sendHyroviSecurityEvent } from "./clients/hyrovi-sec-events-node.mjs";
+
+await sendHyroviSecurityEvent(
+  {
+    event_type: "login_failed",
+    app: "hyrovi-one",
+    severity: "medium",
+    request_id: request.headers.get("x-hyrovi-request-id"),
+    account_id: "account_42",
+    reason: "invalid_credentials",
+  },
+  {
+    baseUrl: "https://proxy.example.com",
+    token: process.env.HYROVI_SEC_INGEST_TOKEN,
+  },
+);
+```
+
+Trusted-device example:
+
+```js
+import {
+  createHyroviSecurityEventSender,
+  generateHyroviDeviceKeyPair,
+} from "./clients/hyrovi-sec-events-node.mjs";
+
+const identity = generateHyroviDeviceKeyPair();
+
+// Register identity.publicKey in HYROVI Sec once.
+// Persist identity.privateKey securely on the device.
+
+let sequence = await loadPersistedDeviceSequence();
+
+const sender = createHyroviSecurityEventSender({
+  baseUrl: "https://proxy.example.com",
+  device: {
+    deviceId: "hyrovi-one-node-1",
+    privateKey: identity.privateKey,
+    async nextSequence() {
+      sequence += 1;
+      await persistDeviceSequence(sequence);
+      return sequence;
+    },
+  },
+});
+
+await sender.send({
+  event_type: "session_created",
+  app: "hyrovi-one",
+  severity: "info",
+  device_id: "hyrovi-one-node-1",
+});
+```
+
+For device authentication, the sequence provider must return a strictly increasing positive integer and persist it durably before the request is sent. The helper intentionally does not retry a signed event automatically after a transport failure because the server may already have accepted that sequence.
+
+The helper exports the canonical JSON and signing-message functions as well, so other HYROVI runtimes can implement the same protocol and test byte-for-byte compatibility.
