@@ -289,12 +289,43 @@ export interface SecurityDiagnostics {
 
 export interface SecurityAttackAnalytics {
 	suspiciousRequests: number;
+	suspiciousRatio: number;
 	observedSources: number;
 	observedHosts: number;
 	responseBytes: number;
 	uniqueSources: number;
 	uniqueTargets: number;
+	uniquePaths: number;
+	peakRequestsPerMinute: number;
+	avgRequestsPerMinute: number;
+	avgResponseBytes: number;
 	riskLevels: Record<"normal" | "low" | "medium" | "high" | "critical", number>;
+	performance: {
+		samples: number;
+		avgMs: number;
+		p50Ms: number;
+		p95Ms: number;
+		p99Ms: number;
+		maxMs: number;
+		slowOver1s: number;
+		slowOver3s: number;
+	};
+	http: {
+		deniedRequests: number;
+		notFoundRequests: number;
+		upstream5xx: number;
+		statusFamilies: Array<{ family: string; requests: number }>;
+		topStatuses: Array<{ status: number; requests: number }>;
+	};
+	timeline: Array<{
+		start: string;
+		requests: number;
+		suspicious: number;
+		critical: number;
+		bytes: number;
+		avgRequestTimeMs: number;
+		uniqueSources: number;
+	}>;
 	trafficSources: Array<{
 		ip: string;
 		requests: number;
@@ -302,9 +333,43 @@ export interface SecurityAttackAnalytics {
 		critical: number;
 		maxRisk: number;
 		bytesSent: number;
+		denied: number;
+		missing: number;
+		crawlerAttack: boolean;
 		hosts: string[];
+		uniquePaths: number;
+		peakRequestsPerMinute: number;
 		firstSeen: string | null;
 		lastSeen: string | null;
+	}>;
+	trafficHosts: Array<{
+		host: string;
+		requests: number;
+		suspicious: number;
+		critical: number;
+		maxRisk: number;
+		bytesSent: number;
+		sources: number;
+		avgRequestTimeMs: number;
+	}>;
+	topPaths: Array<{
+		host: string;
+		path: string;
+		requests: number;
+		suspicious: number;
+		critical: number;
+		maxRisk: number;
+		sources: number;
+		methods: string[];
+		statuses: number[];
+	}>;
+	topUserAgents: Array<{
+		userAgent: string;
+		requests: number;
+		suspicious: number;
+		critical: number;
+		maxRisk: number;
+		sources: number;
 	}>;
 	topSources: Array<{
 		ip: string;

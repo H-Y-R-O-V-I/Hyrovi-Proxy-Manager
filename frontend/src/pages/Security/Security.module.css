@@ -10,13 +10,17 @@
 .metric { border: 1px solid var(--tblr-border-color); border-radius: 6px; padding: 14px; background: var(--tblr-bg-surface); min-width: 0; }
 .metricLabel { color: var(--tblr-secondary); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
 .metricValue { font-size: 1.65rem; font-weight: 700; margin-top: 4px; overflow-wrap: anywhere; }
+.metric small { display: block; margin-top: 3px; color: var(--tblr-secondary); font-size: .68rem; }
 .filters { display: grid; grid-template-columns: 1.4fr 1fr 1fr .7fr .7fr .7fr 1fr auto; gap: 8px; padding: 12px; border: 1px solid var(--tblr-border-color); border-radius: 6px; background: var(--tblr-bg-surface); }
 .gridTwo { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 12px; }
 .insightGrid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr) minmax(220px, .8fr); gap: 12px; }
+.analysisGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .panel { border: 1px solid var(--tblr-border-color); border-radius: 6px; background: var(--tblr-bg-surface); overflow: hidden; min-width: 0; }
 .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--tblr-border-color); }
 .panelHeader h3 { margin: 0; font-size: 1rem; }
 .chart { width: 100%; height: 210px; display: block; padding: 8px 12px 12px; }
+.chartCompact { width: 100%; height: 160px; display: block; padding: 8px 12px 4px; }
+.chartFooter { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 14px 12px; color: var(--tblr-secondary); font-size: .72rem; }
 .chartLegend { display: flex; gap: 14px; font-size: .78rem; color: var(--tblr-secondary); }
 .legendItem { display: inline-flex; gap: 6px; align-items: center; }
 .legendDot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
@@ -72,6 +76,13 @@
 .statusGrid span, .statusGrid small { display: block; color: var(--tblr-secondary); }
 .statusGrid strong { font-size: 1.25rem; }
 .statusGrid small { font-size: .68rem; }
+.analysisList { display: flex; flex-direction: column; }
+.analysisList > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 13px; border-bottom: 1px solid var(--tblr-border-color); }
+.analysisList > div:last-child { border-bottom: 0; }
+.analysisList > div > span { min-width: 0; }
+.analysisList > div > span:last-child { text-align: right; flex: 0 0 auto; }
+.analysisList small { display: block; margin-top: 2px; color: var(--tblr-secondary); font-size: .7rem; }
+.uaText { display: block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .timeline { max-height: 630px; overflow: auto; }
 .timeline table { margin: 0; }
@@ -163,7 +174,7 @@
 
 @media (max-width: 1199px) {
 	.metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-	.insightGrid { grid-template-columns: 1fr 1fr; }
+	.insightGrid, .analysisGrid { grid-template-columns: 1fr 1fr; }
 	.insightGrid > :first-child { grid-column: 1 / -1; }
 }
 
@@ -175,7 +186,7 @@
 }
 
 @media (max-width: 575px) {
-	.metrics, .filters, .editorGrid, .hostGrid, .groupMetrics, .policyPreview, .insightGrid { grid-template-columns: 1fr; }
+	.metrics, .filters, .editorGrid, .hostGrid, .groupMetrics, .policyPreview, .insightGrid, .analysisGrid { grid-template-columns: 1fr; }
 	.insightGrid > :first-child { grid-column: auto; }
 	.policyPreview > div + div { border-left: 0; border-top: 1px solid var(--tblr-border-color); }
 	.hero { flex-direction: column; }

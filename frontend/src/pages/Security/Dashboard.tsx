@@ -272,7 +272,28 @@ export default function SecurityDashboard() {
 				b.maxRisk - a.maxRisk
 			);
 	}, [events.data]);
-	const sourceRows = sourceStats.slice(0, 12);
+	const sourceRows = useMemo(() => {
+		const serverRows = overview.data?.analytics.trafficSources ?? [];
+		if (serverRows.length > 0) {
+			return serverRows.slice(0, 12).map((row) => {
+				const likelyAttack = row.crawlerAttack || row.peakRequestsPerMinute >= 300 || (row.peakRequestsPerMinute >= 100 && row.denied >= 20) || (row.maxRisk >= 80 && row.suspicious >= 2);
+				const isSuspicious = likelyAttack || row.peakRequestsPerMinute >= 100 || row.maxRisk >= 40 || row.suspicious > 0;
+				return {
+					source: row.ip,
+					requests: row.requests,
+					suspicious: row.suspicious,
+					maxRisk: row.maxRisk,
+					bytes: row.bytesSent,
+					hostCount: row.hosts.length,
+					uniquePaths: row.uniquePaths,
+					peakRequestsPerMinute: row.peakRequestsPerMinute,
+					level: (likelyAttack ? "likely_attack" : isSuspicious ? "suspicious" : "normal") as SourceAssessmentLevel,
+					label: row.crawlerAttack ? "Crawler attack" : likelyAttack ? "Likely attack" : isSuspicious ? "Suspicious" : "Normal",
+				};
+			});
+		}
+		return sourceStats.slice(0, 12);
+	}, [overview.data, sourceStats]);
 	const attackSessions = useMemo(() => overview.data?.attackSessions ?? [], [overview.data]);
 	const filteredAttackSessions = useMemo(() => attackSessions.filter((session) => {
 		if (incidentFilter === "crawler") return session.signals.includes("crawler_attack");
@@ -286,6 +307,8 @@ export default function SecurityDashboard() {
 	const totalBytes = overview.data?.analytics.responseBytes ?? (events.data ?? []).reduce((sum, event) => sum + Math.max(0, event.bytesSent || 0), 0);
 	const destinationCount = overview.data?.analytics.observedHosts ?? new Set((events.data ?? []).map((event) => event.host).filter(Boolean)).size;
 	const hostStats = useMemo(() => {
+		const serverRows = overview.data?.analytics.trafficHosts ?? [];
+		if (serverRows.length > 0) return serverRows.slice(0, 8).map((row) => ({ name: row.host, requests: row.requests, suspicious: row.suspicious, maxRisk: row.maxRisk, sourceCount: row.sources, bytes: row.bytesSent, avgRequestTimeMs: row.avgRequestTimeMs }));
 		const map = new Map<string, { requests: number; suspicious: number; maxRisk: number; sources: Set<string>; bytes: number }>();
 		for (const event of events.data ?? []) {
 			const row = map.get(event.host) ?? { requests: 0, suspicious: 0, maxRisk: 0, sources: new Set<string>(), bytes: 0 };
@@ -296,14 +319,24 @@ export default function SecurityDashboard() {
 			row.bytes += Math.max(0, event.bytesSent || 0);
 			map.set(event.host, row);
 		}
-		return [...map.entries()].map(([name, row]) => ({ name, ...row, sourceCount: row.sources.size })).sort((a, b) => b.requests - a.requests).slice(0, 8);
-	}, [events.data]);
+		return [...map.entries()].map(([name, row]) => ({ name, ...row, sourceCount: row.sources.size, avgRequestTimeMs: 0 })).sort((a, b) => b.requests - a.requests).slice(0, 8);
+	}, [events.data, overview.data]);
 	const statusStats = useMemo(() => {
+		const serverRows = overview.data?.analytics.http.statusFamilies ?? [];
+		if (serverRows.length > 0) return serverRows.map((row) => ({ family: row.family, count: row.requests }));
 		const counts = new Map<string, number>();
 		for (const event of events.data ?? []) counts.set(statusFamily(event.status), (counts.get(statusFamily(event.status)) ?? 0) + 1);
 		return ["2xx", "3xx", "4xx", "5xx", "1xx", "other"].map((family) => ({ family, count: counts.get(family) ?? 0 })).filter((row) => row.count > 0);
-	}, [events.data]);
+	}, [events.data, overview.data]);
 	const riskStats = useMemo(() => {
+		const server = overview.data?.analytics.riskLevels;
+		if (server) return [
+			{ label: "Normal 0–19", min: 0, max: 19, count: server.normal },
+			{ label: "Low 20–39", min: 20, max: 39, count: server.low },
+			{ label: "Suspicious 40–59", min: 40, max: 59, count: server.medium },
+			{ label: "High 60–79", min: 60, max: 79, count: server.high },
+			{ label: "Critical 80+", min: 80, max: 100, count: server.critical },
+		];
 		const rows = [
 			{ label: "Normal 0–19", min: 0, max: 19 },
 			{ label: "Low 20–39", min: 20, max: 39 },
@@ -312,12 +345,21 @@ export default function SecurityDashboard() {
 			{ label: "Critical 80+", min: 80, max: 100 },
 		];
 		return rows.map((row) => ({ ...row, count: (events.data ?? []).filter((event) => event.risk >= row.min && event.risk <= row.max).length }));
-	}, [events.data]);
+	}, [events.data, overview.data]);
 
-	const hostOptions = useMemo(() => [...new Set((events.data ?? []).map((event) => event.host).filter(Boolean))].sort(), [events.data]);
-	const buckets = useMemo(() => buildBuckets(events.data ?? [], sinceMinutes), [events.data, sinceMinutes]);
+	const hostOptions = useMemo(() => {
+		const serverHosts = overview.data?.analytics.trafficHosts.map((row) => row.host).filter(Boolean) ?? [];
+		return [...new Set(serverHosts.length > 0 ? serverHosts : (events.data ?? []).map((event) => event.host).filter(Boolean))].sort();
+	}, [events.data, overview.data]);
+	const buckets = useMemo(() => {
+		const server = overview.data?.analytics.timeline ?? [];
+		if (server.length > 0) return server.map((bucket) => ({ at: new Date(bucket.start).getTime(), requests: bucket.requests, suspicious: bucket.suspicious }));
+		return buildBuckets(events.data ?? [], sinceMinutes);
+	}, [events.data, overview.data, sinceMinutes]);
 	const requestPoints = polyline(buckets.map((bucket) => bucket.requests));
 	const suspiciousPoints = polyline(buckets.map((bucket) => bucket.suspicious));
+	const latencyPoints = polyline((overview.data?.analytics.timeline ?? []).map((bucket) => bucket.avgRequestTimeMs));
+	const sourceTrendPoints = polyline((overview.data?.analytics.timeline ?? []).map((bucket) => bucket.uniqueSources));
 
 	const sourceAssessment = useMemo(() => assessSource(sourceDetail.data ?? []), [sourceDetail.data]);
 	const sourceOverviewRow = useMemo(
@@ -480,6 +522,10 @@ export default function SecurityDashboard() {
 			<div className={styles.metric}><div className={styles.metricLabel}>Unanswered incidents</div><div className={styles.metricValue}>{unansweredIncidents}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Destinations</div><div className={styles.metricValue}>{destinationCount}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Response traffic</div><div className={styles.metricValue}>{formatBytes(totalBytes)}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Peak rate</div><div className={styles.metricValue}>{overview.data?.analytics.peakRequestsPerMinute ?? 0}/min</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>P95 latency</div><div className={styles.metricValue}>{overview.data?.analytics.performance.p95Ms ?? 0} ms</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>5xx responses</div><div className={styles.metricValue}>{overview.data?.analytics.http.statusFamilies.find((row) => row.family === "5xx")?.requests ?? 0}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Unique paths</div><div className={styles.metricValue}>{overview.data?.analytics.uniquePaths ?? 0}</div></div>
 		</div>
 
 		<div className={styles.filters}>
@@ -506,6 +552,25 @@ export default function SecurityDashboard() {
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Top source IPs</h3><span className="text-secondary small">click a client to inspect</span></div>
 				<div className={styles.sourceList}>{sourceRows.map((row) => <button type="button" className={`${styles.sourceRow} btn btn-link text-start text-reset`} key={row.source} onClick={() => openSource(row.source)}><span><span className={styles.mono}>{row.source}</span><small>{row.hostCount} hosts · {formatBytes(row.bytes)} · peak {row.peakRequestsPerMinute}/min</small></span><span>{row.requests} req<small>{row.suspicious} suspicious</small></span><span><span className={`badge ${assessmentBadgeClass(row.level)}`}>{row.label}</span><small className="text-end">risk {row.maxRisk} · {row.uniquePaths} paths</small></span></button>)}{sourceRows.length === 0 ? <div className="p-3 text-secondary">No traffic in this filter.</div> : null}</div>
+			</div>
+		</div>
+
+		<div className={styles.gridTwo}>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Latency trend</h3><span className="text-secondary small">average request time per bucket</span></div>
+				<svg className={styles.chartCompact} viewBox="0 0 1000 150" preserveAspectRatio="none" role="img" aria-label="Latency over time">
+					<line x1="0" y1="140" x2="1000" y2="140" stroke="currentColor" opacity="0.15" />
+					<polyline points={latencyPoints} fill="none" stroke="currentColor" strokeWidth="4" vectorEffect="non-scaling-stroke" />
+				</svg>
+				<div className={styles.chartFooter}><span>Avg {overview.data?.analytics.performance.avgMs ?? 0} ms</span><span>P95 {overview.data?.analytics.performance.p95Ms ?? 0} ms</span><span>Max {overview.data?.analytics.performance.maxMs ?? 0} ms</span></div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Active source trend</h3><span className="text-secondary small">unique source IPs per bucket</span></div>
+				<svg className={styles.chartCompact} viewBox="0 0 1000 150" preserveAspectRatio="none" role="img" aria-label="Unique source IPs over time">
+					<line x1="0" y1="140" x2="1000" y2="140" stroke="currentColor" opacity="0.15" />
+					<polyline points={sourceTrendPoints} fill="none" stroke="currentColor" strokeWidth="4" vectorEffect="non-scaling-stroke" />
+				</svg>
+				<div className={styles.chartFooter}><span>{overview.data?.analytics.observedSources ?? 0} sources total</span><span>Peak {Math.max(0, ...(overview.data?.analytics.timeline ?? []).map((bucket) => bucket.uniqueSources))}/bucket</span></div>
 			</div>
 		</div>
 
@@ -541,16 +606,68 @@ export default function SecurityDashboard() {
 
 		<div className={styles.insightGrid}>
 			<div className={styles.panel}>
-				<div className={styles.panelHeader}><h3>Top destinations</h3><span className="text-secondary small">where requests go</span></div>
-				<div className={styles.rankList}>{hostStats.map((row) => <button type="button" key={row.name} onClick={() => setHost(row.name)}><span><strong>{row.name || "unknown"}</strong><small>{row.sourceCount} sources · {formatBytes(row.bytes)}</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious</small></span></button>)}{hostStats.length === 0 ? <div className="p-3 text-secondary">No destinations in this filter.</div> : null}</div>
+				<div className={styles.panelHeader}><h3>Top destinations</h3><span className="text-secondary small">all analyzed traffic</span></div>
+				<div className={styles.rankList}>{hostStats.map((row) => <button type="button" key={row.name} onClick={() => setHost(row.name)}><span><strong>{row.name || "unknown"}</strong><small>{row.sourceCount} sources · {formatBytes(row.bytes)} · avg {row.avgRequestTimeMs} ms</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious</small></span></button>)}{hostStats.length === 0 ? <div className="p-3 text-secondary">No destinations in this filter.</div> : null}</div>
 			</div>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Risk distribution</h3><span className="text-secondary small">request classification</span></div>
-				<div className={styles.barList}>{riskStats.map((row) => <div key={row.label} className={styles.barRow}><span>{row.label}</span><div><i style={{ width: `${events.data?.length ? Math.max(2, (row.count / events.data.length) * 100) : 0}%` }} /></div><strong>{row.count}</strong></div>)}</div>
+				<div className={styles.barList}>{riskStats.map((row) => <div key={row.label} className={styles.barRow}><span>{row.label}</span><div><i style={{ width: `${overview.data?.requests ? Math.max(2, (row.count / overview.data.requests) * 100) : 0}%` }} /></div><strong>{row.count}</strong></div>)}</div>
 			</div>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>HTTP status</h3><span className="text-secondary small">response families</span></div>
-				<div className={styles.statusGrid}>{statusStats.map((row) => <div key={row.family}><span>{row.family}</span><strong>{row.count}</strong><small>{events.data?.length ? `${Math.round((row.count / events.data.length) * 100)}%` : "0%"}</small></div>)}{statusStats.length === 0 ? <div className="p-3 text-secondary">No responses in this filter.</div> : null}</div>
+				<div className={styles.statusGrid}>{statusStats.map((row) => <div key={row.family}><span>{row.family}</span><strong>{row.count}</strong><small>{overview.data?.requests ? `${Math.round((row.count / overview.data.requests) * 100)}%` : "0%"}</small></div>)}{statusStats.length === 0 ? <div className="p-3 text-secondary">No responses in this filter.</div> : null}</div>
+			</div>
+		</div>
+
+		<div className={styles.analysisGrid}>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Performance / latency</h3><span className="text-secondary small">full analyzed window</span></div>
+				<div className={styles.statusGrid}>
+					<div><span>Average</span><strong>{overview.data?.analytics.performance.avgMs ?? 0} ms</strong></div>
+					<div><span>P50</span><strong>{overview.data?.analytics.performance.p50Ms ?? 0} ms</strong></div>
+					<div><span>P95</span><strong>{overview.data?.analytics.performance.p95Ms ?? 0} ms</strong></div>
+					<div><span>P99</span><strong>{overview.data?.analytics.performance.p99Ms ?? 0} ms</strong></div>
+					<div><span>Slow ≥1s</span><strong>{overview.data?.analytics.performance.slowOver1s ?? 0}</strong></div>
+					<div><span>Slow ≥3s</span><strong>{overview.data?.analytics.performance.slowOver3s ?? 0}</strong></div>
+					<div><span>Maximum</span><strong>{overview.data?.analytics.performance.maxMs ?? 0} ms</strong></div>
+					<div><span>Avg rate</span><strong>{(overview.data?.analytics.avgRequestsPerMinute ?? 0).toFixed(1)}/min</strong></div>
+				</div>
+			</div>
+
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>HTTP health</h3><span className="text-secondary small">errors and upstream failures</span></div>
+				<div className={styles.statusGrid}>
+					<div><span>2xx</span><strong>{overview.data?.analytics.http.statusFamilies.find((row) => row.family === "2xx")?.requests ?? 0}</strong></div>
+					<div><span>4xx</span><strong>{overview.data?.analytics.http.statusFamilies.find((row) => row.family === "4xx")?.requests ?? 0}</strong></div>
+					<div><span>5xx</span><strong>{overview.data?.analytics.http.statusFamilies.find((row) => row.family === "5xx")?.requests ?? 0}</strong></div>
+					<div><span>401 / 403</span><strong>{overview.data?.analytics.http.deniedRequests ?? 0}</strong></div>
+					<div><span>404</span><strong>{overview.data?.analytics.http.notFoundRequests ?? 0}</strong></div>
+					<div><span>Upstream 5xx</span><strong>{overview.data?.analytics.http.upstream5xx ?? 0}</strong></div>
+					<div><span>Suspicious ratio</span><strong>{Math.round((overview.data?.analytics.suspiciousRatio ?? 0) * 100)}%</strong></div>
+					<div><span>Avg response</span><strong>{formatBytes(overview.data?.analytics.avgResponseBytes ?? 0)}</strong></div>
+				</div>
+			</div>
+
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>HTTP methods</h3><span className="text-secondary small">request mix</span></div>
+				<div className={styles.barList}>{(overview.data?.analytics.methods ?? []).map((row) => { const max = Math.max(1, ...(overview.data?.analytics.methods ?? []).map((entry) => entry.requests)); return <div key={row.method} className={styles.barRow}><span>{row.method}</span><div><i style={{ width: `${Math.max(2, (row.requests / max) * 100)}%` }} /></div><strong>{row.requests}</strong></div>; })}</div>
+			</div>
+		</div>
+
+		<div className={styles.analysisGrid}>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Top paths</h3><span className="text-secondary small">all requests, not only suspicious</span></div>
+				<div className={styles.rankList}>{(overview.data?.analytics.topPaths ?? []).slice(0, 10).map((row) => <button type="button" key={`${row.host}|${row.path}`} onClick={() => { setHost(row.host); setSearch(row.path); }}><span><strong className={styles.mono}>{row.path}</strong><small>{row.host} · {row.sources} sources · {row.methods.join(", ") || "—"}</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious · risk {row.maxRisk}</small></span></button>)}{(overview.data?.analytics.topPaths.length ?? 0) === 0 ? <div className="p-3 text-secondary">No path data in this window.</div> : null}</div>
+			</div>
+
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>User agents</h3><span className="text-secondary small">clients and automation</span></div>
+				<div className={styles.rankList}>{(overview.data?.analytics.topUserAgents ?? []).slice(0, 10).map((row) => <button type="button" key={row.userAgent} onClick={() => setSearch(row.userAgent)}><span><strong className={styles.uaText}>{row.userAgent}</strong><small>{row.sources} sources · max risk {row.maxRisk}</small></span><span><strong>{row.requests}</strong><small>{row.suspicious} suspicious</small></span></button>)}{(overview.data?.analytics.topUserAgents.length ?? 0) === 0 ? <div className="p-3 text-secondary">No user-agent data in this window.</div> : null}</div>
+			</div>
+
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Detection signals</h3><span className="text-secondary small">why traffic is classified</span></div>
+				<div className={styles.analysisList}>{(overview.data?.analytics.topSignals ?? []).slice(0, 10).map((row) => <div key={row.id}><span><strong>{row.label}</strong><small>{humanizeSignal(row.id)} · {row.sources} sources · {row.hosts} hosts</small></span><span><strong>{row.hits}</strong><small>max score {row.maxScore}</small></span></div>)}{(overview.data?.analytics.topSignals.length ?? 0) === 0 ? <div className="p-3 text-secondary">No detection signals in this window.</div> : null}</div>
 			</div>
 		</div>
 

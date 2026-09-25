@@ -1778,16 +1778,93 @@ const attackSessionSummary = (session, blocks = [], rateLimits = [], challenges 
 	};
 };
 
-const buildAttackAnalytics = (events) => {
+const percentile = (values, quantile) => {
+	if (values.length === 0) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * quantile) - 1));
+	return sorted[index];
+};
+
+const statusFamilyOf = (status) => {
+	const code = Number(status) || 0;
+	if (code >= 100 && code < 200) return "1xx";
+	if (code >= 200 && code < 300) return "2xx";
+	if (code >= 300 && code < 400) return "3xx";
+	if (code >= 400 && code < 500) return "4xx";
+	if (code >= 500 && code < 600) return "5xx";
+	return "other";
+};
+
+const buildAnalyticsTimeline = (events, sinceMinutes = 0) => {
+	const now = Date.now();
+	const timestamps = events
+		.map((event) => parseTimestamp(event.timestamp)?.getTime())
+		.filter(Number.isFinite);
+	const oldest = timestamps.length > 0 ? Math.min(...timestamps) : now;
+	const requestedDuration = sinceMinutes > 0 ? sinceMinutes * 60_000 : Math.max(60_000, now - oldest);
+	const duration = Math.max(60_000, requestedDuration);
+	const bucketCount = sinceMinutes <= 60 ? 30 : sinceMinutes <= 360 ? 36 : 48;
+	const bucketMs = Math.max(1_000, Math.ceil(duration / bucketCount));
+	const start = now - bucketMs * bucketCount;
+	const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+		start: new Date(start + index * bucketMs).toISOString(),
+		requests: 0,
+		suspicious: 0,
+		critical: 0,
+		bytes: 0,
+		requestTimeMsTotal: 0,
+		requestTimeSamples: 0,
+		sources: new Set(),
+	}));
+
+	for (const event of events) {
+		const timestamp = parseTimestamp(event.timestamp)?.getTime();
+		if (!Number.isFinite(timestamp) || timestamp < start || timestamp > now) continue;
+		const index = Math.min(bucketCount - 1, Math.max(0, Math.floor((timestamp - start) / bucketMs)));
+		const bucket = buckets[index];
+		bucket.requests += 1;
+		bucket.suspicious += event.risk >= 40 ? 1 : 0;
+		bucket.critical += event.risk >= 80 ? 1 : 0;
+		bucket.bytes += Math.max(0, Number(event.bytesSent) || 0);
+		if (event.ip) bucket.sources.add(event.ip);
+		const requestTimeMs = Math.max(0, Number(event.requestTime) || 0) * 1000;
+		bucket.requestTimeMsTotal += requestTimeMs;
+		bucket.requestTimeSamples += 1;
+	}
+
+	return buckets.map((bucket) => ({
+		start: bucket.start,
+		requests: bucket.requests,
+		suspicious: bucket.suspicious,
+		critical: bucket.critical,
+		bytes: bucket.bytes,
+		avgRequestTimeMs: bucket.requestTimeSamples > 0 ? Math.round(bucket.requestTimeMsTotal / bucket.requestTimeSamples) : 0,
+		uniqueSources: bucket.sources.size,
+	}));
+};
+
+const buildAttackAnalytics = (events, options = {}) => {
 	const suspiciousEvents = events.filter((event) => event.risk >= 40);
 	const trafficSourceMap = new Map();
 	const sourceMap = new Map();
 	const targetMap = new Map();
 	const hostMap = new Map();
+	const trafficHostMap = new Map();
+	const pathMap = new Map();
+	const userAgentMap = new Map();
 	const signalMap = new Map();
 	const methodMap = new Map();
+	const statusFamilyMap = new Map();
+	const statusCodeMap = new Map();
+	const minuteMap = new Map();
 	const observedHostSet = new Set();
+	const latencySamples = [];
 	let responseBytes = 0;
+	let deniedRequests = 0;
+	let notFoundRequests = 0;
+	let upstream5xx = 0;
+	let slowOver1s = 0;
+	let slowOver3s = 0;
 	const riskLevels = {
 		normal: 0,
 		low: 0,
@@ -1798,11 +1875,31 @@ const buildAttackAnalytics = (events) => {
 
 	for (const event of events) {
 		const severity = Object.hasOwn(riskLevels, event.severity) ? event.severity : "normal";
+		const hostName = event.host || "(unknown host)";
+		const pathName = event.path || "/";
+		const sourceIp = event.ip || "(unknown)";
+		const requestTimeMs = Math.max(0, Number(event.requestTime) || 0) * 1000;
+		const timestampMs = parseTimestamp(event.timestamp)?.getTime();
+		const crawlerAttack = (event.signals || []).some((signal) => signal.id === "crawler_attack");
+		const statusFamily = statusFamilyOf(event.status);
+
 		if (event.host) observedHostSet.add(event.host);
 		responseBytes += Math.max(0, Number(event.bytesSent) || 0);
 		riskLevels[severity] += 1;
+		latencySamples.push(requestTimeMs);
+		if (requestTimeMs >= 1000) slowOver1s += 1;
+		if (requestTimeMs >= 3000) slowOver3s += 1;
+		if ([401, 403].includes(event.status)) deniedRequests += 1;
+		if (event.status === 404) notFoundRequests += 1;
+		if (Number.parseInt(event.upstreamStatus, 10) >= 500) upstream5xx += 1;
+		statusFamilyMap.set(statusFamily, (statusFamilyMap.get(statusFamily) || 0) + 1);
+		if (event.status) statusCodeMap.set(event.status, (statusCodeMap.get(event.status) || 0) + 1);
+		if (event.method) methodMap.set(event.method, (methodMap.get(event.method) || 0) + 1);
+		if (Number.isFinite(timestampMs)) {
+			const minute = Math.floor(timestampMs / 60_000) * 60_000;
+			minuteMap.set(minute, (minuteMap.get(minute) || 0) + 1);
+		}
 
-		const sourceIp = event.ip || "(unknown)";
 		const trafficSource = trafficSourceMap.get(sourceIp) || {
 			ip: sourceIp,
 			requests: 0,
@@ -1810,7 +1907,12 @@ const buildAttackAnalytics = (events) => {
 			critical: 0,
 			maxRisk: 0,
 			bytesSent: 0,
+			denied: 0,
+			missing: 0,
+			crawlerAttack: false,
 			hosts: new Set(),
+			paths: new Set(),
+			minuteCounts: new Map(),
 			firstSeen: event.timestamp,
 			lastSeen: event.timestamp,
 		};
@@ -1819,14 +1921,90 @@ const buildAttackAnalytics = (events) => {
 		trafficSource.critical += event.risk >= 80 ? 1 : 0;
 		trafficSource.maxRisk = Math.max(trafficSource.maxRisk, event.risk);
 		trafficSource.bytesSent += event.bytesSent || 0;
+		trafficSource.denied += [401, 403].includes(event.status) ? 1 : 0;
+		trafficSource.missing += event.status === 404 ? 1 : 0;
+		trafficSource.crawlerAttack ||= crawlerAttack;
 		if (event.host) trafficSource.hosts.add(event.host);
-		if ((parseTimestamp(event.timestamp)?.getTime() || 0) < (parseTimestamp(trafficSource.firstSeen)?.getTime() || 0)) {
-			trafficSource.firstSeen = event.timestamp;
+		trafficSource.paths.add(pathName);
+		if (Number.isFinite(timestampMs)) {
+			const minute = Math.floor(timestampMs / 60_000) * 60_000;
+			trafficSource.minuteCounts.set(minute, (trafficSource.minuteCounts.get(minute) || 0) + 1);
 		}
-		if ((parseTimestamp(event.timestamp)?.getTime() || 0) > (parseTimestamp(trafficSource.lastSeen)?.getTime() || 0)) {
-			trafficSource.lastSeen = event.timestamp;
-		}
+		if ((timestampMs || 0) < (parseTimestamp(trafficSource.firstSeen)?.getTime() || 0)) trafficSource.firstSeen = event.timestamp;
+		if ((timestampMs || 0) > (parseTimestamp(trafficSource.lastSeen)?.getTime() || 0)) trafficSource.lastSeen = event.timestamp;
 		trafficSourceMap.set(sourceIp, trafficSource);
+
+		const trafficHost = trafficHostMap.get(hostName) || {
+			host: hostName,
+			requests: 0,
+			suspicious: 0,
+			critical: 0,
+			maxRisk: 0,
+			bytesSent: 0,
+			requestTimeMsTotal: 0,
+			sources: new Set(),
+		};
+		trafficHost.requests += 1;
+		trafficHost.suspicious += event.risk >= 40 ? 1 : 0;
+		trafficHost.critical += event.risk >= 80 ? 1 : 0;
+		trafficHost.maxRisk = Math.max(trafficHost.maxRisk, event.risk);
+		trafficHost.bytesSent += Math.max(0, Number(event.bytesSent) || 0);
+		trafficHost.requestTimeMsTotal += requestTimeMs;
+		if (event.ip) trafficHost.sources.add(event.ip);
+		trafficHostMap.set(hostName, trafficHost);
+
+		const pathKey = `${hostName}|${pathName}`;
+		const pathEntry = pathMap.get(pathKey) || {
+			host: hostName,
+			path: pathName,
+			requests: 0,
+			suspicious: 0,
+			critical: 0,
+			maxRisk: 0,
+			sources: new Set(),
+			methods: new Set(),
+			statuses: new Set(),
+		};
+		pathEntry.requests += 1;
+		pathEntry.suspicious += event.risk >= 40 ? 1 : 0;
+		pathEntry.critical += event.risk >= 80 ? 1 : 0;
+		pathEntry.maxRisk = Math.max(pathEntry.maxRisk, event.risk);
+		if (event.ip) pathEntry.sources.add(event.ip);
+		if (event.method) pathEntry.methods.add(event.method);
+		if (event.status) pathEntry.statuses.add(event.status);
+		pathMap.set(pathKey, pathEntry);
+
+		const userAgent = String(event.userAgent || "(empty user-agent)").slice(0, 300);
+		const userAgentEntry = userAgentMap.get(userAgent) || {
+			userAgent,
+			requests: 0,
+			suspicious: 0,
+			critical: 0,
+			maxRisk: 0,
+			sources: new Set(),
+		};
+		userAgentEntry.requests += 1;
+		userAgentEntry.suspicious += event.risk >= 40 ? 1 : 0;
+		userAgentEntry.critical += event.risk >= 80 ? 1 : 0;
+		userAgentEntry.maxRisk = Math.max(userAgentEntry.maxRisk, event.risk);
+		if (event.ip) userAgentEntry.sources.add(event.ip);
+		userAgentMap.set(userAgent, userAgentEntry);
+
+		for (const signal of event.signals || []) {
+			const signalEntry = signalMap.get(signal.id) || {
+				id: signal.id,
+				label: signal.label,
+				hits: 0,
+				maxScore: 0,
+				sources: new Set(),
+				hosts: new Set(),
+			};
+			signalEntry.hits += 1;
+			signalEntry.maxScore = Math.max(signalEntry.maxScore, Number(signal.score) || 0);
+			if (event.ip) signalEntry.sources.add(event.ip);
+			if (event.host) signalEntry.hosts.add(event.host);
+			signalMap.set(signal.id, signalEntry);
+		}
 	}
 
 	for (const event of suspiciousEvents) {
@@ -1843,12 +2021,8 @@ const buildAttackAnalytics = (events) => {
 		source.critical += event.risk >= 80 ? 1 : 0;
 		source.maxRisk = Math.max(source.maxRisk, event.risk);
 		if (event.host) source.hosts.add(event.host);
-		if ((parseTimestamp(event.timestamp)?.getTime() || 0) < (parseTimestamp(source.firstSeen)?.getTime() || 0)) {
-			source.firstSeen = event.timestamp;
-		}
-		if ((parseTimestamp(event.timestamp)?.getTime() || 0) > (parseTimestamp(source.lastSeen)?.getTime() || 0)) {
-			source.lastSeen = event.timestamp;
-		}
+		if ((parseTimestamp(event.timestamp)?.getTime() || 0) < (parseTimestamp(source.firstSeen)?.getTime() || 0)) source.firstSeen = event.timestamp;
+		if ((parseTimestamp(event.timestamp)?.getTime() || 0) > (parseTimestamp(source.lastSeen)?.getTime() || 0)) source.lastSeen = event.timestamp;
 		sourceMap.set(event.ip, source);
 
 		const hostName = event.host || "(unknown host)";
@@ -1883,37 +2057,83 @@ const buildAttackAnalytics = (events) => {
 		if (event.method) target.methods.add(event.method);
 		if (event.status) target.statuses.add(event.status);
 		targetMap.set(targetKey, target);
-
-		if (event.method) methodMap.set(event.method, (methodMap.get(event.method) || 0) + 1);
-		for (const signal of event.signals || []) {
-			const signalEntry = signalMap.get(signal.id) || {
-				id: signal.id,
-				label: signal.label,
-				hits: 0,
-				maxScore: 0,
-				sources: new Set(),
-				hosts: new Set(),
-			};
-			signalEntry.hits += 1;
-			signalEntry.maxScore = Math.max(signalEntry.maxScore, Number(signal.score) || 0);
-			if (event.ip) signalEntry.sources.add(event.ip);
-			if (event.host) signalEntry.hosts.add(event.host);
-			signalMap.set(signal.id, signalEntry);
-		}
 	}
+
+	const sinceMinutes = clamp(Number.parseInt(options.sinceMinutes, 10) || 0, 0, 43_200);
+	const timestamps = events.map((event) => parseTimestamp(event.timestamp)?.getTime()).filter(Number.isFinite);
+	const observedMinutes = sinceMinutes > 0
+		? sinceMinutes
+		: Math.max(1, timestamps.length > 1 ? (Math.max(...timestamps) - Math.min(...timestamps)) / 60_000 : 1);
+	const avgRequestTimeMs = latencySamples.length > 0
+		? latencySamples.reduce((sum, value) => sum + value, 0) / latencySamples.length
+		: 0;
 
 	return {
 		suspiciousRequests: suspiciousEvents.length,
+		suspiciousRatio: events.length > 0 ? suspiciousEvents.length / events.length : 0,
 		observedSources: [...trafficSourceMap.keys()].filter((ip) => ip !== "(unknown)").length,
 		observedHosts: observedHostSet.size,
 		responseBytes,
 		uniqueSources: sourceMap.size,
 		uniqueTargets: targetMap.size,
+		uniquePaths: pathMap.size,
+		peakRequestsPerMinute: minuteMap.size > 0 ? Math.max(...minuteMap.values()) : 0,
+		avgRequestsPerMinute: events.length / observedMinutes,
+		avgResponseBytes: events.length > 0 ? responseBytes / events.length : 0,
 		riskLevels,
+		performance: {
+			samples: latencySamples.length,
+			avgMs: Math.round(avgRequestTimeMs),
+			p50Ms: Math.round(percentile(latencySamples, 0.5)),
+			p95Ms: Math.round(percentile(latencySamples, 0.95)),
+			p99Ms: Math.round(percentile(latencySamples, 0.99)),
+			maxMs: Math.round(latencySamples.length > 0 ? Math.max(...latencySamples) : 0),
+			slowOver1s,
+			slowOver3s,
+		},
+		http: {
+			deniedRequests,
+			notFoundRequests,
+			upstream5xx,
+			statusFamilies: [...statusFamilyMap.entries()]
+				.map(([family, requests]) => ({ family, requests }))
+				.sort((left, right) => left.family.localeCompare(right.family)),
+			topStatuses: [...statusCodeMap.entries()]
+				.map(([status, requests]) => ({ status, requests }))
+				.sort((left, right) => right.requests - left.requests || left.status - right.status)
+				.slice(0, 10),
+		},
+		timeline: buildAnalyticsTimeline(events, sinceMinutes),
 		trafficSources: [...trafficSourceMap.values()]
-			.map((entry) => ({ ...entry, hosts: [...entry.hosts].sort() }))
+			.map(({ hosts, paths, minuteCounts, ...entry }) => ({
+				...entry,
+				hosts: [...hosts].sort(),
+				uniquePaths: paths.size,
+				peakRequestsPerMinute: minuteCounts.size > 0 ? Math.max(...minuteCounts.values()) : 0,
+			}))
 			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
-			.slice(0, 50),
+			.slice(0, 100),
+		trafficHosts: [...trafficHostMap.values()]
+			.map(({ sources, requestTimeMsTotal, ...entry }) => ({
+				...entry,
+				sources: sources.size,
+				avgRequestTimeMs: entry.requests > 0 ? Math.round(requestTimeMsTotal / entry.requests) : 0,
+			}))
+			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
+			.slice(0, 100),
+		topPaths: [...pathMap.values()]
+			.map(({ sources, methods, statuses, ...entry }) => ({
+				...entry,
+				sources: sources.size,
+				methods: [...methods].sort(),
+				statuses: [...statuses].sort((a, b) => a - b),
+			}))
+			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
+			.slice(0, 20),
+		topUserAgents: [...userAgentMap.values()]
+			.map(({ sources, ...entry }) => ({ ...entry, sources: sources.size }))
+			.sort((left, right) => right.requests - left.requests || right.maxRisk - left.maxRisk)
+			.slice(0, 15),
 		topSources: [...sourceMap.values()]
 			.map((entry) => ({ ...entry, hosts: [...entry.hosts].sort() }))
 			.sort((left, right) => right.maxRisk - left.maxRisk || right.requests - left.requests)
@@ -2633,7 +2853,7 @@ const internalSecurity = {
 			activeBlocks: blocks.length,
 			activeRateLimits: rateLimits.length,
 			activeEscalations,
-			analytics: buildAttackAnalytics(events),
+			analytics: buildAttackAnalytics(events, filters),
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,
