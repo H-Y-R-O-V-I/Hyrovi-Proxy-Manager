@@ -9,6 +9,7 @@ import internalSecurityAlerts from "./security_alerts.js";
 import internalSecurityChallenge from "./security_challenge.js";
 import internalSecurityDevices from "./security_devices.js";
 import internalSecurityDetectionRules from "./security_detection_rules.js";
+import internalSecurityHostGroups from "./security_host_groups.js";
 import internalSecurityRuleReviews from "./security_rule_reviews.js";
 import deadHostModel from "../models/dead_host.js";
 import proxyHostModel from "../models/proxy_host.js";
@@ -25,7 +26,7 @@ const ESCALATIONS_FILE = `${SECURITY_DIR}/escalations.json`;
 const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
 const APP_EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/app-events`;
 const GIB = 1024 * 1024 * 1024;
-const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v5`;
+const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v6`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
@@ -1214,28 +1215,46 @@ const getProxyHostForSecurity = async (access, hostId, permission, fields = ["id
 	return query.first();
 };
 
-const hostPolicyEntry = (host, policy) => {
-	const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
+const groupForHostId = (groups, hostId) =>
+	groups.find((group) => Array.isArray(group.hostIds) && group.hostIds.includes(Number(hostId))) || null;
+
+const defaultEffectiveHostPolicy = (policy) => ({
+	mode: policy.autoBlockEnabled ? "protect" : "observe",
+	autoRateLimitThreshold: policy.autoRateLimitThreshold,
+	autoRateLimitMinutes: policy.autoRateLimitMinutes,
+	autoBlockThreshold: policy.autoBlockThreshold,
+	autoBlockMinutes: policy.autoBlockMinutes,
+	challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
+	challengeDifficulty: 14,
+	endpointRules: [],
+});
+
+const hostPolicyEntry = (host, policy, group = null) => {
 	const explicit = policy.hostPolicies[String(host.id)] || null;
+	const groupPolicy =
+		!explicit && group && group.securityMode && group.securityMode !== "inherit"
+			? normalizeHostPolicy({ mode: group.securityMode }, policy)
+			: null;
 	return {
 		id: host.id,
 		domainNames: host.domain_names || [],
 		enabled: host.enabled,
+		group: group
+			? {
+					id: group.id,
+					name: group.name,
+					securityMode: group.securityMode,
+					accessMode: group.accessMode,
+					sources: group.sources || [],
+				}
+			: null,
 		policy: explicit,
-		effective: explicit || {
-			mode: globalMode,
-			autoRateLimitThreshold: policy.autoRateLimitThreshold,
-			autoRateLimitMinutes: policy.autoRateLimitMinutes,
-			autoBlockThreshold: policy.autoBlockThreshold,
-			autoBlockMinutes: policy.autoBlockMinutes,
-			challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
-			challengeDifficulty: 14,
-			endpointRules: [],
-		},
+		policySource: explicit ? "host" : groupPolicy ? "group" : "global",
+		effective: explicit || groupPolicy || defaultEffectiveHostPolicy(policy),
 	};
 };
 
-const createHostPolicyContext = (policy, hosts = []) => {
+const createHostPolicyContext = (policy, hosts = [], groups = []) => {
 	const exact = new Map();
 	const wildcards = [];
 	const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
@@ -1255,14 +1274,29 @@ const createHostPolicyContext = (policy, hosts = []) => {
 
 	for (const host of hosts) {
 		const explicit = policy.hostPolicies[String(host.id)] || null;
-		const hostEffective = explicit
+		const group = groupForHostId(groups, host.id);
+		const groupPolicy =
+			!explicit && group && group.securityMode && group.securityMode !== "inherit"
+				? normalizeHostPolicy({ mode: group.securityMode }, policy)
+				: null;
+		const source = explicit || groupPolicy;
+		const hostEffective = source
 			? {
 					proxyHostId: host.id,
-					...explicit,
-					autoBlockEnabled: policy.autoBlockEnabled && ["protect", "strict"].includes(explicit.mode),
+					...source,
+					autoBlockEnabled: policy.autoBlockEnabled && ["protect", "strict"].includes(source.mode),
 					inherited: false,
+					policySource: explicit ? "host" : "group",
+					groupId: groupPolicy ? group.id : null,
+					groupName: groupPolicy ? group.name : null,
 				}
-			: { ...globalEffective, proxyHostId: host.id };
+			: {
+					...globalEffective,
+					proxyHostId: host.id,
+					policySource: "global",
+					groupId: group?.id || null,
+					groupName: group?.name || null,
+				};
 
 		for (const domain of host.domain_names || []) {
 			const normalized = normalizeHostname(domain);
@@ -1310,8 +1344,10 @@ const createHostPolicyContext = (policy, hosts = []) => {
 };
 
 const getHostPolicyContext = async (policy) => {
-	if (Object.keys(policy.hostPolicies).length === 0) return createHostPolicyContext(policy);
-	return createHostPolicyContext(policy, await listProxyHostsForSecurity());
+	const groups = await internalSecurityHostGroups.listInternal();
+	const hasGroupedHosts = groups.some((group) => group.hostIds?.length);
+	if (Object.keys(policy.hostPolicies).length === 0 && !hasGroupedHosts) return createHostPolicyContext(policy);
+	return createHostPolicyContext(policy, await listProxyHostsForSecurity(), groups);
 };
 
 const decorateEventsWithHostPolicy = (events, context) =>
@@ -1323,6 +1359,9 @@ const decorateEventsWithHostPolicy = (events, context) =>
 				proxyHostId: effective.proxyHostId,
 				securityMode: effective.mode,
 				endpointRulePath: effective.endpointRulePath || null,
+				policySource: effective.policySource || (effective.inherited ? "global" : "host"),
+				groupId: effective.groupId || null,
+				groupName: effective.groupName || null,
 			};
 		})
 		.filter((event) => event.securityMode !== "off");
@@ -2132,6 +2171,7 @@ const getEnabledHosts = (model) =>
 const internalSecurity = {
 	prepare: async () => {
 		await ensureSecurityDir();
+		await internalSecurityHostGroups.prepare();
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
 		await internalSecurityDevices.prepare();
 		await internalSecurityDetectionRules.prepare();
@@ -2424,10 +2464,35 @@ const internalSecurity = {
 		await access.can("logs:list");
 		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIMIT);
 		const minRisk = clamp(Number.parseInt(options.minRisk, 10) || 0, 0, 100);
+		const maxRisk = clamp(Number.parseInt(options.maxRisk, 10) || 100, minRisk, 100);
+		const host = normalizeHostname(options.host);
+		const ip = String(options.ip || "").trim();
+		const method = String(options.method || "").trim().toUpperCase();
+		const status = Number.parseInt(options.status, 10);
+		const groupId = String(options.groupId || "").trim();
+		const search = String(options.search || "").trim().toLowerCase();
+		const sinceMinutes = clamp(Number.parseInt(options.sinceMinutes, 10) || 0, 0, 43_200);
+		const since = sinceMinutes ? Date.now() - sinceMinutes * 60_000 : 0;
 		const policy = await readPolicyUnsafe();
 		const events = await loadEventHistory(limit, policy);
 		const hostPolicyContext = await getHostPolicyContext(policy);
-		return decorateEventsWithHostPolicy(events, hostPolicyContext).filter((event) => event.risk >= minRisk);
+		return decorateEventsWithHostPolicy(events, hostPolicyContext).filter((event) => {
+			if (event.risk < minRisk || event.risk > maxRisk) return false;
+			if (host && normalizeHostname(event.host) !== host) return false;
+			if (ip && !String(event.ip || "").includes(ip)) return false;
+			if (method && event.method !== method) return false;
+			if (Number.isInteger(status) && status > 0 && event.status !== status) return false;
+			if (groupId && event.groupId !== groupId) return false;
+			if (since && (!event.timestamp || new Date(event.timestamp).getTime() < since)) return false;
+			if (search) {
+				const haystack = [event.host, event.path, event.ip, event.method, event.userAgent, event.requestId]
+					.filter(Boolean)
+					.join(" ")
+					.toLowerCase();
+				if (!haystack.includes(search)) return false;
+			}
+			return true;
+		});
 	},
 	getOverview: async (access) => {
 		await access.can("logs:list");
@@ -2598,8 +2663,12 @@ const internalSecurity = {
 	},
 
 	listHostPolicies: async (access) => {
-		const [hosts, policy] = await Promise.all([listProxyHostsForSecurity(access), readPolicyUnsafe()]);
-		return hosts.map((host) => hostPolicyEntry(host, policy));
+		const [hosts, policy, groups] = await Promise.all([
+			listProxyHostsForSecurity(access),
+			readPolicyUnsafe(),
+			internalSecurityHostGroups.listInternal(),
+		]);
+		return hosts.map((host) => hostPolicyEntry(host, policy, groupForHostId(groups, host.id)));
 	},
 
 	getHostPolicyDefaults: async (access) => {
@@ -2623,7 +2692,8 @@ const internalSecurity = {
 		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
 		const host = await getProxyHostForSecurity(access, id, "get", ["id", "domain_names", "enabled"]);
 		if (!host?.id) throw new errs.ItemNotFoundError(id);
-		return hostPolicyEntry(host, await readPolicyUnsafe());
+		const [policy, groups] = await Promise.all([readPolicyUnsafe(), internalSecurityHostGroups.listInternal()]);
+		return hostPolicyEntry(host, policy, groupForHostId(groups, host.id));
 	},
 
 	updateHostPolicy: async (access, hostId, data) => {

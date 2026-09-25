@@ -8,6 +8,7 @@ import internalAuditLog from "./audit-log.js";
 import internalCertificate from "./certificate.js";
 import internalHost from "./host.js";
 import internalNginx from "./nginx.js";
+import internalSecurityHostGroups from "./security_host_groups.js";
 
 const omissions = () => {
 	return ["is_deleted", "owner.is_deleted"];
@@ -116,7 +117,7 @@ const internalProxyHost = {
 			})
 		.then(async (row) => {
 			// Configure nginx
-			return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
+			return internalSecurityHostGroups.ensureHostAclFile(row.id).then(() => internalNginx.configure(proxyHostModel, "proxy_host", row)).then(() => {
 				return row;
 			});
 		})
@@ -250,7 +251,7 @@ const internalProxyHost = {
 						return row;
 					}
 					// Configure nginx
-					return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
+					return internalSecurityHostGroups.ensureHostAclFile(row.id).then(() => internalNginx.configure(proxyHostModel, "proxy_host", row)).then((new_meta) => {
 						row.meta = new_meta;
 						return _.omit(internalHost.cleanRowCertificateMeta(row), omissions());
 					});
@@ -331,6 +332,7 @@ const internalProxyHost = {
 							return internalNginx.reload();
 						});
 					})
+					.then(() => internalSecurityHostGroups.removeHostAclFile(row.id))
 					.then(() => {
 						// Add to audit log
 						return internalAuditLog.add(access, {
@@ -380,6 +382,7 @@ const internalProxyHost = {
 				});
 
 			// Configure nginx
+			await internalSecurityHostGroups.ensureHostAclFile(row.id);
 			await internalNginx.configure(proxyHostModel, "proxy_host", row);
 
 			// Add to audit log

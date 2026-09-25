@@ -5,6 +5,7 @@ import internalSecurityAlerts from "../internal/security_alerts.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
 import internalSecurityDetectionRules from "../internal/security_detection_rules.js";
+import internalSecurityHostGroups from "../internal/security_host_groups.js";
 import internalSecurityRuleReviews from "../internal/security_rule_reviews.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
@@ -436,6 +437,14 @@ router.get("/events", async (req, res, next) => {
 		const data = await internalSecurity.getEvents(res.locals.access, {
 			limit: req.query.limit,
 			minRisk: req.query.min_risk,
+			maxRisk: req.query.max_risk,
+			host: req.query.host,
+			ip: req.query.ip,
+			method: req.query.method,
+			status: req.query.status,
+			groupId: req.query.group_id,
+			search: req.query.search,
+			sinceMinutes: req.query.since_minutes,
 		});
 		res.status(200).send(data);
 	} catch (err) {
@@ -555,6 +564,62 @@ router
 			next(err);
 		}
 	});
+router
+	.route("/host-groups")
+	.get(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurityHostGroups.list(res.locals.access));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.post(async (req, res, next) => {
+		try {
+			res.status(201).send(
+				await internalSecurityHostGroups.create(res.locals.access, {
+					name: req.body?.name,
+					description: req.body?.description,
+					hostIds: req.body?.host_ids,
+					accessMode: req.body?.access_mode,
+					sources: req.body?.sources,
+					securityMode: req.body?.security_mode,
+				}),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
+router
+	.route("/host-groups/:group_id")
+	.put(async (req, res, next) => {
+		try {
+			res.status(200).send(
+				await internalSecurityHostGroups.update(res.locals.access, req.params.group_id, {
+					name: req.body?.name,
+					description: req.body?.description,
+					hostIds: req.body?.host_ids,
+					accessMode: req.body?.access_mode,
+					sources: req.body?.sources,
+					securityMode: req.body?.security_mode,
+				}),
+			);
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	})
+	.delete(async (req, res, next) => {
+		try {
+			res.status(200).send(await internalSecurityHostGroups.delete(res.locals.access, req.params.group_id));
+		} catch (err) {
+			debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+			next(err);
+		}
+	});
+
 router
 	.route("/challenges")
 	.get(async (req, res, next) => {

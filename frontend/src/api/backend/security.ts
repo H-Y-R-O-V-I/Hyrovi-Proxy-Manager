@@ -24,6 +24,9 @@ export interface SecurityEvent {
 	proxyHostId: number | null;
 	securityMode: SecurityHostMode;
 	endpointRulePath: string | null;
+	policySource: "host" | "group" | "global";
+	groupId: string | null;
+	groupName: string | null;
 	signals: SecuritySignal[];
 }
 
@@ -149,12 +152,54 @@ export interface SecurityHostPolicyDefaults extends SecurityHostPolicy {
 	enforcementEnabled: boolean;
 }
 
+export interface SecurityHostPolicyGroupRef {
+	id: string;
+	name: string;
+	securityMode: "inherit" | SecurityHostMode;
+	accessMode: "open" | "allowlist" | "denylist";
+	sources: string[];
+}
+
 export interface SecurityHostPolicyEntry {
 	id: number;
 	domainNames: string[];
 	enabled: boolean;
+	group: SecurityHostPolicyGroupRef | null;
+	policySource: "host" | "group" | "global";
 	policy: SecurityHostPolicy | null;
 	effective: SecurityHostPolicy;
+}
+
+export interface SecurityHostGroupHost {
+	id: number;
+	domainNames: string[];
+	enabled: boolean;
+}
+
+export interface SecurityHostGroup {
+	id: string;
+	name: string;
+	description: string;
+	hostIds: number[];
+	hosts: SecurityHostGroupHost[];
+	accessMode: "open" | "allowlist" | "denylist";
+	sources: string[];
+	securityMode: "inherit" | SecurityHostMode;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface SecurityEventFilters {
+	limit?: number;
+	minRisk?: number;
+	maxRisk?: number;
+	host?: string;
+	ip?: string;
+	method?: string;
+	status?: number;
+	groupId?: string;
+	search?: string;
+	sinceMinutes?: number;
 }
 export interface SecurityPolicy {
 	autoBlockEnabled: boolean;
@@ -636,10 +681,28 @@ export async function acknowledgeSecurityAlert(id: string): Promise<SecurityAler
 	return await api.post({ url: `/security/alerts/${encodeURIComponent(id)}/acknowledge` });
 }
 
-export async function getSecurityEvents(limit = 250, minRisk = 0): Promise<SecurityEvent[]> {
+export async function getSecurityEvents(
+	limitOrFilters: number | SecurityEventFilters = 250,
+	legacyMinRisk = 0,
+): Promise<SecurityEvent[]> {
+	const params: SecurityEventFilters =
+		typeof limitOrFilters === "number"
+			? { limit: limitOrFilters, minRisk: legacyMinRisk }
+			: limitOrFilters;
 	return await api.get({
 		url: "/security/events",
-		params: { limit, minRisk },
+		params: {
+			limit: params.limit,
+			minRisk: params.minRisk,
+			maxRisk: params.maxRisk,
+			host: params.host,
+			ip: params.ip,
+			method: params.method,
+			status: params.status,
+			groupId: params.groupId,
+			search: params.search,
+			sinceMinutes: params.sinceMinutes,
+		},
 	});
 }
 
@@ -680,6 +743,27 @@ export async function updateSecurityHostPolicy(
 
 export async function deleteSecurityHostPolicy(id: number): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/host-policies/${encodeURIComponent(id)}` });
+}
+
+export async function getSecurityHostGroups(): Promise<SecurityHostGroup[]> {
+	return await api.get({ url: "/security/host-groups" });
+}
+
+export async function createSecurityHostGroup(
+	data: Pick<SecurityHostGroup, "name" | "description" | "hostIds" | "accessMode" | "sources" | "securityMode">,
+): Promise<SecurityHostGroup> {
+	return await api.post({ url: "/security/host-groups", data });
+}
+
+export async function updateSecurityHostGroup(
+	id: string,
+	data: Partial<Pick<SecurityHostGroup, "name" | "description" | "hostIds" | "accessMode" | "sources" | "securityMode">>,
+): Promise<SecurityHostGroup> {
+	return await api.put({ url: `/security/host-groups/${encodeURIComponent(id)}`, data });
+}
+
+export async function deleteSecurityHostGroup(id: string): Promise<{ success: boolean }> {
+	return await api.del({ url: `/security/host-groups/${encodeURIComponent(id)}` });
 }
 export async function getSecurityTrustedDevices(): Promise<SecurityTrustedDevice[]> {
 	return await api.get({ url: "/security/trusted-devices" });

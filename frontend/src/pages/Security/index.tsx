@@ -50,6 +50,9 @@ import {
 } from "src/api/backend";
 import { Button, HasPermission } from "src/components";
 import { ADMIN, VIEW } from "src/modules/Permissions";
+import SecurityDashboard from "./Dashboard";
+import SecurityGroups from "./Groups";
+import styles from "./Security.module.css";
 
 const POLL_MS = 5000;
 
@@ -211,7 +214,7 @@ const incidentCorrelationLabel = (correlation: "attack_session" | "request_id" |
 	}
 };
 
-const Security = () => {
+const SecuritySettings = () => {
 	const queryClient = useQueryClient();
 	const [minRisk, setMinRisk] = useState(20);
 	const [ip, setIp] = useState("");
@@ -2757,6 +2760,48 @@ const Security = () => {
 							</tbody>
 						</table>
 					</div>
+				</div>
+			</div>
+		</HasPermission>
+	);
+};
+
+type SecurityTab = "dashboard" | "groups" | "settings";
+
+const Security = () => {
+	const [tab, setTab] = useState<SecurityTab>("dashboard");
+
+	return (
+		<HasPermission section={ADMIN} permission={VIEW} pageLoading loadingNoLogo>
+			<div>
+				<div className={styles.tabs}>
+					<button
+						type="button"
+						className={`${styles.tab} ${tab === "dashboard" ? styles.tabActive : ""}`}
+						onClick={() => setTab("dashboard")}
+					>
+						Dashboard
+					</button>
+					<button
+						type="button"
+						className={`${styles.tab} ${tab === "groups" ? styles.tabActive : ""}`}
+						onClick={() => setTab("groups")}
+					>
+						Groups
+					</button>
+					<button
+						type="button"
+						className={`${styles.tab} ${tab === "settings" ? styles.tabActive : ""}`}
+						onClick={() => setTab("settings")}
+					>
+						Settings
+					</button>
+				</div>
+
+				<div className="mt-3">
+					{tab === "dashboard" ? <SecurityDashboard /> : null}
+					{tab === "groups" ? <SecurityGroups /> : null}
+					{tab === "settings" ? <SecuritySettings /> : null}
 				</div>
 			</div>
 		</HasPermission>
