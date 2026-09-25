@@ -97,6 +97,18 @@
 .reasonList { display: flex; flex-direction: column; gap: 6px; }
 .reasonList > div { position: relative; padding: 8px 10px 8px 26px; border-radius: 4px; background: var(--tblr-bg-surface-secondary); font-size: .8rem; }
 .reasonList > div::before { content: "•"; position: absolute; left: 11px; font-weight: 700; }
+.trafficBreakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.trafficBreakdown > div { min-width: 0; padding: 10px; border: 1px solid var(--tblr-border-color); border-radius: 4px; background: var(--tblr-bg-surface-secondary); }
+.trafficBreakdown span { display: block; color: var(--tblr-secondary); font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 7px; }
+.trafficBreakdown strong { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: .78rem; }
+.trafficBreakdown small { color: var(--tblr-secondary); font-weight: 500; }
+.pathList { display: flex; flex-direction: column; }
+.pathList button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; padding: 8px 9px; border: 0; border-bottom: 1px solid var(--tblr-border-color); background: transparent; color: inherit; text-align: left; }
+.pathList button:last-child { border-bottom: 0; }
+.pathList button:hover { background: var(--tblr-bg-surface-secondary); }
+.pathList button > span:first-child { overflow-wrap: anywhere; }
+.pathList button > span:last-child { text-align: right; }
+.pathList small { display: block; color: var(--tblr-secondary); font-size: .68rem; margin-top: 2px; }
 .detailGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--tblr-border-color); border-radius: 6px; overflow: hidden; }
 .detailGrid > div { padding: 11px 12px; border-bottom: 1px solid var(--tblr-border-color); }
 .detailGrid > div:nth-child(odd) { border-right: 1px solid var(--tblr-border-color); }
@@ -144,7 +156,9 @@
 	.timeline { overflow-x: auto; }
 	.requestCell { min-width: 210px; }
 	.hostSearch { width: 100%; }
-	.identityList > div, .detailGridCompact, .clientAssessment { grid-template-columns: 1fr; }
+	.identityList > div, .detailGridCompact, .clientAssessment, .trafficBreakdown { grid-template-columns: 1fr; }
+	.pathList button { grid-template-columns: 1fr; }
+	.pathList button > span:last-child { text-align: left; }
 	.identityList > div > span:last-child { text-align: left; }
 	.detailPanel { width: 100vw; }
 	.detailGrid { grid-template-columns: 1fr; }

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
 	createSecurityBlock,
 	getSecurityAppEvents,
+	getSecurityBlocks,
 	getSecurityEventDetail,
 	getSecurityEvents,
 	getSecurityHostGroups,
@@ -34,6 +35,11 @@ type SourceAssessment = {
 	missing: number;
 	maxRisk: number;
 	hostCount: number;
+	uniquePaths: number;
+	firstSeen: string | null;
+	lastSeen: string | null;
+	crawlerDetected: boolean;
+	crawlerAttack: boolean;
 	bytes: number;
 	reasons: string[];
 	signals: Array<{ id: string; label: string; score: number; count: number }>;
@@ -58,15 +64,23 @@ function peakRequestsPerMinute(events: SecurityEvent[]) {
 
 function assessSource(events: SecurityEvent[]): SourceAssessment {
 	const hosts = new Set<string>();
+	const paths = new Set<string>();
 	const signalMap = new Map<string, { id: string; label: string; score: number; count: number }>();
 	let suspicious = 0;
 	let denied = 0;
 	let missing = 0;
 	let maxRisk = 0;
 	let bytes = 0;
+	let firstSeen: string | null = null;
+	let lastSeen: string | null = null;
 
 	for (const event of events) {
 		hosts.add(event.host);
+		paths.add(event.path);
+		if (event.timestamp) {
+			if (!firstSeen || new Date(event.timestamp).getTime() < new Date(firstSeen).getTime()) firstSeen = event.timestamp;
+			if (!lastSeen || new Date(event.timestamp).getTime() > new Date(lastSeen).getTime()) lastSeen = event.timestamp;
+		}
 		if (event.risk >= 40) suspicious += 1;
 		if (event.status === 401 || event.status === 403) denied += 1;
 		if (event.status === 404) missing += 1;
@@ -83,7 +97,15 @@ function assessSource(events: SecurityEvent[]): SourceAssessment {
 	const peak = peakRequestsPerMinute(events);
 	const signals = [...signalMap.values()].sort((a, b) => b.score - a.score || b.count - a.count);
 	const ids = new Set(signals.map((signal) => signal.id));
+	const crawlerDetected =
+		ids.has("declared_crawler") ||
+		ids.has("automation_client") ||
+		ids.has("scanner_user_agent") ||
+		ids.has("crawler_path_sweep") ||
+		ids.has("crawler_404_sweep");
+	const crawlerAttack = ids.has("crawler_attack");
 	const strongAttackSignal =
+		crawlerAttack ||
 		ids.has("path_traversal") ||
 		ids.has("injection_probe") ||
 		ids.has("reconnaissance_burst") ||
@@ -92,6 +114,7 @@ function assessSource(events: SecurityEvent[]): SourceAssessment {
 		(ids.has("sensitive_file_probe") && ids.has("scanner_user_agent"));
 
 	const likelyAttack =
+		crawlerAttack ||
 		peak >= 300 ||
 		(maxRisk >= 60 && strongAttackSignal) ||
 		(peak >= 100 && denied >= 20) ||
@@ -99,6 +122,8 @@ function assessSource(events: SecurityEvent[]): SourceAssessment {
 	const isSuspicious = likelyAttack || peak >= 100 || maxRisk >= 40 || suspicious > 0;
 
 	const reasons: string[] = [];
+	if (crawlerAttack) reasons.push("Crawler/scanner behavior matched the malicious-crawler attack rules and is eligible for automatic blocking.");
+	else if (crawlerDetected) reasons.push("Automated crawler/bot behavior was detected, but automation alone is not considered an attack.");
 	if (peak >= 300) reasons.push(`Extreme traffic burst: ${peak} requests within 60 seconds.`);
 	else if (peak >= 100) reasons.push(`High request rate: ${peak} requests within 60 seconds.`);
 	if (denied >= 10) reasons.push(`${denied} authentication/authorization denials (401/403) in the inspected window.`);
@@ -111,7 +136,7 @@ function assessSource(events: SecurityEvent[]): SourceAssessment {
 
 	return {
 		level: likelyAttack ? "likely_attack" : isSuspicious ? "suspicious" : "normal",
-		label: likelyAttack ? "Likely attack" : isSuspicious ? "Suspicious" : "Normal",
+		label: crawlerAttack ? "Crawler attack" : likelyAttack ? "Likely attack" : crawlerDetected && isSuspicious ? "Crawler / suspicious" : crawlerDetected ? "Crawler" : isSuspicious ? "Suspicious" : "Normal",
 		peakRequestsPerMinute: peak,
 		requests: events.length,
 		suspicious,
@@ -119,6 +144,11 @@ function assessSource(events: SecurityEvent[]): SourceAssessment {
 		missing,
 		maxRisk,
 		hostCount: hosts.size,
+		uniquePaths: paths.size,
+		firstSeen,
+		lastSeen,
+		crawlerDetected,
+		crawlerAttack,
 		bytes,
 		reasons: [...new Set(reasons)].slice(0, 8),
 		signals,
@@ -196,6 +226,12 @@ export default function SecurityDashboard() {
 		queryFn: () => getSecurityAppEvents(500),
 		enabled: Boolean(selectedSourceIp),
 		refetchInterval: selectedSourceIp ? 10_000 : false,
+	});
+	const sourceBlocks = useQuery({
+		queryKey: ["security-source-blocks", selectedSourceIp],
+		queryFn: getSecurityBlocks,
+		enabled: Boolean(selectedSourceIp),
+		refetchInterval: selectedSourceIp ? 5000 : false,
 	});
 
 	const sourceStats = useMemo(() => {
@@ -296,6 +332,46 @@ export default function SecurityDashboard() {
 		return result.slice(0, 12);
 	}, [selectedSourceIp, sourceAppEvents.data]);
 
+	const sourceActiveBlock = useMemo(
+		() => (sourceBlocks.data ?? []).find((entry) => entry.ip === selectedSourceIp) ?? null,
+		[sourceBlocks.data, selectedSourceIp],
+	);
+	const sourceBlockedAttempts = useMemo(() => {
+		if (!sourceActiveBlock) return 0;
+		const started = new Date(sourceActiveBlock.createdAt).getTime();
+		return (sourceDetail.data ?? []).filter((event) => {
+			if (!event.timestamp || event.status !== 403) return false;
+			return new Date(event.timestamp).getTime() >= started;
+		}).length;
+	}, [sourceActiveBlock, sourceDetail.data]);
+	const sourceMethods = useMemo(() => {
+		const map = new Map<string, number>();
+		for (const event of sourceDetail.data ?? []) map.set(event.method || "UNKNOWN", (map.get(event.method || "UNKNOWN") ?? 0) + 1);
+		return [...map.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+	}, [sourceDetail.data]);
+	const sourceStatuses = useMemo(() => {
+		const map = new Map<string, number>();
+		for (const event of sourceDetail.data ?? []) {
+			const family = statusFamily(event.status);
+			map.set(family, (map.get(family) ?? 0) + 1);
+		}
+		return [...map.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+	}, [sourceDetail.data]);
+	const sourcePaths = useMemo(() => {
+		const map = new Map<string, { count: number; maxRisk: number; statuses: Set<number> }>();
+		for (const event of sourceDetail.data ?? []) {
+			const row = map.get(event.path) ?? { count: 0, maxRisk: 0, statuses: new Set<number>() };
+			row.count += 1;
+			row.maxRisk = Math.max(row.maxRisk, event.risk);
+			if (event.status) row.statuses.add(event.status);
+			map.set(event.path, row);
+		}
+		return [...map.entries()]
+			.map(([path, row]) => ({ path, count: row.count, maxRisk: row.maxRisk, statuses: [...row.statuses].sort() }))
+			.sort((a, b) => b.maxRisk - a.maxRisk || b.count - a.count)
+			.slice(0, 12);
+	}, [sourceDetail.data]);
+
 	const sourceUserAgents = useMemo(() => {
 		const map = new Map<string, number>();
 		for (const event of sourceDetail.data ?? []) {
@@ -316,7 +392,13 @@ export default function SecurityDashboard() {
 
 	const block = useMutation({
 		mutationFn: (sourceIp: string) => createSecurityBlock({ ip: sourceIp, durationMinutes: 60, reason: "Blocked from Security dashboard", source: "dashboard" }),
-		onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["security-overview"] }); },
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-source-blocks"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-dashboard-events"] }),
+			]);
+		},
 	});
 
 	const refresh = async () => {
@@ -372,7 +454,7 @@ export default function SecurityDashboard() {
 			</div>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Top source IPs</h3><span className="text-secondary small">click a client to inspect</span></div>
-				<div className={styles.sourceList}>{sourceRows.map((row) => <button type="button" className={`${styles.sourceRow} btn btn-link text-start text-reset`} key={row.source} onClick={() => openSource(row.source)}><span><span className={styles.mono}>{row.source}</span><small>{row.hostCount} hosts · {formatBytes(row.bytes)} · peak {row.peakRequestsPerMinute}/min</small></span><span>{row.requests} req<small>{row.suspicious} suspicious</small></span><span><span className={`badge ${assessmentBadgeClass(row.level)}`}>{row.label}</span><small className="text-end">risk {row.maxRisk}</small></span></button>)}{sourceRows.length === 0 ? <div className="p-3 text-secondary">No traffic in this filter.</div> : null}</div>
+				<div className={styles.sourceList}>{sourceRows.map((row) => <button type="button" className={`${styles.sourceRow} btn btn-link text-start text-reset`} key={row.source} onClick={() => openSource(row.source)}><span><span className={styles.mono}>{row.source}</span><small>{row.hostCount} hosts · {formatBytes(row.bytes)} · peak {row.peakRequestsPerMinute}/min</small></span><span>{row.requests} req<small>{row.suspicious} suspicious</small></span><span><span className={`badge ${assessmentBadgeClass(row.level)}`}>{row.label}</span><small className="text-end">risk {row.maxRisk} · {row.uniquePaths} paths</small></span></button>)}{sourceRows.length === 0 ? <div className="p-3 text-secondary">No traffic in this filter.</div> : null}</div>
 			</div>
 		</div>
 
@@ -424,6 +506,7 @@ export default function SecurityDashboard() {
 						<div>
 							<span>Assessment</span>
 							<strong><span className={`badge ${assessmentBadgeClass(sourceAssessment.level)}`}>{sourceAssessment.label}</span></strong>
+							{sourceActiveBlock ? <small className="d-block mt-1 text-danger">Blocked until {formatTime(sourceActiveBlock.expiresAt)}</small> : null}
 						</div>
 						<p>
 							This is an assessment of network behavior from an IP address, not proof of a specific human identity.
@@ -439,7 +522,42 @@ export default function SecurityDashboard() {
 						<div><span>Denied 401/403</span><strong>{sourceAssessment.denied}</strong></div>
 						<div><span>404 responses</span><strong>{sourceAssessment.missing}</strong></div>
 						<div><span>Destinations</span><strong>{sourceAssessment.hostCount}</strong></div>
+						<div><span>Unique paths</span><strong>{sourceAssessment.uniquePaths}</strong></div>
+						<div><span>First seen · 60m</span><strong>{formatTime(sourceAssessment.firstSeen)}</strong></div>
+						<div><span>Last seen</span><strong>{formatTime(sourceAssessment.lastSeen)}</strong></div>
+						<div><span>Crawler detected</span><strong>{sourceAssessment.crawlerDetected ? "Yes" : "No"}</strong></div>
 						<div><span>Response traffic</span><strong>{formatBytes(sourceAssessment.bytes)}</strong></div>
+					</div>
+
+					{sourceActiveBlock ? <div className={styles.detailSection}>
+						<h3>Active block / observed attempts</h3>
+						<div className={styles.detailGridCompact}>
+							<div><span>Blocked since</span><strong>{formatTime(sourceActiveBlock.createdAt)}</strong></div>
+							<div><span>Expires</span><strong>{formatTime(sourceActiveBlock.expiresAt)}</strong></div>
+							<div><span>Response source</span><strong>{sourceActiveBlock.source}</strong></div>
+							<div><span>403s after block</span><strong>{sourceBlockedAttempts}</strong></div>
+						</div>
+						<div className={styles.codeLine}>{sourceActiveBlock.reason}</div>
+						<div className="text-secondary small mt-2">Blocked requests remain in HYROVI Sec traffic logs, so attempts after enforcement stay visible in this profile and the request timeline.</div>
+					</div> : null}
+
+					<div className={styles.detailSection}>
+						<h3>Traffic shape</h3>
+						<div className={styles.trafficBreakdown}>
+							<div><span>Methods</span>{sourceMethods.map((row) => <strong key={row.name}>{row.name} <small>{row.count}</small></strong>)}</div>
+							<div><span>Status families</span>{sourceStatuses.map((row) => <strong key={row.name}>{row.name} <small>{row.count}</small></strong>)}</div>
+						</div>
+					</div>
+
+					<div className={styles.detailSection}>
+						<h3>Most relevant paths</h3>
+						<div className={styles.pathList}>
+							{sourcePaths.map((row) => <button type="button" key={row.path} onClick={() => { setSearch(row.path); setIp(selectedSourceIp); setSelectedSourceIp(null); }}>
+								<span className={styles.mono}>{row.path}</span>
+								<span><strong>{row.count}</strong><small>risk {row.maxRisk} · {row.statuses.join(", ") || "no status"}</small></span>
+							</button>)}
+							{sourcePaths.length === 0 ? <div className="text-secondary p-2">No paths in this window.</div> : null}
+						</div>
 					</div>
 
 					<div className={styles.detailSection}>
@@ -497,7 +615,7 @@ export default function SecurityDashboard() {
 							</div>
 						</div>
 						<div className={styles.similarList}>
-							{(sourceDetail.data ?? []).slice(0, 20).map((event, index) => <button type="button" key={event.requestId || `${event.timestamp}-${index}`} onClick={() => event.requestId && openRequest(event.requestId)} disabled={!event.requestId}><span>{event.method} {event.host}{event.path}<small>{formatTime(event.timestamp)} · HTTP {event.status}</small></span><strong><span className={`badge ${riskClass(event.risk)}`}>{event.risk}</span></strong></button>)}
+							{(sourceDetail.data ?? []).slice(0, 20).map((event, index) => <button type="button" key={event.requestId || `${event.timestamp}-${index}`} onClick={() => event.requestId && openRequest(event.requestId)} disabled={!event.requestId}><span>{event.method} {event.host}{event.path}<small>{formatTime(event.timestamp)} · HTTP {event.status}{sourceActiveBlock && event.timestamp && event.status === 403 && new Date(event.timestamp).getTime() >= new Date(sourceActiveBlock.createdAt).getTime() ? " · blocked attempt" : ""}</small></span><strong><span className={`badge ${riskClass(event.risk)}`}>{event.risk}</span></strong></button>)}
 						</div>
 					</div>
 				</div> : null}

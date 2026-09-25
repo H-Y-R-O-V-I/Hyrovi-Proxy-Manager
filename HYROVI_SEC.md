@@ -25,6 +25,8 @@ The first implementation adds:
 - critical/suspicious request inspection with per-request drill-down, explainable risk, similar-request correlation, linked attack sessions and response state/history in the admin UI;
 - clickable source-IP/client profiles with 60-minute request-rate analysis, destinations, user-agent signatures, explainable reasons, correlated HYROVI account/session/device metadata where available, and direct drill-down into individual requests;
 - source-level behavior classification: a 100 requests/60s burst is explicitly marked suspicious, while `Likely attack` requires a more extreme burst (300+/60s) or supporting attack/recon/auth-failure evidence so ordinary high-volume traffic is not mislabeled;
+- crawler/bot analysis that distinguishes declared or scripted automation from malicious scanning; benign crawler identity alone is informational, while path sweeps, 404 enumeration, scanner signatures and sensitive/admin/injection probes can combine into an explainable `crawler_attack` signal;
+- confirmed crawler/scanner attacks are directly hard-blocked in active Protect/Strict enforcement with source `auto-crawler-block`; the triggering request and later denied attempts remain in the server-level HYROVI Sec access log and are shown in the client profile with block reason, expiry and observed post-block 403 attempts;
 - manual timed IPv4/IPv6 address or CIDR soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;

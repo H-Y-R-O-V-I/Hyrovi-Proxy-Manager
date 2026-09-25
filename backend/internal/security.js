@@ -316,8 +316,14 @@ const baseSignals = (event, detectionRules = []) => {
 	if (["TRACE", "TRACK", "CONNECT"].includes(event.method)) {
 		add("unusual_method", 35, `Unusual HTTP method ${event.method}`);
 	}
-	if (/sqlmap|nikto|masscan|nmap|acunetix|nessus|gobuster|dirbuster|ffuf|wpscan/i.test(ua)) {
+	if (/sqlmap|nikto|masscan|nmap|acunetix|nessus|gobuster|dirbuster|ffuf|wpscan|nuclei|zgrab|feroxbuster/i.test(ua)) {
 		add("scanner_user_agent", 50, "Known security scanner user-agent");
+	}
+	if (/googlebot|bingbot|duckduckbot|yandexbot|baiduspider|slurp|facebookexternalhit|twitterbot|applebot|bot\b|crawler|spider/i.test(ua)) {
+		add("declared_crawler", 6, "Crawler/bot user-agent", false);
+	}
+	if (/scrapy|python-requests|python\/|aiohttp|httpx|go-http-client|libwww-perl|curl\/|wget\/|headlesschrome|puppeteer|playwright/i.test(ua)) {
+		add("automation_client", 10, "Scripted/automated HTTP client", false);
 	}
 	if ([401, 403].includes(event.status)) {
 		add("access_denied", 10, `HTTP ${event.status}`);
@@ -365,11 +371,13 @@ const enrichEvents = (events, detectionRules = []) => {
 		let startIndex = 0;
 		let denied = 0;
 		let missing = 0;
+		const pathCounts = new Map();
 		const suspiciousPathCounts = new Map();
 
 		const addToWindow = (item) => {
 			if ([401, 403].includes(item.event.status)) denied += 1;
 			if (item.event.status === 404) missing += 1;
+			pathCounts.set(item.event.path, (pathCounts.get(item.event.path) || 0) + 1);
 			if (item.baseAutomationRisk >= 30) {
 				suspiciousPathCounts.set(item.event.path, (suspiciousPathCounts.get(item.event.path) || 0) + 1);
 			}
@@ -378,6 +386,9 @@ const enrichEvents = (events, detectionRules = []) => {
 		const removeFromWindow = (item) => {
 			if ([401, 403].includes(item.event.status)) denied -= 1;
 			if (item.event.status === 404) missing -= 1;
+			const pathCount = (pathCounts.get(item.event.path) || 0) - 1;
+			if (pathCount <= 0) pathCounts.delete(item.event.path);
+			else pathCounts.set(item.event.path, pathCount);
 			if (item.baseAutomationRisk >= 30) {
 				const next = (suspiciousPathCounts.get(item.event.path) || 0) - 1;
 				if (next <= 0) suspiciousPathCounts.delete(item.event.path);
@@ -398,6 +409,7 @@ const enrichEvents = (events, detectionRules = []) => {
 				requests: endIndex - startIndex + 1,
 				denied,
 				missing,
+				uniquePaths: pathCounts.size,
 				suspiciousPaths: suspiciousPathCounts.size,
 			});
 		}
@@ -421,6 +433,32 @@ const enrichEvents = (events, detectionRules = []) => {
 		if (recent?.denied >= 10) add("auth_failure_burst", 35, `${recent.denied} denied requests from this IP in 60s`);
 		if (recent?.missing >= 20) add("path_enumeration", 25, `${recent.missing} missing paths requested in 60s`);
 		if (recent?.suspiciousPaths >= 5) add("reconnaissance_burst", 35, "Multiple suspicious paths probed");
+		if (recent?.requests >= 50 && recent?.uniquePaths >= 30) {
+			add("crawler_path_sweep", 35, `${recent.uniquePaths} unique paths crawled in 60s`);
+		}
+		if (recent?.missing >= 20 && recent?.uniquePaths >= 15) {
+			add("crawler_404_sweep", 35, `${recent.missing} missing responses across ${recent.uniquePaths} unique paths in 60s`);
+		}
+
+		const signalIds = new Set(signals.map((signal) => signal.id));
+		const crawlerAttack =
+			(signalIds.has("scanner_user_agent") &&
+				(signalIds.has("sensitive_file_probe") ||
+					signalIds.has("cms_probe") ||
+					signalIds.has("path_enumeration") ||
+					signalIds.has("reconnaissance_burst") ||
+					signalIds.has("injection_probe"))) ||
+			(signalIds.has("crawler_path_sweep") &&
+				(signalIds.has("crawler_404_sweep") ||
+					signalIds.has("path_enumeration") ||
+					signalIds.has("reconnaissance_burst") ||
+					signalIds.has("sensitive_file_probe") ||
+					signalIds.has("cms_probe") ||
+					signalIds.has("injection_probe"))) ||
+			(signalIds.has("extreme_request_burst") &&
+				(signalIds.has("declared_crawler") || signalIds.has("automation_client")) &&
+				(recent?.suspiciousPaths || 0) >= 3);
+		if (crawlerAttack) add("crawler_attack", 55, "Malicious crawler/scanner attack pattern");
 
 		risk = clamp(risk, 0, 100);
 		automationRisk = clamp(automationRisk, 0, 100);
@@ -915,6 +953,18 @@ const rememberEvent = (event) => {
 		processedEventIds.delete(processedEventOrder.shift());
 	}
 	return true;
+};
+
+const eventIsCrawlerAttackCandidate = (event, policy) => {
+	if (
+		(event.automationRisk ?? event.risk) < Math.min(policy.autoBlockThreshold, 80) ||
+		isPrivateOrLoopback(event.ip) ||
+		isTrustedSource(event.ip, policy.trustedSources)
+	) {
+		return false;
+	}
+	const ids = new Set(event.signals.map((signal) => signal.id));
+	return ids.has("crawler_attack");
 };
 
 const eventIsAutoBlockCandidate = (event, policy) => {
@@ -1447,6 +1497,23 @@ const monitorThreats = async () => {
 				autoRateLimitThreshold: effective.autoRateLimitThreshold,
 				autoBlockThreshold: effective.autoBlockThreshold,
 			};
+
+			if (eventIsCrawlerAttackCandidate(event, candidatePolicy)) {
+				const reason = `Crawler/scanner attack blocked (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals
+					.map((signal) => signal.id)
+					.join(", ")}`;
+				const block = createBlockRecord({
+					ip: event.ip,
+					durationMinutes: effective.autoBlockMinutes,
+					source: "auto-crawler-block",
+					reason,
+				});
+				blockAdditions.push(block);
+				blockedIps.add(event.ip);
+				if (existingChallengeByIp.has(event.ip)) challengeRemovals.add(event.ip);
+				delete escalations[event.ip];
+				continue;
+			}
 
 			if (eventIsAutoBlockCandidate(event, candidatePolicy)) {
 				const reason = `High-confidence attack (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals
