@@ -5,6 +5,7 @@ import AuthStore from "src/modules/AuthStore";
 
 const queryClient = new QueryClient();
 const contentTypeHeader = "Content-Type";
+let authResetInProgress = false;
 
 interface BuildUrlArgs {
 	url: string;
@@ -50,14 +51,21 @@ async function processResponse(response: Response) {
 	const payload = await response.json();
 	if (!response.ok) {
 		if (response.status === 401) {
-			// Force logout user and reload the page if Unauthorized
-			AuthStore.clear();
-			queryClient.clear();
-			window.location.reload();
+			// A migrated or rotated JWT key can invalidate an otherwise unexpired browser token.
+			// Reset auth exactly once and force a clean app bootstrap instead of letting
+			// parallel React Query requests trigger a reload loop with a half-rendered UI.
+			if (!authResetInProgress) {
+				authResetInProgress = true;
+				AuthStore.clear();
+				queryClient.clear();
+				window.location.replace("/");
+			}
+			return await new Promise<never>(() => {});
 		}
-		throw new Error(
-			typeof payload.error.messageI18n !== "undefined" ? payload.error.messageI18n : payload.error.message,
-		);
+
+		const message =
+			payload?.error?.messageI18n ?? payload?.error?.message ?? `Request failed with status ${response.status}`;
+		throw new Error(message);
 	}
 	return camelizeKeys(payload) as any;
 }
