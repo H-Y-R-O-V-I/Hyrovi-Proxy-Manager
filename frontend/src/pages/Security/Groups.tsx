@@ -5,9 +5,12 @@ import {
 	createSecurityHostGroup,
 	deleteSecurityHostGroup,
 	getSecurityEvents,
+	getSecurityHostAccess,
 	getSecurityHostGroups,
 	getSecurityHostPolicies,
+	updateSecurityHostAccess,
 	updateSecurityHostGroup,
+	type SecurityHostAccessMode,
 	type SecurityHostGroup,
 	type SecurityHostMode,
 } from "src/api/backend";
@@ -52,6 +55,15 @@ export default function SecurityGroups() {
 	const [draft, setDraft] = useState<Draft>(emptyDraft);
 	const [error, setError] = useState("");
 	const [hostSearch, setHostSearch] = useState("");
+	const [accessHostId, setAccessHostId] = useState<number | null>(null);
+	const [accessMode, setAccessMode] = useState<SecurityHostAccessMode>("inherit");
+	const [accessSourcesText, setAccessSourcesText] = useState("");
+	const [accessError, setAccessError] = useState("");
+	const hostAccess = useQuery({
+		queryKey: ["security-host-access", accessHostId],
+		queryFn: () => getSecurityHostAccess(accessHostId as number),
+		enabled: Boolean(accessHostId),
+	});
 	const groupTraffic = useQuery({
 		queryKey: ["security-group-traffic", draft.id],
 		queryFn: () => getSecurityEvents({ limit: 2000, groupId: draft.id || undefined, sinceMinutes: 60 }),
@@ -64,6 +76,12 @@ export default function SecurityGroups() {
 		const fresh = groups.data?.find((group) => group.id === draft.id);
 		if (!fresh) setDraft(emptyDraft());
 	}, [draft.id, groups.data]);
+
+	useEffect(() => {
+		if (!hostAccess.data) return;
+		setAccessMode(hostAccess.data.accessMode);
+		setAccessSourcesText(hostAccess.data.sources.join("\n"));
+	}, [hostAccess.data]);
 
 	const assignedElsewhere = useMemo(() => {
 		const result = new Map<number, string>();
@@ -96,6 +114,7 @@ export default function SecurityGroups() {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["security-host-groups"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-host-policies"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-host-access"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-dashboard-events"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-group-traffic"] }),
 		]);
@@ -125,6 +144,30 @@ export default function SecurityGroups() {
 		onError: (err) => setError(err instanceof Error ? err.message : "Could not save group"),
 	});
 
+	const saveAccess = useMutation({
+		mutationFn: async () => {
+			setAccessError("");
+			if (!accessHostId) throw new Error("Select a proxy host");
+			const sources = parseSources(accessSourcesText);
+			if (accessMode === "allowlist" && sources.length === 0) {
+				throw new Error("Allowlist requires at least one IP or CIDR");
+			}
+			return updateSecurityHostAccess(accessHostId, {
+				accessMode,
+				sources: accessMode === "allowlist" || accessMode === "denylist" ? sources : [],
+			});
+		},
+		onSuccess: async (result) => {
+			queryClient.setQueryData(["security-host-access", result.hostId], result);
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: ["security-host-groups"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
+				queryClient.invalidateQueries({ queryKey: ["security-dashboard-events"] }),
+			]);
+		},
+		onError: (err) => setAccessError(err instanceof Error ? err.message : "Could not save host access"),
+	});
+
 	const remove = useMutation({
 		mutationFn: deleteSecurityHostGroup,
 		onSuccess: async () => {
@@ -149,10 +192,101 @@ export default function SecurityGroups() {
 		setError("");
 	};
 
+	const selectedAccessHost = (hosts.data ?? []).find((host) => host.id === accessHostId) ?? null;
+	const effectiveAccessMode =
+		accessMode === "inherit" ? hostAccess.data?.effectiveAccessMode ?? "open" : accessMode;
+	const resetAccessDraft = () => {
+		setAccessMode(hostAccess.data?.accessMode ?? "inherit");
+		setAccessSourcesText((hostAccess.data?.sources ?? []).join("\n"));
+		setAccessError("");
+	};
+
 	return <div className={styles.shell}>
 		<div className={styles.hero}>
-			<div><h1>Host groups</h1><p>Apply one security mode and IP policy to many proxy hosts at once.</p></div>
+			<div><h1>Access & host groups</h1><p>Control individual sites or apply one security mode and IP policy to many proxy hosts at once.</p></div>
 			<button type="button" className="btn btn-primary" onClick={() => { setDraft(emptyDraft()); setError(""); }}><IconPlus size={17} /> New group</button>
+		</div>
+
+		<div className={styles.editor}>
+			<div className="d-flex align-items-start justify-content-between gap-3 mb-3">
+				<div>
+					<h3 className="mb-1">Individual site access</h3>
+					<div className="text-secondary small">
+						Direct host rules override group access. Choose Inherit to follow the host group automatically.
+					</div>
+				</div>
+				{accessHostId ? <span className="badge bg-secondary-lt">Effective: {effectiveAccessMode}</span> : null}
+			</div>
+
+			{accessError ? <div className="alert alert-danger py-2">{accessError}</div> : null}
+
+			<div className={styles.editorGrid}>
+				<div>
+					<label className="form-label" htmlFor="security-host-access-host">Proxy host</label>
+					<select
+						id="security-host-access-host"
+						className="form-select"
+						value={accessHostId ?? ""}
+						onChange={(event) => {
+							const next = Number(event.target.value);
+							setAccessHostId(Number.isInteger(next) && next > 0 ? next : null);
+							setAccessMode("inherit");
+							setAccessSourcesText("");
+							setAccessError("");
+						}}
+					>
+						<option value="">Select a site…</option>
+						{(hosts.data ?? []).map((host) => <option key={host.id} value={host.id}>{host.domainNames.join(", ") || `Host #${host.id}`}</option>)}
+					</select>
+				</div>
+				<div>
+					<label className="form-label" htmlFor="security-host-access-mode">IP access</label>
+					<select
+						id="security-host-access-mode"
+						className="form-select"
+						value={accessMode}
+						disabled={!accessHostId || hostAccess.isLoading}
+						onChange={(event) => setAccessMode(event.target.value as SecurityHostAccessMode)}
+					>
+						<option value="inherit">Inherit group / default</option>
+						<option value="open">Open to all IPs</option>
+						<option value="allowlist">Only allow listed IPs</option>
+						<option value="denylist">Block listed IPs</option>
+					</select>
+				</div>
+				{accessMode === "allowlist" || accessMode === "denylist" ? <div className={styles.gridFull}>
+					<label className="form-label" htmlFor="security-host-access-sources">IPs / CIDRs</label>
+					<textarea
+						id="security-host-access-sources"
+						className="form-control font-monospace"
+						rows={4}
+						value={accessSourcesText}
+						onChange={(event) => setAccessSourcesText(event.target.value)}
+						placeholder={accessMode === "allowlist" ? "192.168.178.0/24\n203.0.113.10" : "203.0.113.0/24"}
+					/>
+					<div className="form-hint">IPv4 and IPv6 addresses or CIDRs, one per line or comma-separated.</div>
+				</div> : null}
+			</div>
+
+			{accessHostId && hostAccess.data ? <div className={styles.policyPreview}>
+				<div>
+					<span>Selected site</span>
+					<strong>{selectedAccessHost?.domainNames.join(", ") || `Host #${accessHostId}`}</strong>
+					<small>{hostAccess.data.group ? `Group: ${hostAccess.data.group.name}` : "No security group assigned"}</small>
+				</div>
+				<div>
+					<span>Current inherited access</span>
+					<strong>{hostAccess.data.group ? hostAccess.data.group.accessMode : "open"}</strong>
+					<small>{hostAccess.data.group?.sources.length ? `${hostAccess.data.group.sources.length} group IP/CIDR rules` : "No inherited IP restriction"}</small>
+				</div>
+			</div> : null}
+
+			<div className={styles.actions}>
+				<button type="button" className="btn btn-outline-secondary" disabled={!accessHostId} onClick={resetAccessDraft}>Reset</button>
+				<button type="button" className="btn btn-primary" disabled={!accessHostId || saveAccess.isPending || hostAccess.isLoading} onClick={() => saveAccess.mutate()}>
+					{saveAccess.isPending ? "Applying…" : "Save host access"}
+				</button>
+			</div>
 		</div>
 
 		<div className={styles.groupLayout}>
@@ -176,7 +310,7 @@ export default function SecurityGroups() {
 				<div className="d-flex align-items-start justify-content-between gap-3 mb-3">
 					<div>
 						<h3 className="mb-1">{draft.id ? "Edit group" : "New group"}</h3>
-						<div className="text-secondary small">Group IP access is always enforced. Explicit per-host security mode settings can override the group security mode.</div>
+						<div className="text-secondary small">Group IP access is inherited by member hosts unless a host has an explicit access override. Per-host security mode settings can also override the group security mode.</div>
 					</div>
 					{draft.id ? <button type="button" className="btn btn-outline-danger btn-sm" disabled={remove.isPending} onClick={() => remove.mutate(draft.id as string)}><IconTrash size={15} /> Delete</button> : null}
 				</div>
@@ -233,7 +367,7 @@ export default function SecurityGroups() {
 					<div>
 						<span>Security inheritance</span>
 						<strong>{draft.securityMode === "inherit" ? "Global security mode" : `${draft.securityMode} for group hosts`}</strong>
-						<small>Explicit per-host security policies can still override the security mode. Group IP access always remains enforced.</small>
+						<small>Explicit per-host access or security policies override the matching group value; hosts without overrides inherit this group.</small>
 					</div>
 				</div>
 

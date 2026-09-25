@@ -2787,7 +2787,7 @@ const Security = () => {
 						className={`${styles.tab} ${tab === "groups" ? styles.tabActive : ""}`}
 						onClick={() => setTab("groups")}
 					>
-						Groups
+						Access & groups
 					</button>
 					<button
 						type="button"

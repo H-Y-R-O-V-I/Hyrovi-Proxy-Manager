@@ -329,8 +329,8 @@ const internalSecurityHostGroups = {
 
 	updateHostAccess: async (access, hostId, data) => {
 		const id = Number.parseInt(hostId, 10);
-		await access.can("proxy_hosts:update", id);
 		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
+		await access.can("proxy_hosts:update", id);
 		await validateHostsExist([id]);
 		return withMutation(async () => {
 			const current = await readState();
@@ -347,8 +347,8 @@ const internalSecurityHostGroups = {
 
 	deleteHostAccess: async (access, hostId) => {
 		const id = Number.parseInt(hostId, 10);
-		await access.can("proxy_hosts:update", id);
 		if (!Number.isInteger(id) || id < 1) throw new errs.ValidationError("Invalid proxy host ID");
+		await access.can("proxy_hosts:update", id);
 		await validateHostsExist([id]);
 		return withMutation(async () => {
 			const current = await readState();
