@@ -416,7 +416,8 @@ const enrichEvents = (events, detectionRules = []) => {
 			signals.push({ id, score, label });
 		};
 
-		if (recent?.requests >= 120) add("request_burst", 25, `${recent.requests} requests from this IP in 60s`);
+		if (recent?.requests >= 100) add("request_burst", 25, `${recent.requests} requests from this IP in 60s`);
+		if (recent?.requests >= 300) add("extreme_request_burst", 35, `${recent.requests} requests from this IP in 60s — extreme traffic burst`);
 		if (recent?.denied >= 10) add("auth_failure_burst", 35, `${recent.denied} denied requests from this IP in 60s`);
 		if (recent?.missing >= 20) add("path_enumeration", 25, `${recent.missing} missing paths requested in 60s`);
 		if (recent?.suspiciousPaths >= 5) add("reconnaissance_burst", 35, "Multiple suspicious paths probed");

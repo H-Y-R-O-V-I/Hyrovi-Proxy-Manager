@@ -23,6 +23,8 @@ The first implementation adds:
 - bounded response-action history for rate-limit/block start, removal and expiry;
 - bounded daily security-event archive with configurable retention/minimum risk, independent of the rolling live nginx log window;
 - critical/suspicious request inspection with per-request drill-down, explainable risk, similar-request correlation, linked attack sessions and response state/history in the admin UI;
+- clickable source-IP/client profiles with 60-minute request-rate analysis, destinations, user-agent signatures, explainable reasons, correlated HYROVI account/session/device metadata where available, and direct drill-down into individual requests;
+- source-level behavior classification: a 100 requests/60s burst is explicitly marked suspicious, while `Likely attack` requires a more extreme burst (300+/60s) or supporting attack/recon/auth-failure evidence so ordinary high-volume traffic is not mislabeled;
 - manual timed IPv4/IPv6 address or CIDR soft rate limits and hard blocks;
 - continuous 5-second threat monitoring;
 - persistent Observe/Enforce auto-response policy with configurable soft-rate-limit and hard-block thresholds/durations;
