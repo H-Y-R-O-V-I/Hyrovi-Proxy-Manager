@@ -17,6 +17,12 @@ export interface SecurityEvent {
 	userAgent: string;
 	referrer: string;
 	accept: string;
+	acceptLanguage: string;
+	secChUa: string;
+	secChUaMobile: string;
+	secChUaPlatform: string;
+	deviceId: string | null;
+	clientFingerprint: string | null;
 	requestLength: number;
 	bytesSent: number;
 	requestTime: number;
@@ -427,6 +433,16 @@ export interface SecurityWebAnalytics {
 	devices: Array<{ name: string; count: number }>;
 	browsers: Array<{ name: string; count: number }>;
 	operatingSystems: Array<{ name: string; count: number }>;
+	clientTracking: {
+		events: number;
+		pageViews: number;
+		consentedDevices: number;
+		clientFingerprints: number;
+		sessions: number;
+		engagementSeconds: number;
+		routeChanges: number;
+		scroll: Record<"25" | "50" | "75" | "100", number>;
+	};
 	topPages: Array<{
 		host: string;
 		path: string;

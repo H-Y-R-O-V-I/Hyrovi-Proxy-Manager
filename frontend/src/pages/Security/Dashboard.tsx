@@ -493,8 +493,12 @@ export default function SecurityDashboard() {
 				];
 			case "visitors":
 				return [
-					metric("Visitors", web?.visitors ?? 0, "IP + user-agent estimate"), metric("Visits", web?.sessions ?? 0), metric("Avg visit", formatDuration(web?.avgSessionDurationMs ?? 0)),
-					metric("Source IPs", data?.analytics.observedSources ?? 0), metric("External entries", web?.referrers.external ?? 0), metric("Direct entries", web?.referrers.direct ?? 0),
+					metric("Visitors", web?.visitors ?? 0, "device/fingerprint estimate"),
+					metric("Tracked devices", web?.clientTracking.consentedDevices ?? 0, "persistent first-party IDs"),
+					metric("Fingerprints", web?.clientTracking.clientFingerprints ?? 0, "pseudonymous passive signatures"),
+					metric("Tracked sessions", web?.clientTracking.sessions ?? 0),
+					metric("Avg visit", formatDuration(web?.avgSessionDurationMs ?? 0)),
+					metric("Engagement", formatDuration((web?.clientTracking.engagementSeconds ?? 0) * 1000)),
 				];
 			case "behavior":
 				return [
@@ -633,6 +637,19 @@ export default function SecurityDashboard() {
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Top source IPs</h3><span className="text-secondary small">click a client to inspect</span></div>
 				<div className={styles.sourceList}>{sourceRows.map((row) => <button type="button" className={`${styles.sourceRow} btn btn-link text-start text-reset`} key={row.source} onClick={() => openSource(row.source)}><span><span className={styles.mono}>{row.source}</span><small>{row.hostCount} hosts · {formatBytes(row.bytes)} · peak {row.peakRequestsPerMinute}/min</small></span><span>{row.requests} req<small>{row.suspicious} suspicious</small></span><span><span className={`badge ${assessmentBadgeClass(row.level)}`}>{row.label}</span><small className="text-end">risk {row.maxRisk} · {row.uniquePaths} paths</small></span></button>)}{sourceRows.length === 0 ? <div className="p-3 text-secondary">No clients in this filter.</div> : null}</div>
+			</div>
+			<div className={styles.panel}>
+				<div className={styles.panelHeader}><h3>Tracking identity</h3><span className="text-secondary small">first-party + pseudonymous</span></div>
+				<div className={styles.statusGrid}>
+					<div><span>SDK events</span><strong>{overview.data?.webAnalytics.clientTracking.events ?? 0}</strong></div>
+					<div><span>SDK page views</span><strong>{overview.data?.webAnalytics.clientTracking.pageViews ?? 0}</strong></div>
+					<div><span>Consented devices</span><strong>{overview.data?.webAnalytics.clientTracking.consentedDevices ?? 0}</strong></div>
+					<div><span>Passive fingerprints</span><strong>{overview.data?.webAnalytics.clientTracking.clientFingerprints ?? 0}</strong></div>
+					<div><span>Tracked sessions</span><strong>{overview.data?.webAnalytics.clientTracking.sessions ?? 0}</strong></div>
+					<div><span>SPA route changes</span><strong>{overview.data?.webAnalytics.clientTracking.routeChanges ?? 0}</strong></div>
+					<div><span>Scroll ≥50%</span><strong>{overview.data?.webAnalytics.clientTracking.scroll["50"] ?? 0}</strong></div>
+					<div><span>Scroll 100%</span><strong>{overview.data?.webAnalytics.clientTracking.scroll["100"] ?? 0}</strong></div>
+				</div>
 			</div>
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Devices</h3><span className="text-secondary small">page-view classification</span></div>

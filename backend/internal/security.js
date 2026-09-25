@@ -6,6 +6,7 @@ import { global as logger } from "../logger.js";
 import internalNginx from "./nginx.js";
 import internalSecurityAppEvents from "./security_app_events.js";
 import internalSecurityAlerts from "./security_alerts.js";
+import internalSecurityAnalyticsTracker from "./security_analytics_tracker.js";
 import internalSecurityChallenge from "./security_challenge.js";
 import internalSecurityDevices from "./security_devices.js";
 import internalSecurityDetectionRules from "./security_detection_rules.js";
@@ -26,7 +27,7 @@ const ESCALATIONS_FILE = `${SECURITY_DIR}/escalations.json`;
 const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
 const APP_EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/app-events`;
 const GIB = 1024 * 1024 * 1024;
-const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v6`;
+const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v7`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const MAX_ANALYSIS_SCAN_BYTES = 8 * 1024 * 1024;
@@ -275,6 +276,19 @@ const normalizeEvent = (raw) => {
 	const requestLength = Number.parseInt(raw.request_length, 10) || 0;
 	const bytesSent = Number.parseInt(raw.bytes_sent, 10) || 0;
 	const requestTime = Number.parseFloat(raw.request_time) || 0;
+	const acceptLanguage = raw.accept_language || "";
+	const secChUa = raw.sec_ch_ua || "";
+	const secChUaMobile = raw.sec_ch_ua_mobile || "";
+	const secChUaPlatform = raw.sec_ch_ua_platform || "";
+	const deviceIdRaw = String(raw.device_id || "").trim();
+	const deviceId = /^[A-Za-z0-9._:-]{1,96}$/.test(deviceIdRaw) ? deviceIdRaw : null;
+	const clientFingerprint = internalSecurityAnalyticsTracker.fingerprintFromHeaders({
+		"user-agent": raw.user_agent || "",
+		"accept-language": acceptLanguage,
+		"sec-ch-ua": secChUa,
+		"sec-ch-ua-mobile": secChUaMobile,
+		"sec-ch-ua-platform": secChUaPlatform,
+	});
 	return {
 		timestamp: raw.ts || null,
 		requestId: raw.request_id || null,
@@ -286,6 +300,12 @@ const normalizeEvent = (raw) => {
 		userAgent: raw.user_agent || "",
 		referrer: raw.referer || "",
 		accept: raw.accept || "",
+		acceptLanguage,
+		secChUa,
+		secChUaMobile,
+		secChUaPlatform,
+		deviceId,
+		clientFingerprint,
 		requestLength,
 		bytesSent,
 		requestTime,
@@ -1946,7 +1966,11 @@ const buildWebAnalytics = (events) => {
 
 	for (const event of pageEvents) {
 		const host = event.host || "(unknown host)";
-		const visitorKey = `${event.ip || "(unknown)"}|${String(event.userAgent || "").slice(0, 240)}`;
+		const visitorKey = event.deviceId
+			? `device:${event.deviceId}`
+			: event.clientFingerprint
+				? `fingerprint:${event.clientFingerprint}`
+				: `${event.ip || "(unknown)"}|${String(event.userAgent || "").slice(0, 240)}`;
 		const siteVisitorKey = `${host}|${visitorKey}`;
 		const timestamp = parseTimestamp(event.timestamp)?.getTime() || 0;
 		visitors.add(siteVisitorKey);
@@ -2741,6 +2765,7 @@ const filterSecurityEvents = (events, options = {}) => {
 const internalSecurity = {
 	prepare: async () => {
 		await ensureSecurityDir();
+		await internalSecurityAnalyticsTracker.prepare();
 		await internalSecurityHostGroups.prepare();
 		await fs.promises.mkdir(EVENT_ARCHIVE_DIR, { recursive: true });
 		await internalSecurityDevices.prepare();
@@ -3069,6 +3094,12 @@ const internalSecurity = {
 			.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime() || b.maxRisk - a.maxRisk)
 			.slice(0, 20);
 
+		const webAnalytics = buildWebAnalytics(events);
+		webAnalytics.clientTracking = await internalSecurityAnalyticsTracker.getSummary({
+			host: filters.host,
+			sinceMinutes: filters.sinceMinutes || 60,
+		});
+
 		return {
 			window: {
 				analyzedRequests: events.length,
@@ -3088,7 +3119,7 @@ const internalSecurity = {
 			activeRateLimits: rateLimits.length,
 			activeEscalations,
 			analytics: buildAttackAnalytics(events, filters),
-			webAnalytics: buildWebAnalytics(events),
+			webAnalytics,
 			automation: {
 				mode: policy.autoBlockEnabled ? "enforce" : "observe",
 				...policy,

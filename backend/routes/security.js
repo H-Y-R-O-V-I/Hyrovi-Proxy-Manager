@@ -2,6 +2,7 @@ import express from "express";
 import internalSecurity from "../internal/security.js";
 import internalSecurityAppEvents from "../internal/security_app_events.js";
 import internalSecurityAlerts from "../internal/security_alerts.js";
+import internalSecurityAnalyticsTracker from "../internal/security_analytics_tracker.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
 import internalSecurityDetectionRules from "../internal/security_detection_rules.js";
@@ -140,6 +141,36 @@ router.get("/integration/alerts", async (req, res, next) => {
 			generatedAt: new Date().toISOString(),
 			alerts,
 		});
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.get("/analytics/script", async (req, res, next) => {
+	try {
+		internalSecurityAnalyticsTracker.proxyContext(req.headers);
+		res.set({
+			"Content-Type": "application/javascript; charset=utf-8",
+			"Cache-Control": "public, max-age=300",
+			"X-Content-Type-Options": "nosniff",
+			"Referrer-Policy": "no-referrer",
+		});
+		res.status(200).send(internalSecurityAnalyticsTracker.script());
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/analytics/collect", async (req, res, next) => {
+	try {
+		const result = await internalSecurityAnalyticsTracker.collect({
+			headers: req.headers,
+			body: req.body || {},
+		});
+		res.set("Cache-Control", "no-store");
+		res.status(202).send(result);
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
 		next(err);
