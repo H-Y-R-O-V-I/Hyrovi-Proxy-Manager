@@ -30,6 +30,7 @@ import {
 	getSecurityRateLimits,
 	getSecurityTrustedDevices,
 	importSecurityDetectionRules,
+	promoteSecurityDetectionRule,
 	simulateSecurityDetectionRule,
 	updateSecurityDetectionRule,
 	updateSecurityHostPolicy,
@@ -37,6 +38,7 @@ import {
 	type SecurityAlertSeverity,
 	type SecurityAppEventSeverity,
 	type SecurityEvent,
+	type SecurityDetectionRulePromotionGate,
 	type SecurityDetectionRuleStage,
 	type SecurityHostMode,
 	type SecurityHostPolicyEntry,
@@ -224,6 +226,11 @@ const Security = () => {
 	const [ruleScore, setRuleScore] = useState(25);
 	const [ruleResponse, setRuleResponse] = useState<"observe" | "soft">("observe");
 	const [ruleStage, setRuleStage] = useState<SecurityDetectionRuleStage>("preview");
+	const [ruleGateEnabled, setRuleGateEnabled] = useState(true);
+	const [ruleGateMinHits, setRuleGateMinHits] = useState(5);
+	const [ruleGateMinReviews, setRuleGateMinReviews] = useState(3);
+	const [ruleGateMinConfirmed, setRuleGateMinConfirmed] = useState(1);
+	const [ruleGateMaxFalsePositive, setRuleGateMaxFalsePositive] = useState(20);
 	const [ruleHost, setRuleHost] = useState("");
 	const [rulePathPrefix, setRulePathPrefix] = useState("");
 	const [rulePathContains, setRulePathContains] = useState("");
@@ -341,8 +348,15 @@ const Security = () => {
 				statuses: ruleStatuses.split(",").map((entry) => Number(entry.trim())).filter((entry) => Number.isInteger(entry) && entry > 0),
 				userAgentContains: ruleUserAgent.trim() || null,
 			},
+			promotionGate: {
+				enabled: ruleGateEnabled,
+				minObservedHits: ruleGateMinHits,
+				minReviews: ruleGateMinReviews,
+				minConfirmedAttacks: ruleGateMinConfirmed,
+				maxFalsePositivePercent: ruleGateMaxFalsePositive,
+			},
 		}),
-		[ruleHost, ruleMethods, ruleName, rulePathContains, rulePathPrefix, ruleResponse, ruleScore, ruleStage, ruleStatuses, ruleUserAgent],
+		[ruleGateEnabled, ruleGateMaxFalsePositive, ruleGateMinConfirmed, ruleGateMinHits, ruleGateMinReviews, ruleHost, ruleMethods, ruleName, rulePathContains, rulePathPrefix, ruleResponse, ruleScore, ruleStage, ruleStatuses, ruleUserAgent],
 	);
 
 	const ruleDraftValid = Boolean(
@@ -357,6 +371,8 @@ const Security = () => {
 
 	const selectedRuleReviewAnalytics =
 		detectionRuleAnalytics.data?.rules.find((entry) => entry.ruleId === selectedRuleReviewId) ?? null;
+	const selectedRuleReviewRule =
+		detectionRules.data?.find((entry) => entry.id === selectedRuleReviewId) ?? null;
 
 	const refresh = async () => {
 		await Promise.all([
@@ -423,6 +439,11 @@ const Security = () => {
 			setRuleScore(25);
 			setRuleResponse("observe");
 			setRuleStage("preview");
+			setRuleGateEnabled(true);
+			setRuleGateMinHits(5);
+			setRuleGateMinReviews(3);
+			setRuleGateMinConfirmed(1);
+			setRuleGateMaxFalsePositive(20);
 			setRuleHost("");
 			setRulePathPrefix("");
 			setRulePathContains("");
@@ -439,6 +460,15 @@ const Security = () => {
 	const setDetectionRuleStage = useMutation({
 		mutationFn: ({ id, stage }: { id: string; stage: SecurityDetectionRuleStage }) =>
 			updateSecurityDetectionRule(id, { stage, enabled: stage === "active" }),
+		onSuccess: refresh,
+	});
+	const promoteDetectionRule = useMutation({
+		mutationFn: promoteSecurityDetectionRule,
+		onSuccess: refresh,
+	});
+	const updateDetectionRuleGate = useMutation({
+		mutationFn: ({ id, promotionGate }: { id: string; promotionGate: SecurityDetectionRulePromotionGate }) =>
+			updateSecurityDetectionRule(id, { promotionGate }),
 		onSuccess: refresh,
 	});
 	const reviewDetectionRuleHit = useMutation({
@@ -1158,9 +1188,13 @@ const Security = () => {
 									onChange={(event) => setRuleStage(event.target.value as SecurityDetectionRuleStage)}
 								>
 									<option value="preview">Preview</option>
-									<option value="active">Active</option>
+									<option value="active" disabled={ruleGateEnabled}>Active</option>
 								</select>
-								<div className="form-hint">Preview only measures matches; it cannot change live risk or enforcement.</div>
+								<div className="form-hint">
+									{ruleGateEnabled
+										? "Gate enabled: create in Preview, review matches, then Promote."
+										: "Preview only measures matches; it cannot change live risk or enforcement."}
+								</div>
 							</div>
 							<div className="col-12 col-lg-4">
 								<label className="form-label" htmlFor="hyrovi-sec-rule-host">Host</label>
@@ -1185,6 +1219,46 @@ const Security = () => {
 							<div className="col-12 col-lg-4">
 								<label className="form-label" htmlFor="hyrovi-sec-rule-ua">User-Agent contains</label>
 								<input id="hyrovi-sec-rule-ua" className="form-control font-monospace" value={ruleUserAgent} onChange={(event) => setRuleUserAgent(event.target.value)} placeholder="my-client" />
+							</div>
+							<div className="col-12">
+								<div className="border rounded p-3">
+									<div className="d-flex align-items-center justify-content-between gap-3 mb-2">
+										<div>
+											<strong>Promotion gate</strong>
+											<div className="text-secondary small">Require evidence before a Preview rule can become Active.</div>
+										</div>
+										<label className="form-check form-switch mb-0">
+											<input
+												className="form-check-input"
+												type="checkbox"
+												checked={ruleGateEnabled}
+												onChange={(event) => {
+													setRuleGateEnabled(event.target.checked);
+													if (event.target.checked && ruleStage === "active") setRuleStage("preview");
+												}}
+											/>
+											<span className="form-check-label">{ruleGateEnabled ? "On" : "Off"}</span>
+										</label>
+									</div>
+									<div className="row g-2">
+										<div className="col-6 col-lg-3">
+											<label className="form-label" htmlFor="hyrovi-sec-gate-hits">Min hits</label>
+											<input id="hyrovi-sec-gate-hits" className="form-control" type="number" min={0} max={1000} disabled={!ruleGateEnabled} value={ruleGateMinHits} onChange={(event) => setRuleGateMinHits(Number(event.target.value))} />
+										</div>
+										<div className="col-6 col-lg-3">
+											<label className="form-label" htmlFor="hyrovi-sec-gate-reviews">Min reviews</label>
+											<input id="hyrovi-sec-gate-reviews" className="form-control" type="number" min={0} max={100} disabled={!ruleGateEnabled} value={ruleGateMinReviews} onChange={(event) => setRuleGateMinReviews(Number(event.target.value))} />
+										</div>
+										<div className="col-6 col-lg-3">
+											<label className="form-label" htmlFor="hyrovi-sec-gate-attacks">Min confirmed attacks</label>
+											<input id="hyrovi-sec-gate-attacks" className="form-control" type="number" min={0} max={100} disabled={!ruleGateEnabled} value={ruleGateMinConfirmed} onChange={(event) => setRuleGateMinConfirmed(Number(event.target.value))} />
+										</div>
+										<div className="col-6 col-lg-3">
+											<label className="form-label" htmlFor="hyrovi-sec-gate-fp">Max false positive %</label>
+											<input id="hyrovi-sec-gate-fp" className="form-control" type="number" min={0} max={100} step={0.1} disabled={!ruleGateEnabled} value={ruleGateMaxFalsePositive} onChange={(event) => setRuleGateMaxFalsePositive(Number(event.target.value))} />
+										</div>
+									</div>
+								</div>
 							</div>
 							<div className="col-12 d-flex justify-content-end gap-2">
 								<Button
@@ -1320,6 +1394,20 @@ const Security = () => {
 												<span className={`badge ${rule.stage === "active" ? "bg-green-lt" : rule.stage === "preview" ? "bg-azure-lt" : "bg-secondary-lt"}`}>
 													{rule.stage}
 												</span>
+								{rule.stage === "preview" && analytics?.promotionGate.enabled ? (
+									<div className="mt-1">
+										<span className={`badge ${analytics.promotionGate.ready ? "bg-green-lt" : "bg-yellow text-dark"}`}>
+											{analytics.promotionGate.ready ? "GATE READY" : "GATE BLOCKED"}
+										</span>
+										{!analytics.promotionGate.ready ? (
+											<div className="text-secondary small mt-1">
+												{analytics.promotionGate.checks.filter((check) => !check.passed).map((check) => check.label).join(" · ")}
+											</div>
+										) : null}
+									</div>
+								) : rule.stage === "preview" && !rule.promotionGate.enabled ? (
+									<div className="text-secondary small mt-1">gate off</div>
+								) : null}
 											</td>
 											<td className="text-end">
 												<div className="d-flex gap-1 justify-content-end">
@@ -1331,17 +1419,30 @@ const Security = () => {
 														Review
 													</Button>
 													<Button
-														className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"}
-														disabled={setDetectionRuleStage.isPending}
-														onClick={() =>
-															setDetectionRuleStage.mutate({
-																id: rule.id,
-																stage: rule.stage === "active" ? "paused" : "active",
-															})
-														}
-													>
-														{rule.stage === "active" ? "Pause" : rule.stage === "preview" ? "Promote" : "Resume"}
-													</Button>
+										className={rule.stage === "preview" ? "btn-primary" : "btn-outline-secondary"}
+										disabled={
+											rule.stage === "preview"
+												? promoteDetectionRule.isPending || (rule.promotionGate.enabled && (!analytics || !analytics.promotionGate.ready))
+												: setDetectionRuleStage.isPending
+										}
+										title={
+											rule.stage === "preview" && rule.promotionGate.enabled && analytics && !analytics.promotionGate.ready
+												? "Promotion gate is not satisfied"
+												: undefined
+										}
+										onClick={() => {
+											if (rule.stage === "preview") {
+												promoteDetectionRule.mutate(rule.id);
+												return;
+											}
+											setDetectionRuleStage.mutate({
+												id: rule.id,
+												stage: rule.stage === "active" ? "paused" : "active",
+											});
+										}}
+									>
+										{rule.stage === "active" ? "Pause" : rule.stage === "preview" ? "Promote" : "Resume"}
+									</Button>
 													<Button className="btn-outline-danger" disabled={removeDetectionRule.isPending} onClick={() => removeDetectionRule.mutate(rule.id)}>
 														Delete
 													</Button>
@@ -1372,6 +1473,71 @@ const Security = () => {
 								<span className="badge bg-blue-lt">{selectedRuleReviewAnalytics.reviews.expected} expected</span>
 								<span className="badge bg-yellow-lt">{selectedRuleReviewAnalytics.reviews.falsePositive} false positive</span>
 							</div>
+							{selectedRuleReviewRule ? (
+								<form
+									key={`${selectedRuleReviewRule.id}-${selectedRuleReviewRule.updatedAt}`}
+									className="border rounded p-3 mb-3"
+									onSubmit={(event) => {
+										event.preventDefault();
+										const form = new FormData(event.currentTarget);
+										updateDetectionRuleGate.mutate({
+											id: selectedRuleReviewRule.id,
+											promotionGate: {
+												enabled: form.get("gate_enabled") === "on",
+												minObservedHits: Number(form.get("gate_min_hits")),
+												minReviews: Number(form.get("gate_min_reviews")),
+												minConfirmedAttacks: Number(form.get("gate_min_confirmed")),
+												maxFalsePositivePercent: Number(form.get("gate_max_fp")),
+											},
+										});
+									}}
+								>
+									<div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+										<div>
+											<strong>Promotion gate</strong>
+											<div className="text-secondary small">
+												Current result: {selectedRuleReviewAnalytics.promotionGate.enabled
+													? selectedRuleReviewAnalytics.promotionGate.ready ? "READY" : "BLOCKED"
+													: "OFF"} · false positives {selectedRuleReviewAnalytics.promotionGate.falsePositivePercent.toFixed(1)}%
+											</div>
+										</div>
+										<label className="form-check form-switch mb-0">
+											<input className="form-check-input" type="checkbox" name="gate_enabled" defaultChecked={selectedRuleReviewRule.promotionGate.enabled} />
+											<span className="form-check-label">Gate enabled</span>
+										</label>
+									</div>
+									<div className="row g-2">
+										<div className="col-6 col-lg-2">
+											<label className="form-label">Min hits</label>
+											<input className="form-control" name="gate_min_hits" type="number" min={0} max={1000} defaultValue={selectedRuleReviewRule.promotionGate.minObservedHits} />
+										</div>
+										<div className="col-6 col-lg-2">
+											<label className="form-label">Min reviews</label>
+											<input className="form-control" name="gate_min_reviews" type="number" min={0} max={100} defaultValue={selectedRuleReviewRule.promotionGate.minReviews} />
+										</div>
+										<div className="col-6 col-lg-3">
+											<label className="form-label">Min confirmed attacks</label>
+											<input className="form-control" name="gate_min_confirmed" type="number" min={0} max={100} defaultValue={selectedRuleReviewRule.promotionGate.minConfirmedAttacks} />
+										</div>
+										<div className="col-6 col-lg-3">
+											<label className="form-label">Max false positive %</label>
+											<input className="form-control" name="gate_max_fp" type="number" min={0} max={100} step={0.1} defaultValue={selectedRuleReviewRule.promotionGate.maxFalsePositivePercent} />
+										</div>
+										<div className="col-12 col-lg-2 d-grid align-items-end">
+											<button className="btn btn-outline-primary" type="submit" disabled={updateDetectionRuleGate.isPending}>Save gate</button>
+										</div>
+									</div>
+									<div className="d-flex flex-wrap gap-2 mt-3">
+										{selectedRuleReviewAnalytics.promotionGate.checks.map((check) => (
+											<span key={check.id} className={`badge ${check.passed ? "bg-green-lt" : "bg-yellow text-dark"}`}>
+												{check.label}: {check.actual}{check.comparison === "max" ? "%" : ""} / {check.comparison === "max" ? "≤ " : "≥ "}{check.required}{check.comparison === "max" ? "%" : ""}
+											</span>
+										))}
+									</div>
+								</form>
+							) : null}
+							{promoteDetectionRule.error ? <div className="text-red mb-2">{promoteDetectionRule.error.message}</div> : null}
+							{updateDetectionRuleGate.error ? <div className="text-red mb-2">{updateDetectionRuleGate.error.message}</div> : null}
 							{reviewDetectionRuleHit.error ? <div className="text-red mb-2">{reviewDetectionRuleHit.error.message}</div> : null}
 							{clearDetectionRuleHitReview.error ? <div className="text-red mb-2">{clearDetectionRuleHitReview.error.message}</div> : null}
 							<div className="table-responsive">

@@ -10,6 +10,13 @@ const MAX_METHODS = 16;
 const MAX_STATUSES = 32;
 const RESPONSE_MODES = new Set(["observe", "soft"]);
 const RULE_STAGES = new Set(["preview", "active", "paused"]);
+const DEFAULT_PROMOTION_GATE = Object.freeze({
+	enabled: true,
+	minObservedHits: 5,
+	minReviews: 3,
+	minConfirmedAttacks: 1,
+	maxFalsePositivePercent: 20,
+});
 
 let mutationQueue = Promise.resolve();
 
@@ -108,6 +115,82 @@ const normalizeMatch = (value = {}) => {
 	return match;
 };
 
+const normalizePromotionGate = (value, { legacy = false } = {}) => {
+	const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	const minObservedHits = Number.parseInt(source.minObservedHits, 10);
+	const minReviews = Number.parseInt(source.minReviews, 10);
+	const minConfirmedAttacks = Number.parseInt(source.minConfirmedAttacks, 10);
+	return {
+		enabled: typeof source.enabled === "boolean" ? source.enabled : legacy ? false : DEFAULT_PROMOTION_GATE.enabled,
+		minObservedHits: clamp(
+			Number.isInteger(minObservedHits) ? minObservedHits : DEFAULT_PROMOTION_GATE.minObservedHits,
+			0,
+			1000,
+		),
+		minReviews: clamp(Number.isInteger(minReviews) ? minReviews : DEFAULT_PROMOTION_GATE.minReviews, 0, 100),
+		minConfirmedAttacks: clamp(
+			Number.isInteger(minConfirmedAttacks)
+				? minConfirmedAttacks
+				: DEFAULT_PROMOTION_GATE.minConfirmedAttacks,
+			0,
+			100,
+		),
+		maxFalsePositivePercent: clamp(
+			Number.isFinite(Number(source.maxFalsePositivePercent))
+				? Number(source.maxFalsePositivePercent)
+				: DEFAULT_PROMOTION_GATE.maxFalsePositivePercent,
+			0,
+			100,
+		),
+	};
+};
+
+const evaluatePromotionGate = (rule, analytics = {}, reviews = {}) => {
+	const gate = normalizePromotionGate(rule?.promotionGate, { legacy: !rule?.promotionGate });
+	const reviewTotal = Number(reviews.total) || 0;
+	const falsePositive = Number(reviews.falsePositive) || 0;
+	const falsePositivePercent = reviewTotal > 0 ? Number(((falsePositive / reviewTotal) * 100).toFixed(2)) : 0;
+	const observedHits = Number(analytics.hits) || 0;
+	const confirmedAttack = Number(reviews.confirmedAttack) || 0;
+	const checks = [
+		{
+			id: "observed_hits",
+			label: "Observed hits",
+			actual: observedHits,
+			required: gate.minObservedHits,
+			passed: observedHits >= gate.minObservedHits,
+		},
+		{
+			id: "reviews",
+			label: "Reviewed hits",
+			actual: reviewTotal,
+			required: gate.minReviews,
+			passed: reviewTotal >= gate.minReviews,
+		},
+		{
+			id: "confirmed_attacks",
+			label: "Confirmed attacks",
+			actual: confirmedAttack,
+			required: gate.minConfirmedAttacks,
+			passed: confirmedAttack >= gate.minConfirmedAttacks,
+		},
+		{
+			id: "false_positive_percent",
+			label: "False-positive rate",
+			actual: falsePositivePercent,
+			required: gate.maxFalsePositivePercent,
+			comparison: "max",
+			passed: falsePositivePercent <= gate.maxFalsePositivePercent,
+		},
+	];
+	return {
+		...gate,
+		ready: !gate.enabled || checks.every((check) => check.passed),
+		falsePositivePercent,
+		checks,
+	};
+};
+
 const getRuleStage = (rule) => {
 	const stage = String(rule?.stage || "").trim().toLowerCase();
 	if (RULE_STAGES.has(stage)) return stage;
@@ -145,6 +228,9 @@ const normalizeRuleInput = (input = {}, existing = null) => {
 	const score = clamp(Number.isInteger(rawScore) ? rawScore : 20, 1, 60);
 	const match = normalizeMatch(input.match ?? existing?.match ?? {});
 	const stage = normalizeRuleStage(input, existing);
+	const promotionGate = normalizePromotionGate(input.promotionGate ?? existing?.promotionGate, {
+		legacy: Boolean(existing && !existing?.promotionGate),
+	});
 
 	return {
 		id: existing?.id || randomUUID(),
@@ -154,6 +240,7 @@ const normalizeRuleInput = (input = {}, existing = null) => {
 		score,
 		response,
 		match,
+		promotionGate,
 		createdAt: existing?.createdAt || now,
 		updatedAt: now,
 	};
@@ -161,7 +248,12 @@ const normalizeRuleInput = (input = {}, existing = null) => {
 
 const presentRule = (rule) => {
 	const stage = getRuleStage(rule);
-	return { ...rule, stage, enabled: stage === "active" };
+	return {
+		...rule,
+		stage,
+		enabled: stage === "active",
+		promotionGate: normalizePromotionGate(rule?.promotionGate, { legacy: !rule?.promotionGate }),
+	};
 };
 
 const listRules = async () =>
@@ -183,19 +275,31 @@ const createRule = (input) =>
 		const rules = await readRulesUnsafe();
 		if (rules.length >= MAX_RULES) throw new errs.ValidationError(`Detection rules are limited to ${MAX_RULES}`);
 		const rule = normalizeRuleInput(input);
+		if (rule.stage === "active" && rule.promotionGate.enabled) {
+			throw new errs.ValidationError("Gate-protected detection rules must be created in preview before activation");
+		}
 		await writeJsonAtomic(RULES_FILE, [...rules, rule]);
-		return rule;
+		return presentRule(rule);
 	});
 
-const updateRule = (id, input) =>
+const updateRule = (id, input, options = {}) =>
 	withMutation(async () => {
 		const rules = await readRulesUnsafe();
 		const index = rules.findIndex((rule) => rule.id === id);
 		if (index < 0) throw new errs.ItemNotFoundError(id);
+		const current = presentRule(rules[index]);
 		const updated = normalizeRuleInput(input, rules[index]);
+		if (
+			current.stage === "preview" &&
+			updated.stage === "active" &&
+			updated.promotionGate.enabled &&
+			options.allowPromotion !== true
+		) {
+			throw new errs.ValidationError("Detection-rule promotion gate must be evaluated before activation");
+		}
 		rules[index] = updated;
 		await writeJsonAtomic(RULES_FILE, rules);
-		return updated;
+		return presentRule(updated);
 	});
 
 const deleteRule = (id) =>
@@ -216,13 +320,14 @@ const portableRule = (rule) => {
 		score: rule.score,
 		response: rule.response,
 		match: rule.match,
+		promotionGate: normalizePromotionGate(rule?.promotionGate, { legacy: !rule?.promotionGate }),
 	};
 };
 
 const portableRuleKey = (rule) => JSON.stringify(portableRule(rule));
 
 const exportRules = async () => ({
-	version: 2,
+	version: 3,
 	exportedAt: new Date().toISOString(),
 	rules: (await listRules()).map(portableRule),
 });
@@ -233,7 +338,7 @@ const importRules = (payload = {}) =>
 			throw new errs.ValidationError("Detection-rule import payload must be an object");
 		}
 		const version = Number.parseInt(payload.version, 10);
-		if (![1, 2].includes(version)) {
+		if (![1, 2, 3].includes(version)) {
 			throw new errs.ValidationError("Unsupported detection-rule export version");
 		}
 		const mode = String(payload.mode || "merge").trim().toLowerCase();
@@ -247,7 +352,13 @@ const importRules = (payload = {}) =>
 			throw new errs.ValidationError(`Detection-rule import is limited to ${MAX_RULES} rules`);
 		}
 
-		const imported = payload.rules.map((rule) => normalizeRuleInput(rule));
+		const imported = payload.rules.map((rule) =>
+			normalizeRuleInput(
+				version < 3 && !rule?.promotionGate
+					? { ...rule, promotionGate: { ...DEFAULT_PROMOTION_GATE, enabled: false } }
+					: rule,
+			),
+		);
 		const existing = mode === "replace" ? [] : await readRulesUnsafe();
 		const existingKeys = new Set(existing.map(portableRuleKey));
 		const additions = [];
@@ -403,6 +514,7 @@ const internalSecurityDetectionRules = {
 	importRules,
 	analyzeRules,
 	simulateRule,
+	evaluatePromotionGate,
 	matchRules,
 };
 

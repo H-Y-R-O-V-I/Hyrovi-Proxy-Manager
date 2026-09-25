@@ -14,7 +14,7 @@ Rollout stages:
 - `active`: participates in live request analysis;
 - `paused`: retained for later reuse and analytics, but excluded from live request scoring and enforcement.
 
-New rules and built-in templates default to `preview`. Promotion to `active` is an explicit operator action. Existing pre-stage rules remain backward compatible: legacy `enabled: true` becomes `active`, while `enabled: false` becomes `paused`.
+New rules and built-in templates default to `preview`. New rules also default to a promotion gate, so they cannot be created directly as `active` until the configured evidence checks pass. Existing pre-stage rules remain backward compatible: legacy `enabled: true` becomes `active`, while `enabled: false` becomes `paused`.
 
 Response modes apply only while a rule is active:
 
@@ -98,7 +98,7 @@ Current format:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "exportedAt": "2026-09-24T18:00:00.000Z",
   "rules": [
     {
@@ -114,6 +114,13 @@ Current format:
         "methods": ["POST"],
         "statuses": [401, 403],
         "userAgentContains": null
+      },
+      "promotionGate": {
+        "enabled": true,
+        "minObservedHits": 5,
+        "minReviews": 3,
+        "minConfirmedAttacks": 1,
+        "maxFalsePositivePercent": 20
       }
     }
   ]
@@ -125,7 +132,7 @@ Import modes:
 - `merge`: keeps existing rules and adds only configurations that are not already present;
 - `replace`: validates the complete import first, then replaces the existing rule set with newly generated local rule records.
 
-Version 2 exports include the rollout `stage`. Version 1 exports remain import-compatible and map their legacy `enabled` flag to `active` or `paused`.
+Version 3 exports include the promotion gate. Version 2 exports include rollout stage but no gate; version 1 exports use the legacy `enabled` flag. Version 1/2 imports without gate metadata remain ungated.
 
 The import rejects unsupported versions, invalid stages, invalid matchers, invalid response modes and imports that would exceed the global rule limit.
 
@@ -173,6 +180,33 @@ They do not duplicate the request IP, host, path, headers, body or authenticatio
 
 The rule table shows stored review totals, while the review panel joins verdicts back onto the bounded retained match samples. Reviews can also be cleared.
 
+## Promotion gates
+
+A promotion gate is an optional server-enforced safety check for moving a rule from `preview` to `active`.
+
+New rules default to:
+
+- at least **5 observed retained matches**;
+- at least **3 reviewed matches**;
+- at least **1 confirmed attack** review;
+- at most **20% false-positive reviews**.
+
+The thresholds are configurable per rule and can be disabled explicitly. Zero is a valid threshold value.
+
+The gate result is calculated from the same retained-event analytics and review metadata shown in the dashboard. Each criterion is returned as a separate pass/fail check, and the UI displays `GATE READY` or `GATE BLOCKED`.
+
+For a gate-enabled preview rule:
+
+- direct `PUT stage=active` is rejected;
+- creating the rule directly as `active` is rejected;
+- promotion must use the dedicated promote endpoint;
+- the promote endpoint re-evaluates retained matches and reviews server-side immediately before persisting `active`.
+
+Reviews never activate a rule automatically. They only contribute evidence to the gate; an explicit operator promotion action is still required.
+
+Legacy rules and version 1/2 imports that do not contain promotion-gate metadata remain ungated for backward compatibility. Version 3 exports include the complete gate configuration.
+
+
 ## Storage and API
 
 Rules and review metadata are stored in:
@@ -191,6 +225,7 @@ GET    /api/security/detection-rules/export
 POST   /api/security/detection-rules/import
 GET    /api/security/detection-rules/analytics
 POST   /api/security/detection-rules/simulate
+POST   /api/security/detection-rules/<rule-id>/promote
 PUT    /api/security/detection-rules/<rule-id>/reviews/<request-id>
 DELETE /api/security/detection-rules/<rule-id>/reviews/<request-id>
 PUT    /api/security/detection-rules/<rule-id>
@@ -199,6 +234,6 @@ DELETE /api/security/detection-rules/<rule-id>
 
 Read access, analytics and simulation use the normal Nginx Proxy Manager `logs:list` permission. Persistent mutations, including review verdicts, use `users:list`.
 
-The HYROVI Sec page provides preview-first creation plus Promote, Pause, Resume and Delete controls. Only `active` rules affect new live analysis. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
+The HYROVI Sec page provides preview-first creation, editable promotion-gate thresholds, evidence status, plus Promote, Pause, Resume and Delete controls. Only `active` rules affect new live analysis. Already archived security events retain the risk/signals that were recorded at the time, preserving historical explanations.
 
 If the rule file becomes unreadable or invalid, HYROVI Sec logs the problem and continues built-in detection without custom rules instead of disabling the security monitor.

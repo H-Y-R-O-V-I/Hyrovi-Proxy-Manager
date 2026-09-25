@@ -329,6 +329,29 @@ export type SecurityDetectionRuleResponse = "observe" | "soft";
 export type SecurityDetectionRuleStage = "preview" | "active" | "paused";
 export type SecurityRuleHitVerdict = "confirmed_attack" | "expected" | "false_positive";
 
+export interface SecurityDetectionRulePromotionGate {
+	enabled: boolean;
+	minObservedHits: number;
+	minReviews: number;
+	minConfirmedAttacks: number;
+	maxFalsePositivePercent: number;
+}
+
+export interface SecurityDetectionRulePromotionCheck {
+	id: string;
+	label: string;
+	actual: number;
+	required: number;
+	comparison?: "max";
+	passed: boolean;
+}
+
+export interface SecurityDetectionRulePromotionGateEvaluation extends SecurityDetectionRulePromotionGate {
+	ready: boolean;
+	falsePositivePercent: number;
+	checks: SecurityDetectionRulePromotionCheck[];
+}
+
 export interface SecurityDetectionRuleMatch {
 	host: string | null;
 	pathPrefix: string | null;
@@ -346,13 +369,14 @@ export interface SecurityDetectionRule {
 	score: number;
 	response: SecurityDetectionRuleResponse;
 	match: SecurityDetectionRuleMatch;
+	promotionGate: SecurityDetectionRulePromotionGate;
 	createdAt: string;
 	updatedAt: string;
 }
 
 
 export interface SecurityDetectionRulesExport {
-	version: 1 | 2;
+	version: 1 | 2 | 3;
 	exportedAt: string;
 	rules: Array<Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">>;
 }
@@ -412,6 +436,7 @@ export interface SecurityDetectionRuleAnalyticsEntry {
 	lastHitAt: string | null;
 	maxObservedRisk: number;
 	reviews: SecurityDetectionRuleReviewSummary;
+	promotionGate: SecurityDetectionRulePromotionGateEvaluation;
 	samples: SecurityDetectionRuleHitSample[];
 }
 
@@ -498,6 +523,13 @@ export async function updateSecurityDetectionRule(
 	data: Partial<Omit<SecurityDetectionRule, "id" | "createdAt" | "updatedAt">>,
 ): Promise<SecurityDetectionRule> {
 	return await api.put({ url: `/security/detection-rules/${encodeURIComponent(id)}`, data });
+}
+
+export async function promoteSecurityDetectionRule(id: string): Promise<{
+	rule: SecurityDetectionRule;
+	promotionGate: SecurityDetectionRulePromotionGateEvaluation;
+}> {
+	return await api.post({ url: `/security/detection-rules/${encodeURIComponent(id)}/promote` });
 }
 
 export async function deleteSecurityDetectionRule(id: string): Promise<{ success: boolean }> {

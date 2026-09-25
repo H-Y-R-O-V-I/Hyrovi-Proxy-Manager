@@ -165,6 +165,17 @@ const detectionRuleInput = (body = {}) => ({
 				},
 			}
 		: {}),
+	...(body?.promotion_gate
+		? {
+				promotionGate: {
+					enabled: body.promotion_gate.enabled,
+					minObservedHits: body.promotion_gate.min_observed_hits,
+					minReviews: body.promotion_gate.min_reviews,
+					minConfirmedAttacks: body.promotion_gate.min_confirmed_attacks,
+					maxFalsePositivePercent: body.promotion_gate.max_false_positive_percent,
+				},
+			}
+		: {}),
 });
 
 router
@@ -274,6 +285,16 @@ router
 			next(err);
 		}
 	});
+
+router.post("/detection-rules/:rule_id/promote", async (req, res, next) => {
+	try {
+		res.set("Cache-Control", "no-store");
+		res.status(200).send(await internalSecurity.promoteDetectionRule(res.locals.access, req.params.rule_id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
 
 router
 	.route("/detection-rules/:rule_id")

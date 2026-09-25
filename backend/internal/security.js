@@ -2160,9 +2160,12 @@ const internalSecurity = {
 		const analytics = internalSecurityDetectionRules.analyzeRules(rules, events).map((entry) => {
 			const ruleReviews = reviewsByRule.get(entry.ruleId) || [];
 			const reviewByRequestId = new Map(ruleReviews.map((review) => [review.requestId, review]));
+			const reviewSummary = internalSecurityRuleReviews.summarizeReviews(ruleReviews);
+			const rule = rules.find((candidate) => candidate.id === entry.ruleId);
 			return {
 				...entry,
-				reviews: internalSecurityRuleReviews.summarizeReviews(ruleReviews),
+				reviews: reviewSummary,
+				promotionGate: internalSecurityDetectionRules.evaluatePromotionGate(rule, entry, reviewSummary),
 				samples: entry.samples.map((sample) => ({
 					...sample,
 					verdict: sample.requestId ? reviewByRequestId.get(sample.requestId)?.verdict || null : null,
@@ -2181,10 +2184,17 @@ const internalSecurity = {
 		const limit = clamp(Number.parseInt(options.limit, 10) || 1000, 1, Math.min(MAX_EVENT_LIMIT, 1000));
 		const policy = await readPolicyUnsafe();
 		const events = await loadEventHistory(limit, policy);
+		const simulation = internalSecurityDetectionRules.simulateRule(data, events);
+		const emptyReviews = internalSecurityRuleReviews.summarizeReviews([]);
 		return {
 			analyzedEvents: events.length,
 			limit,
-			...internalSecurityDetectionRules.simulateRule(data, events),
+			...simulation,
+			promotionGate: internalSecurityDetectionRules.evaluatePromotionGate(
+				simulation.rule,
+				simulation,
+				emptyReviews,
+			),
 		};
 	},
 
@@ -2214,6 +2224,43 @@ const internalSecurity = {
 	deleteDetectionRuleReview: async (access, ruleId, requestId) => {
 		await access.can("users:list");
 		return internalSecurityRuleReviews.deleteReview({ ruleId, requestId });
+	},
+
+	promoteDetectionRule: async (access, ruleId) => {
+		await access.can("users:list");
+		const normalizedRuleId = String(ruleId || "").trim();
+		const rules = await internalSecurityDetectionRules.listRules();
+		const rule = rules.find((entry) => entry.id === normalizedRuleId);
+		if (!rule) throw new errs.ItemNotFoundError(normalizedRuleId);
+		if (rule.stage !== "preview") {
+			throw new errs.ValidationError("Only preview detection rules can be promoted");
+		}
+
+		const [policy, reviews] = await Promise.all([
+			readPolicyUnsafe(),
+			internalSecurityRuleReviews.listReviews({ ruleId: rule.id, limit: 5000 }),
+		]);
+		const events = await loadEventHistory(1000, policy);
+		const analytics = internalSecurityDetectionRules.analyzeRules([rule], events)[0];
+		const reviewSummary = internalSecurityRuleReviews.summarizeReviews(reviews);
+		const promotionGate = internalSecurityDetectionRules.evaluatePromotionGate(rule, analytics, reviewSummary);
+		if (promotionGate.enabled && !promotionGate.ready) {
+			const failed = promotionGate.checks
+				.filter((check) => !check.passed)
+				.map((check) => check.label)
+				.join(", ");
+			throw new errs.ValidationError(`Detection-rule promotion gate is not satisfied: ${failed}`);
+		}
+
+		const updated = await internalSecurityDetectionRules.updateRule(
+			rule.id,
+			{ stage: "active", enabled: true },
+			{ allowPromotion: true },
+		);
+		return {
+			rule: updated,
+			promotionGate,
+		};
 	},
 
 	getEvents: async (access, options = {}) => {
