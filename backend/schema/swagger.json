@@ -1,9 +1,9 @@
 {
 	"openapi": "3.1.0",
 	"info": {
-		"title": "Nginx Proxy Manager API",
+		"title": "HYROVI Proxy Manager API",
 		"version": "2.x.x",
-		"description": "This is the official API documentation for Nginx Proxy Manager.\n\nMost endpoints require authentication via Bearer Token (JWT). You can generate a token by logging in via the `POST /tokens` endpoint.\n\nFor more information, visit the [Nginx Proxy Manager Documentation](https://nginxproxymanager.com)."
+		"description": "API documentation for HYROVI Proxy Manager.\n\nMost endpoints require authentication via Bearer Token (JWT). You can generate a token by logging in via the `POST /tokens` endpoint. HYROVI-specific security endpoints are integrated alongside the proxy-management API."
 	},
 	"servers": [
 		{

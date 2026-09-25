@@ -1,75 +1,26 @@
-import { useCheckVersion, useHealth } from "src/hooks";
-import { T } from "src/locale";
+import { useHealth } from "src/hooks";
+
+const REPOSITORY_URL = "https://github.com/H-Y-R-O-V-I/Hyrovi-Proxy-Manager";
 
 export function SiteFooter() {
 	const health = useHealth();
-	const { data: versionData } = useCheckVersion();
 
-	const getVersion = () => {
-		if (!health.data) {
-			return "";
-		}
-		const v = health.data.version;
-		return `v${v.major}.${v.minor}.${v.revision}`;
-	};
+	const version = health.data
+		? `v${health.data.version.major}.${health.data.version.minor}.${health.data.version.revision}`
+		: null;
 
 	return (
 		<footer className="footer d-print-none py-3">
 			<div className="container-xl">
-				<div className="row text-center align-items-center flex-row-reverse">
-					<div className="col-lg-auto ms-lg-auto">
-						<ul className="list-inline list-inline-dots mb-0">
-							<li className="list-inline-item">
-								<a
-									href="https://github.com/NginxProxyManager/nginx-proxy-manager"
-									target="_blank"
-									className="link-secondary"
-									rel="noopener"
-								>
-									<T id="footer.github-fork" />
-								</a>
-							</li>
-						</ul>
+				<div className="d-flex flex-column flex-lg-row align-items-center justify-content-between gap-2 text-center text-lg-start">
+					<div className="text-secondary small">
+						© 2026 HYROVI · HYROVI Proxy Manager{version ? ` · ${version}` : ""}
 					</div>
-					<div className="col-12 col-lg-auto mt-3 mt-lg-0">
-						<ul className="list-inline list-inline-dots mb-0">
-							<li className="list-inline-item">
-								© 2026{" "}
-								<a href="https://jc21.com" rel="noreferrer" target="_blank" className="link-secondary">
-									jc21.com
-								</a>
-							</li>
-							<li className="list-inline-item">
-								Theme by{" "}
-								<a href="https://tabler.io" rel="noreferrer" target="_blank" className="link-secondary">
-									Tabler
-								</a>
-							</li>
-							<li className="list-inline-item">
-								<a
-									href={`https://github.com/NginxProxyManager/nginx-proxy-manager/releases/tag/${getVersion()}`}
-									className="link-secondary"
-									target="_blank"
-									rel="noopener"
-								>
-									{" "}
-									{getVersion()}{" "}
-								</a>
-							</li>
-							{versionData?.updateAvailable && versionData?.latest && (
-								<li className="list-inline-item">
-									<a
-										href={`https://github.com/NginxProxyManager/nginx-proxy-manager/releases/tag/${versionData.latest}`}
-										className="link-warning fw-bold"
-										target="_blank"
-										rel="noopener"
-										title={`New version ${versionData.latest} is available`}
-									>
-										<T id="update-available" data={{ latestVersion: versionData.latest }} />
-									</a>
-								</li>
-							)}
-						</ul>
+					<div className="d-flex align-items-center gap-3 small">
+						<span className="text-secondary">HYROVI Sec integrated</span>
+						<a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" className="link-secondary">
+							Source repository
+						</a>
 					</div>
 				</div>
 			</div>

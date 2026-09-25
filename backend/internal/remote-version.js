@@ -3,18 +3,34 @@ import { ProxyAgent } from "proxy-agent";
 import { debug, remoteVersion as logger } from "../logger.js";
 import pjson from "../package.json" with { type: "json" };
 
-const VERSION_URL = "https://api.github.com/repos/NginxProxyManager/nginx-proxy-manager/releases/latest";
+const VERSION_URL = String(process.env.HYROVI_UPDATE_URL || "").trim();
+
+const getCurrentVersion = () => {
+	const version = pjson.version.split("-").shift().split(".");
+	return `v${version[0]}.${version[1]}.${version[2]}`;
+};
 
 const internalRemoteVersion = {
-	cache_timeout: 1000 * 60 * 15, // 15 minutes
+	cache_timeout: 1000 * 60 * 15,
 	last_result: null,
 	last_fetch_time: null,
 
 	/**
-	 * Fetch the latest version info, using a cached result if within the cache timeout period.
-	 * @return {Promise<{current: string, latest: string, update_available: boolean}>} Version info
+	 * Fetch HYROVI update information when an explicit update feed is configured.
+	 * Forks must not compare themselves against upstream Nginx Proxy Manager releases.
+	 *
+	 * @return {Promise<{current: string, latest: string|null, update_available: boolean}>}
 	 */
 	get: async () => {
+		const currentVersion = getCurrentVersion();
+		if (!VERSION_URL) {
+			return {
+				current: currentVersion,
+				latest: null,
+				update_available: false,
+			};
+		}
+
 		if (
 			!internalRemoteVersion.last_result ||
 			!internalRemoteVersion.last_fetch_time ||
@@ -25,27 +41,28 @@ const internalRemoteVersion = {
 			internalRemoteVersion.last_result = data;
 			internalRemoteVersion.last_fetch_time = Date.now();
 		} else {
-			debug(logger, "Using cached remote version result");
+			debug(logger, "Using cached HYROVI remote version result");
 		}
 
-		const latestVersion = internalRemoteVersion.last_result.tag_name;
-		const version = pjson.version.split("-").shift().split(".");
-		const currentVersion = `v${version[0]}.${version[1]}.${version[2]}`;
+		const latestVersion = String(internalRemoteVersion.last_result?.tag_name || "").trim() || null;
 		return {
 			current: currentVersion,
 			latest: latestVersion,
-			update_available: internalRemoteVersion.compareVersions(currentVersion, latestVersion),
+			update_available: latestVersion
+				? internalRemoteVersion.compareVersions(currentVersion, latestVersion)
+				: false,
 		};
 	},
 
 	fetchUrl: (url) => {
 		const agent = new ProxyAgent();
 		const headers = {
-			"User-Agent": `NginxProxyManager v${pjson.version}`,
+			"User-Agent": `HYROVI-Proxy-Manager v${pjson.version}`,
+			Accept: "application/json",
 		};
 
 		return new Promise((resolve, reject) => {
-			logger.info(`Fetching ${url}`);
+			logger.info(`Fetching HYROVI update metadata from ${url}`);
 			return https
 				.get(url, { agent, headers }, (res) => {
 					res.setEncoding("utf8");
@@ -54,6 +71,10 @@ const internalRemoteVersion = {
 						raw_data += chunk;
 					});
 					res.on("end", () => {
+						if ((res.statusCode || 500) >= 400) {
+							reject(new Error(`HYROVI update feed returned HTTP ${res.statusCode}`));
+							return;
+						}
 						resolve(raw_data);
 					});
 				})
