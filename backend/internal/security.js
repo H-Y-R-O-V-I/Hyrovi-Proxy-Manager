@@ -1858,6 +1858,7 @@ const isLikelyPageView = (event) => {
 	if (String(event.path || "").startsWith("/.well-known/hyrovi-sec/")) return false;
 	const accept = String(event.accept || "").toLowerCase();
 	if (accept) return accept.includes("text/html") || accept.includes("application/xhtml+xml");
+	if (/^\/(?:api|graphql|metrics|health|socket|websocket|hooks?|webhooks?)(?:\/|$)/i.test(String(event.path || ""))) return false;
 	return likelyBrowserUserAgent(event.userAgent);
 };
 
