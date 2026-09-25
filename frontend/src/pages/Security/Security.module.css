@@ -6,7 +6,7 @@
 .hero h1 { margin: 0; font-size: 1.55rem; }
 .hero p { margin: 5px 0 0; color: var(--tblr-secondary); }
 
-.metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .metric { border: 1px solid var(--tblr-border-color); border-radius: 6px; padding: 14px; background: var(--tblr-bg-surface); min-width: 0; }
 .metricLabel { color: var(--tblr-secondary); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
 .metricValue { font-size: 1.65rem; font-weight: 700; margin-top: 4px; overflow-wrap: anywhere; }
@@ -28,6 +28,34 @@
 .sourceRow small, .rankList small, .identityList small { display: block; color: var(--tblr-secondary); font-size: .7rem; margin-top: 2px; }
 .mono { font-family: var(--tblr-font-monospace); overflow-wrap: anywhere; }
 .risk { font-weight: 700; min-width: 32px; text-align: right; }
+
+.incidentHeaderTools { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.incidentFilters { display: inline-flex; gap: 3px; padding: 2px; border: 1px solid var(--tblr-border-color); border-radius: 4px; background: var(--tblr-bg-surface-secondary); }
+.incidentFilters button { border: 0; background: transparent; color: var(--tblr-secondary); padding: 4px 7px; border-radius: 3px; font-size: .68rem; text-transform: capitalize; }
+.incidentFilters button:hover { color: var(--tblr-body-color); }
+.incidentFilters .incidentFilterActive { background: var(--tblr-bg-surface); color: var(--tblr-body-color); box-shadow: 0 0 0 1px var(--tblr-border-color); }
+.incidentList { display: flex; flex-direction: column; }
+.incidentList > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; padding: 11px 13px; border: 0; border-bottom: 1px solid var(--tblr-border-color); background: transparent; color: inherit; text-align: left; }
+.incidentList > button:last-child { border-bottom: 0; }
+.incidentList > button:hover { background: var(--tblr-bg-surface-secondary); }
+.incidentRisk { align-self: start; padding-top: 1px; }
+.incidentMain { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.incidentMain > strong { overflow-wrap: anywhere; }
+.incidentMain small { color: var(--tblr-secondary); font-size: .72rem; }
+.incidentMeta { min-width: 120px; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.incidentMeta > strong { font-size: .76rem; white-space: nowrap; }
+.incidentSignals { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.incidentSignals i { font-style: normal; font-size: .66rem; padding: 2px 5px; border: 1px solid var(--tblr-border-color); border-radius: 3px; color: var(--tblr-secondary); }
+.incidentSignalsLarge { display: flex; flex-wrap: wrap; gap: 6px; }
+.incidentSignalsLarge span { font-size: .72rem; padding: 4px 7px; border: 1px solid var(--tblr-border-color); border-radius: 4px; background: var(--tblr-bg-surface-secondary); }
+.incidentTimeline { display: flex; flex-direction: column; }
+.incidentTimeline button { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; padding: 8px 9px; border: 0; border-bottom: 1px solid var(--tblr-border-color); background: transparent; color: inherit; text-align: left; }
+.incidentTimeline button:last-child { border-bottom: 0; }
+.incidentTimeline button:not(:disabled):hover { background: var(--tblr-bg-surface-secondary); }
+.incidentTimeline button:disabled { opacity: 1; cursor: default; }
+.incidentTimeline button > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; }
+.incidentTimeline button small { color: var(--tblr-secondary); overflow-wrap: anywhere; }
+.incidentTimelineTime { font-size: .72rem; color: var(--tblr-secondary); white-space: nowrap; }
 
 .rankList { display: flex; flex-direction: column; }
 .rankList button { border: 0; border-bottom: 1px solid var(--tblr-border-color); background: transparent; color: inherit; display: flex; justify-content: space-between; gap: 12px; padding: 10px 13px; text-align: left; }
@@ -134,7 +162,7 @@
 .similarList button:hover { background: var(--tblr-bg-surface-secondary); }
 
 @media (max-width: 1199px) {
-	.metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	.metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 	.insightGrid { grid-template-columns: 1fr 1fr; }
 	.insightGrid > :first-child { grid-column: 1 / -1; }
 }
@@ -157,6 +185,11 @@
 	.requestCell { min-width: 210px; }
 	.hostSearch { width: 100%; }
 	.identityList > div, .detailGridCompact, .clientAssessment, .trafficBreakdown { grid-template-columns: 1fr; }
+	.pathList button, .incidentList > button, .incidentTimeline button { grid-template-columns: 1fr; }
+	.incidentHeaderTools { align-items: flex-start; justify-content: flex-start; width: 100%; }
+	.incidentFilters { max-width: 100%; overflow-x: auto; }
+	.incidentMeta { align-items: flex-start; min-width: 0; }
+	.incidentTimelineTime { white-space: normal; }
 	.pathList button { grid-template-columns: 1fr; }
 	.pathList button > span:last-child { text-align: left; }
 	.identityList > div > span:last-child { text-align: left; }

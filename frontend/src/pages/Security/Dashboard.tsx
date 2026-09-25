@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
 	createSecurityBlock,
 	getSecurityAppEvents,
+	getSecurityAttackSession,
 	getSecurityBlocks,
 	getSecurityEventDetail,
 	getSecurityEvents,
@@ -47,6 +48,9 @@ type SourceAssessment = {
 
 const assessmentBadgeClass = (level: SourceAssessmentLevel) =>
 	level === "likely_attack" ? "bg-red text-white" : level === "suspicious" ? "bg-yellow text-dark" : "bg-green-lt";
+const responseBadgeClass = (response: "block" | "challenge" | "rate_limit" | null) =>
+	response === "block" ? "bg-red text-white" : response === "challenge" ? "bg-orange text-white" : response === "rate_limit" ? "bg-yellow text-dark" : "bg-secondary-lt";
+const humanizeSignal = (value: string) => value.replace(/^custom:(?:soft|observe):/, "").replace(/_/g, " ");
 
 function peakRequestsPerMinute(events: SecurityEvent[]) {
 	const times = events
@@ -201,6 +205,8 @@ export default function SecurityDashboard() {
 	const [sinceMinutes, setSinceMinutes] = useState(60);
 	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [selectedSourceIp, setSelectedSourceIp] = useState<string | null>(null);
+	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+	const [incidentFilter, setIncidentFilter] = useState<"all" | "crawler" | "blocked" | "critical" | "unanswered">("all");
 
 	const overview = useQuery({ queryKey: ["security-overview"], queryFn: getSecurityOverview, refetchInterval: 5000 });
 	const groups = useQuery({ queryKey: ["security-host-groups"], queryFn: getSecurityHostGroups, refetchInterval: 15000 });
@@ -214,6 +220,12 @@ export default function SecurityDashboard() {
 		queryFn: () => getSecurityEventDetail(selectedRequestId as string),
 		enabled: Boolean(selectedRequestId),
 		refetchInterval: selectedRequestId ? 5000 : false,
+	});
+	const attackSessionDetail = useQuery({
+		queryKey: ["security-dashboard-attack-session", selectedSessionId],
+		queryFn: () => getSecurityAttackSession(selectedSessionId as string),
+		enabled: Boolean(selectedSessionId),
+		refetchInterval: selectedSessionId ? 5000 : false,
 	});
 	const sourceDetail = useQuery({
 		queryKey: ["security-source-detail", selectedSourceIp],
@@ -251,6 +263,16 @@ export default function SecurityDashboard() {
 			);
 	}, [events.data]);
 	const sourceRows = sourceStats.slice(0, 12);
+	const attackSessions = useMemo(() => overview.data?.attackSessions ?? [], [overview.data]);
+	const filteredAttackSessions = useMemo(() => attackSessions.filter((session) => {
+		if (incidentFilter === "crawler") return session.signals.includes("crawler_attack");
+		if (incidentFilter === "blocked") return session.activeResponse === "block";
+		if (incidentFilter === "critical") return session.maxRisk >= 80;
+		if (incidentFilter === "unanswered") return session.activeResponse === null;
+		return true;
+	}), [attackSessions, incidentFilter]);
+	const unansweredIncidents = useMemo(() => attackSessions.filter((session) => session.activeResponse === null).length, [attackSessions]);
+	const crawlerAttackCount = useMemo(() => sourceStats.filter((row) => row.crawlerAttack).length, [sourceStats]);
 	const totalBytes = useMemo(() => (events.data ?? []).reduce((sum, event) => sum + Math.max(0, event.bytesSent || 0), 0), [events.data]);
 	const destinationCount = useMemo(() => new Set((events.data ?? []).map((event) => event.host).filter(Boolean)).size, [events.data]);
 	const hostStats = useMemo(() => {
@@ -383,11 +405,18 @@ export default function SecurityDashboard() {
 
 	const openSource = (sourceIp: string) => {
 		setSelectedRequestId(null);
+		setSelectedSessionId(null);
 		setSelectedSourceIp(sourceIp);
 	};
 	const openRequest = (requestId: string) => {
 		setSelectedSourceIp(null);
+		setSelectedSessionId(null);
 		setSelectedRequestId(requestId);
+	};
+	const openSession = (sessionId: string) => {
+		setSelectedSourceIp(null);
+		setSelectedRequestId(null);
+		setSelectedSessionId(sessionId);
 	};
 
 	const block = useMutation({
@@ -426,7 +455,10 @@ export default function SecurityDashboard() {
 			<div className={styles.metric}><div className={styles.metricLabel}>Requests in window</div><div className={styles.metricValue}>{events.data?.length ?? 0}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Unique source IPs</div><div className={styles.metricValue}>{sourceStats.length}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Suspicious</div><div className={styles.metricValue}>{(events.data ?? []).filter((event) => event.risk >= 40).length}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Attack sessions</div><div className={styles.metricValue}>{attackSessions.length}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Crawler attacks</div><div className={styles.metricValue}>{crawlerAttackCount}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Active blocks</div><div className={styles.metricValue}>{overview.data?.activeBlocks ?? 0}</div></div>
+			<div className={styles.metric}><div className={styles.metricLabel}>Unanswered incidents</div><div className={styles.metricValue}>{unansweredIncidents}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Destinations</div><div className={styles.metricValue}>{destinationCount}</div></div>
 			<div className={styles.metric}><div className={styles.metricLabel}>Response traffic</div><div className={styles.metricValue}>{formatBytes(totalBytes)}</div></div>
 		</div>
@@ -455,6 +487,36 @@ export default function SecurityDashboard() {
 			<div className={styles.panel}>
 				<div className={styles.panelHeader}><h3>Top source IPs</h3><span className="text-secondary small">click a client to inspect</span></div>
 				<div className={styles.sourceList}>{sourceRows.map((row) => <button type="button" className={`${styles.sourceRow} btn btn-link text-start text-reset`} key={row.source} onClick={() => openSource(row.source)}><span><span className={styles.mono}>{row.source}</span><small>{row.hostCount} hosts · {formatBytes(row.bytes)} · peak {row.peakRequestsPerMinute}/min</small></span><span>{row.requests} req<small>{row.suspicious} suspicious</small></span><span><span className={`badge ${assessmentBadgeClass(row.level)}`}>{row.label}</span><small className="text-end">risk {row.maxRisk} · {row.uniquePaths} paths</small></span></button>)}{sourceRows.length === 0 ? <div className="p-3 text-secondary">No traffic in this filter.</div> : null}</div>
+			</div>
+		</div>
+
+		<div className={styles.panel}>
+			<div className={styles.panelHeader}>
+				<h3>Attack / incident sessions</h3>
+				<div className={styles.incidentHeaderTools}>
+					<span className="text-secondary small">{overview.data?.automation.mode === "enforce" ? "Enforcement active" : "Observe only"} · 5 minute correlation</span>
+					<div className={styles.incidentFilters}>
+						{(["all", "crawler", "blocked", "critical", "unanswered"] as const).map((value) => <button type="button" key={value} className={incidentFilter === value ? styles.incidentFilterActive : ""} onClick={() => setIncidentFilter(value)}>{value}</button>)}
+					</div>
+				</div>
+			</div>
+			<div className={styles.incidentList}>
+				{filteredAttackSessions.slice(0, 10).map((session) => {
+					const isCrawler = session.signals.includes("crawler_attack");
+					return <button type="button" key={session.id} onClick={() => openSession(session.id)}>
+						<span className={styles.incidentRisk}><span className={`badge ${riskClass(session.maxRisk)}`}>{session.maxRisk}</span></span>
+						<span className={styles.incidentMain}>
+							<strong>{isCrawler ? "Crawler attack" : "Attack session"} · <span className={styles.mono}>{session.ip}</span></strong>
+							<small>{formatTime(session.firstSeen)} → {formatTime(session.lastSeen)} · {session.hosts.length} host{session.hosts.length === 1 ? "" : "s"}</small>
+							<span className={styles.incidentSignals}>{session.signals.slice(0, 5).map((signal) => <i key={signal}>{humanizeSignal(signal)}</i>)}</span>
+						</span>
+						<span className={styles.incidentMeta}>
+							<strong>{session.requests} suspicious req</strong>
+							<span className={`badge ${responseBadgeClass(session.activeResponse)}`}>{session.activeResponse ? session.activeResponse.replace("_", " ") : "detected"}</span>
+						</span>
+					</button>;
+				})}
+				{filteredAttackSessions.length === 0 ? <div className="p-3 text-secondary">No attack sessions match this incident filter.</div> : null}
 			</div>
 		</div>
 
@@ -622,6 +684,77 @@ export default function SecurityDashboard() {
 			</section>
 		</div> : null}
 
+		{selectedSessionId ? <div className={styles.detailBackdrop}>
+			<section className={styles.detailPanel} aria-label="Attack session details">
+				<div className={styles.detailHeader}>
+					<div><div className={styles.detailEyebrow}>Attack / incident session</div><h2>{attackSessionDetail.data?.signals.includes("crawler_attack") ? "Crawler attack" : "Attack session"}</h2></div>
+					<button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedSessionId(null)}>Close</button>
+				</div>
+				{attackSessionDetail.isLoading ? <div className="p-4 text-secondary">Loading incident…</div> : null}
+				{attackSessionDetail.isError ? <div className="alert alert-danger m-3">Could not load this attack session.</div> : null}
+				{attackSessionDetail.data ? <div className={styles.detailBody}>
+					<div className={styles.clientAssessment}>
+						<div>
+							<span>Source</span>
+							<strong className={styles.mono}>{attackSessionDetail.data.ip}</strong>
+							<small className="d-block mt-1">{attackSessionDetail.data.activeResponse ? `Response: ${attackSessionDetail.data.activeResponse.replace("_", " ")}` : "Detected · no active response"}</small>
+						</div>
+						<p>This session groups suspicious requests from one source that occurred within the server-side five-minute correlation window. Response actions and app/device events are correlated into the same incident.</p>
+					</div>
+					<div className={styles.detailGrid}>
+						<div><span>Suspicious requests</span><strong>{attackSessionDetail.data.requests}</strong></div>
+						<div><span>Max risk</span><strong><span className={`badge ${riskClass(attackSessionDetail.data.maxRisk)}`}>{attackSessionDetail.data.maxRisk}</span></strong></div>
+						<div><span>First seen</span><strong>{formatTime(attackSessionDetail.data.firstSeen)}</strong></div>
+						<div><span>Last seen</span><strong>{formatTime(attackSessionDetail.data.lastSeen)}</strong></div>
+						<div><span>Target hosts</span><strong>{attackSessionDetail.data.hosts.length}</strong></div>
+						<div><span>Response</span><strong><span className={`badge ${responseBadgeClass(attackSessionDetail.data.activeResponse)}`}>{attackSessionDetail.data.activeResponse ?? "none"}</span></strong></div>
+					</div>
+					<div className={styles.detailSection}>
+						<h3>Attack signals</h3>
+						<div className={styles.incidentSignalsLarge}>{attackSessionDetail.data.signals.map((signal) => <span key={signal}>{humanizeSignal(signal)}</span>)}</div>
+					</div>
+					<div className={styles.detailSection}>
+						<h3>Target / request patterns</h3>
+						<div className={styles.pathList}>
+							{attackSessionDetail.data.requestPatterns.map((pattern) => <button type="button" key={`${pattern.method}-${pattern.host}-${pattern.path}`} onClick={() => { setIp(attackSessionDetail.data?.ip ?? ""); setHost(pattern.host); setSearch(pattern.path); setSelectedSessionId(null); }}>
+								<span><strong>{pattern.method} {pattern.host}</strong><small className={styles.mono}>{pattern.path}</small></span>
+								<span><strong>{pattern.count}</strong><small>risk {pattern.maxRisk} · {pattern.statuses.join(", ") || "—"}</small></span>
+							</button>)}
+						</div>
+					</div>
+					<div className={styles.detailSection}>
+						<div className={styles.detailSectionHeader}>
+							<h3>Response history</h3>
+							{attackSessionDetail.data.activeResponse !== "block" ? <button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending} onClick={() => block.mutate(attackSessionDetail.data.ip)}><IconBan size={14} /> Block IP 60m</button> : null}
+						</div>
+						<div className={styles.signalList}>
+							{attackSessionDetail.data.responseHistory.length ? attackSessionDetail.data.responseHistory.map((entry) => <div key={entry.id} className={styles.signalRow}><span><strong>{entry.type.replace("_", " ")} · {entry.action}</strong><small>{entry.reason}</small></span><strong>{formatTime(entry.at)}</strong></div>) : <div className="text-secondary">No response history for this incident.</div>}
+						</div>
+					</div>
+					<div className={styles.detailSection}>
+						<h3>Correlated entities</h3>
+						<div className={styles.detailGridCompact}>
+							<div><span>Apps</span><strong>{attackSessionDetail.data.correlation.entities.apps.length}</strong></div>
+							<div><span>Accounts</span><strong>{attackSessionDetail.data.correlation.entities.accountIds.length}</strong></div>
+							<div><span>Devices</span><strong>{attackSessionDetail.data.correlation.entities.deviceIds.length}</strong></div>
+							<div><span>Verified devices</span><strong>{attackSessionDetail.data.correlation.entities.verifiedDeviceIds.length}</strong></div>
+						</div>
+					</div>
+					<div className={styles.detailSection}>
+						<h3>Incident timeline</h3>
+						<div className={styles.incidentTimeline}>
+							{attackSessionDetail.data.correlation.items.slice(0, 40).map((item) => <button type="button" key={item.id} disabled={!item.requestId} onClick={() => item.requestId && openRequest(item.requestId)}>
+								<span className={styles.incidentTimelineTime}>{formatTime(item.timestamp)}</span>
+								<span><strong>{item.summary}</strong><small>{item.detail || [item.host, item.app].filter(Boolean).join(" · ") || item.kind.replace("_", " ")}</small></span>
+								<span>{item.risk !== null ? <span className={`badge ${riskClass(item.risk)}`}>{item.risk}</span> : <span className="badge bg-secondary-lt">{item.kind.replace("_", " ")}</span>}</span>
+							</button>)}
+							{attackSessionDetail.data.correlation.items.length === 0 ? <div className="text-secondary">No correlated timeline items.</div> : null}
+						</div>
+					</div>
+				</div> : null}
+			</section>
+		</div> : null}
+
 		{selectedRequestId ? <div className={styles.detailBackdrop}>
 			<section className={styles.detailPanel} aria-label="Request details">
 				<div className={styles.detailHeader}><div><div className={styles.detailEyebrow}>Request inspection</div><h2>{requestDetail.data?.method ?? "Request"} {requestDetail.data?.host ?? ""}</h2></div><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedRequestId(null)}>Close</button></div>
@@ -641,7 +774,7 @@ export default function SecurityDashboard() {
 					<div className={styles.detailSection}><h3>Destination</h3><div className={styles.codeLine}>{requestDetail.data.method} https://{requestDetail.data.host}{requestDetail.data.path}</div></div>
 					<div className={styles.detailSection}><h3>Client</h3><div className={styles.codeLine}>{requestDetail.data.userAgent || "No user agent"}</div></div>
 					<div className={styles.detailSection}><h3>Identity & device correlation</h3>{requestDetail.data.appEvents.length ? <div className={styles.identityList}>{requestDetail.data.appEvents.slice(0, 12).map((appEvent) => <div key={appEvent.id}><span><strong>{appEvent.app}</strong><small>{appEvent.eventType} · {formatTime(appEvent.timestamp)}</small></span><span>{appEvent.accountId ? `account ${appEvent.accountId}` : appEvent.sessionId ? `session ${appEvent.sessionId}` : "no account"}<small>{appEvent.deviceId ? `${appEvent.deviceTrust === "verified" ? "verified " : ""}device ${appEvent.deviceId}` : "no device"}</small></span></div>)}</div> : <div className="text-secondary">No app/auth event is correlated with this request.</div>}</div>
-					{requestDetail.data.attackSession ? <div className={styles.detailSection}><h3>Attack session</h3><div className={styles.detailGridCompact}><div><span>Requests</span><strong>{requestDetail.data.attackSession.requests}</strong></div><div><span>Max risk</span><strong>{requestDetail.data.attackSession.maxRisk}</strong></div><div><span>Hosts</span><strong>{requestDetail.data.attackSession.hosts.length}</strong></div><div><span>Response</span><strong>{requestDetail.data.attackSession.activeResponse ?? "none"}</strong></div></div></div> : null}
+					{requestDetail.data.attackSession ? <div className={styles.detailSection}><div className={styles.detailSectionHeader}><h3>Attack session</h3><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => openSession(requestDetail.data?.attackSession?.id ?? "")}>Open incident</button></div><div className={styles.detailGridCompact}><div><span>Requests</span><strong>{requestDetail.data.attackSession.requests}</strong></div><div><span>Max risk</span><strong>{requestDetail.data.attackSession.maxRisk}</strong></div><div><span>Hosts</span><strong>{requestDetail.data.attackSession.hosts.length}</strong></div><div><span>Response</span><strong>{requestDetail.data.attackSession.activeResponse ?? "none"}</strong></div></div></div> : null}
 					<div className={styles.detailSection}><h3>Why this request is suspicious</h3><div className={styles.signalList}>{requestDetail.data.signals.length ? requestDetail.data.signals.map((signal) => <div key={signal.id} className={styles.signalRow}><span>{signal.label}</span><strong>+{signal.score}</strong></div>) : <div className="text-secondary">No suspicious signals on this request.</div>}</div></div>
 					<div className={styles.detailSection}><h3>Active responses</h3><div className={styles.signalList}>{requestDetail.data.activeResponses.length ? requestDetail.data.activeResponses.map((response) => <div key={response.id} className={styles.signalRow}><span>{response.type.replace("_", " ")}</span><strong>{response.expiresAt ? formatTime(response.expiresAt) : "active"}</strong></div>) : <div className="text-secondary">No active response for this source.</div>}</div></div>
 					<div className={styles.detailSection}><div className={styles.detailSectionHeader}><h3>Similar requests</h3><button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending} onClick={() => block.mutate(requestDetail.data.ip)}><IconBan size={14} /> Block IP 60m</button></div><div className={styles.similarList}>{requestDetail.data.similarRequests.slice(0, 8).map((item) => <button type="button" key={item.requestId || `${item.timestamp}-${item.path}`} onClick={() => item.requestId && openRequest(item.requestId)}><span>{item.method} {item.host}{item.path}</span><strong>{Math.round(item.similarityScore * 100)}%</strong></button>)}{requestDetail.data.similarRequests.length === 0 ? <div className="text-secondary">No similar requests found.</div> : null}</div></div>
