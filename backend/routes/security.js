@@ -463,6 +463,7 @@ router.get("/overview", async (req, res, next) => {
 			method: req.query.method,
 			status: req.query.status,
 			groupId: req.query.group_id,
+			nodeId: req.query.node_id,
 			search: req.query.search,
 			sinceMinutes: req.query.since_minutes,
 		});
@@ -484,6 +485,7 @@ router.get("/events", async (req, res, next) => {
 			method: req.query.method,
 			status: req.query.status,
 			groupId: req.query.group_id,
+			nodeId: req.query.node_id,
 			search: req.query.search,
 			sinceMinutes: req.query.since_minutes,
 		});

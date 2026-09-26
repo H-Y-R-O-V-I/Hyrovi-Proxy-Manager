@@ -1,5 +1,6 @@
 import express from "express";
 import internalControlPlaneNodes from "../internal/control_plane_nodes.js";
+import internalControlPlaneTelemetry from "../internal/control_plane_telemetry.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
 
@@ -17,6 +18,18 @@ router.post("/agent/nodes/:node_id/heartbeat", async (req, res, next) => {
 			req.body || {},
 		);
 		res.status(200).send(result);
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/agent/nodes/:node_id/telemetry", async (req, res, next) => {
+	try {
+		await internalControlPlaneNodes.authenticateNode(req.params.node_id, req.headers.authorization);
+		const result = await internalControlPlaneTelemetry.ingest(req.params.node_id, req.body || {});
+		res.set("Cache-Control", "no-store");
+		res.status(202).send(result);
 	} catch (err) {
 		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
 		next(err);

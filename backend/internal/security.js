@@ -7,6 +7,7 @@ import internalNginx from "./nginx.js";
 import internalSecurityAppEvents from "./security_app_events.js";
 import internalSecurityAlerts from "./security_alerts.js";
 import internalSecurityAnalyticsTracker from "./security_analytics_tracker.js";
+import internalControlPlaneTelemetry from "./control_plane_telemetry.js";
 import internalSecurityChallenge from "./security_challenge.js";
 import internalSecurityDevices from "./security_devices.js";
 import internalSecurityDetectionRules from "./security_detection_rules.js";
@@ -272,6 +273,9 @@ const parseTimestamp = (value) => {
 };
 
 const normalizeEvent = (raw) => {
+	const nodeId = String(raw.node_id || raw.nodeId || "local").trim() || "local";
+	const originRequestId = raw.request_id || raw.originRequestId || raw.requestId || null;
+	const requestId = originRequestId && nodeId !== "local" ? `${nodeId}:${originRequestId}` : originRequestId;
 	const status = Number.parseInt(raw.status, 10) || 0;
 	const requestLength = Number.parseInt(raw.request_length, 10) || 0;
 	const bytesSent = Number.parseInt(raw.bytes_sent, 10) || 0;
@@ -290,8 +294,10 @@ const normalizeEvent = (raw) => {
 		"sec-ch-ua-platform": secChUaPlatform,
 	});
 	return {
-		timestamp: raw.ts || null,
-		requestId: raw.request_id || null,
+		nodeId,
+		timestamp: raw.ts || raw.timestamp || null,
+		requestId,
+		originRequestId,
 		host: raw.host || "",
 		method: String(raw.method || "").toUpperCase(),
 		path: raw.path || "/",
@@ -527,8 +533,10 @@ const archiveDateKey = (event) => {
 };
 
 const archivedEventRecord = (event) => ({
+	nodeId: event.nodeId || "local",
 	timestamp: event.timestamp,
 	requestId: event.requestId,
+	originRequestId: event.originRequestId || event.requestId,
 	host: event.host,
 	method: event.method,
 	path: event.path,
@@ -630,7 +638,7 @@ const loadArchivedEvents = async (limit, retentionDays) => {
 		for (const line of text.split("\n").filter(Boolean).reverse()) {
 			const event = safeJsonParse(line);
 			if (!event?.ip || !event?.host || !Array.isArray(event.signals)) continue;
-			result.push(event);
+			result.push({ nodeId: event.nodeId || "local", originRequestId: event.originRequestId || event.requestId || null, ...event });
 			if (result.length >= limit) return result;
 		}
 	}
@@ -672,6 +680,36 @@ const loadEventHistory = async (limit, policy, liveMaxBytes = MAX_SCAN_BYTES) =>
 			const rightTime = parseTimestamp(right.timestamp)?.getTime() || 0;
 			return rightTime - leftTime;
 		})
+		.slice(0, limit);
+};
+
+const loadRemoteEventHistory = async (limit, options = {}) => {
+	const filters = normalizeEventFilterOptions(options);
+	const nodeId = filters.nodeId && filters.nodeId !== "local" ? filters.nodeId : "";
+	const [rawEvents, detectionRules] = await Promise.all([
+		internalControlPlaneTelemetry.getSecurityEvents({
+			nodeId,
+			limit: Math.min(limit, MAX_ANALYSIS_EVENT_LIMIT),
+			since: filters.since,
+		}),
+		internalSecurityDetectionRules.listRulesForAnalysis(),
+	]);
+	const normalized = rawEvents.map(normalizeEvent).filter((event) => event.ip && event.host);
+	return enrichEvents(normalized, detectionRules)
+		.sort((left, right) => (parseTimestamp(right.timestamp)?.getTime() || 0) - (parseTimestamp(left.timestamp)?.getTime() || 0))
+		.slice(0, limit);
+};
+
+const loadDashboardEventHistory = async (limit, policy, options = {}, liveMaxBytes = MAX_SCAN_BYTES) => {
+	const filters = normalizeEventFilterOptions(options);
+	const includeLocal = !filters.nodeId || filters.nodeId === "local";
+	const includeRemote = !filters.nodeId || filters.nodeId !== "local";
+	const [localEvents, remoteEvents] = await Promise.all([
+		includeLocal ? loadEventHistory(limit, policy, liveMaxBytes) : Promise.resolve([]),
+		includeRemote ? loadRemoteEventHistory(limit, options) : Promise.resolve([]),
+	]);
+	return [...localEvents, ...remoteEvents]
+		.sort((left, right) => (parseTimestamp(right.timestamp)?.getTime() || 0) - (parseTimestamp(left.timestamp)?.getTime() || 0))
 		.slice(0, limit);
 };
 
@@ -966,8 +1004,11 @@ const isPrivateOrLoopback = (ip) => {
 	return true;
 };
 
-const eventIdentity = (event) =>
-	event.requestId || [event.timestamp, event.ip, event.method, event.host, event.path, event.status].join("|");
+const eventIdentity = (event) => {
+	const nodeId = event.nodeId || "local";
+	const base = event.requestId || [event.timestamp, event.ip, event.method, event.host, event.path, event.status].join("|");
+	return `${nodeId}|${base}`;
+};
 
 const rememberEvent = (event) => {
 	const id = eventIdentity(event);
@@ -1429,6 +1470,17 @@ const getHostPolicyContext = async (policy) => {
 const decorateEventsWithHostPolicy = (events, context) =>
 	events
 		.map((event) => {
+			if (event.nodeId && event.nodeId !== "local") {
+				return {
+					...event,
+					proxyHostId: null,
+					securityMode: "observe",
+					endpointRulePath: null,
+					policySource: "remote",
+					groupId: null,
+					groupName: null,
+				};
+			}
 			const effective = context.resolve(event.host, event.path);
 			return {
 				...event,
@@ -1440,7 +1492,7 @@ const decorateEventsWithHostPolicy = (events, context) =>
 				groupName: effective.groupName || null,
 			};
 		})
-		.filter((event) => event.securityMode !== "off");
+		.filter((event) => event.nodeId !== "local" || event.securityMode !== "off");
 const monitorThreats = async () => {
 	const events = await loadLiveEvents(MAX_EVENT_LIST_LIMIT);
 	const policy = await readPolicyUnsafe();
@@ -1710,8 +1762,8 @@ const monitorThreats = async () => {
 	});
 };
 
-const attackSessionId = (ip, firstSeen) =>
-	createHash("sha256").update(`${ip}|${firstSeen || ""}`).digest("hex").slice(0, 24);
+const attackSessionId = (nodeId, ip, firstSeen) =>
+	createHash("sha256").update(`${nodeId || "local"}|${ip}|${firstSeen || ""}`).digest("hex").slice(0, 24);
 
 const sessionRequestPatterns = (timeline) => {
 	const groups = new Map();
@@ -1752,11 +1804,13 @@ const buildAttackSessions = (events) => {
 
 	for (const event of orderedSuspicious) {
 		const eventTime = parseTimestamp(event.timestamp)?.getTime() || 0;
-		let session = sessionsByIp.get(event.ip);
+		const sessionKey = `${event.nodeId || "local"}|${event.ip}`;
+		let session = sessionsByIp.get(sessionKey);
 		if (!session || eventTime - session.lastSeenMs > SESSION_WINDOW_MS) {
 			const firstSeen = event.timestamp || event.requestId || "";
 			session = {
-				id: attackSessionId(event.ip, firstSeen),
+				id: attackSessionId(event.nodeId || "local", event.ip, firstSeen),
+				nodeId: event.nodeId || "local",
 				ip: event.ip,
 				requests: 0,
 				maxRisk: 0,
@@ -1768,7 +1822,7 @@ const buildAttackSessions = (events) => {
 				timeline: [],
 			};
 			attackSessions.push(session);
-			sessionsByIp.set(event.ip, session);
+			sessionsByIp.set(sessionKey, session);
 		}
 
 		session.requests += 1;
@@ -1789,6 +1843,7 @@ const attackSessionSummary = (session, blocks = [], rateLimits = [], challenges 
 	const rateLimit = rateLimits.find((entry) => entry.ip === session.ip);
 	return {
 		id: session.id,
+		nodeId: session.nodeId || "local",
 		ip: session.ip,
 		requests: session.requests,
 		maxRisk: session.maxRisk,
@@ -1796,7 +1851,7 @@ const attackSessionSummary = (session, blocks = [], rateLimits = [], challenges 
 		hosts: [...session.hosts],
 		firstSeen: session.firstSeen,
 		lastSeen: session.lastSeen,
-		activeResponse: block ? "block" : challenge ? "challenge" : rateLimit ? "rate_limit" : null,
+		activeResponse: session.nodeId === "local" ? (block ? "block" : challenge ? "challenge" : rateLimit ? "rate_limit" : null) : null,
 	};
 };
 
@@ -2735,6 +2790,7 @@ const normalizeEventFilterOptions = (options = {}) => {
 		method: String(options.method || "").trim().toUpperCase(),
 		status: Number.parseInt(options.status, 10),
 		groupId: String(options.groupId || "").trim(),
+		nodeId: String(options.nodeId || "").trim(),
 		search: String(options.search || "").trim().toLowerCase(),
 		since: sinceMinutes ? Date.now() - sinceMinutes * 60_000 : 0,
 		sinceMinutes,
@@ -2750,9 +2806,10 @@ const filterSecurityEvents = (events, options = {}) => {
 		if (filters.method && event.method !== filters.method) return false;
 		if (Number.isInteger(filters.status) && filters.status > 0 && event.status !== filters.status) return false;
 		if (filters.groupId && event.groupId !== filters.groupId) return false;
+		if (filters.nodeId && (event.nodeId || "local") !== filters.nodeId) return false;
 		if (filters.since && (!event.timestamp || new Date(event.timestamp).getTime() < filters.since)) return false;
 		if (filters.search) {
-			const haystack = [event.host, event.path, event.ip, event.method, event.userAgent, event.requestId]
+			const haystack = [event.nodeId, event.host, event.path, event.ip, event.method, event.userAgent, event.requestId]
 				.filter(Boolean)
 				.join(" ")
 				.toLowerCase();
@@ -3059,7 +3116,7 @@ const internalSecurity = {
 		await access.can("logs:list");
 		const limit = clamp(Number.parseInt(options.limit, 10) || DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIST_LIMIT);
 		const policy = await readPolicyUnsafe();
-		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
+		const rawEvents = await loadDashboardEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, options, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		return filterSecurityEvents(events, options).slice(0, limit);
@@ -3075,7 +3132,7 @@ const internalSecurity = {
 		]);
 		const activeEscalations = Object.values(pruneEscalationStates(rawEscalations, rateLimits, policy))
 			.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
+		const rawEvents = await loadDashboardEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, options, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const decoratedEvents = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const filters = normalizeEventFilterOptions(options);
@@ -3095,10 +3152,45 @@ const internalSecurity = {
 			.slice(0, 20);
 
 		const webAnalytics = buildWebAnalytics(events);
-		webAnalytics.clientTracking = await internalSecurityAnalyticsTracker.getSummary({
-			host: filters.host,
-			sinceMinutes: filters.sinceMinutes || 60,
-		});
+		const emptyTracking = {
+			events: 0,
+			pageViews: 0,
+			consentedDevices: 0,
+			clientFingerprints: 0,
+			sessions: 0,
+			engagementSeconds: 0,
+			routeChanges: 0,
+			scroll: { 25: 0, 50: 0, 75: 0, 100: 0 },
+		};
+		const includeLocalTracking = !filters.nodeId || filters.nodeId === "local";
+		const includeRemoteTracking = !filters.nodeId || filters.nodeId !== "local";
+		const [localTracking, remoteTracking] = await Promise.all([
+			includeLocalTracking
+				? internalSecurityAnalyticsTracker.getSummary({ host: filters.host, sinceMinutes: filters.sinceMinutes || 60 })
+				: Promise.resolve(emptyTracking),
+			includeRemoteTracking
+				? internalControlPlaneTelemetry.getAnalyticsSummary({
+					nodeId: filters.nodeId && filters.nodeId !== "local" ? filters.nodeId : "",
+					host: filters.host,
+					sinceMinutes: filters.sinceMinutes || 60,
+				})
+				: Promise.resolve(emptyTracking),
+		]);
+		webAnalytics.clientTracking = {
+			events: localTracking.events + remoteTracking.events,
+			pageViews: localTracking.pageViews + remoteTracking.pageViews,
+			consentedDevices: localTracking.consentedDevices + remoteTracking.consentedDevices,
+			clientFingerprints: localTracking.clientFingerprints + remoteTracking.clientFingerprints,
+			sessions: localTracking.sessions + remoteTracking.sessions,
+			engagementSeconds: localTracking.engagementSeconds + remoteTracking.engagementSeconds,
+			routeChanges: localTracking.routeChanges + remoteTracking.routeChanges,
+			scroll: {
+				25: localTracking.scroll[25] + remoteTracking.scroll[25],
+				50: localTracking.scroll[50] + remoteTracking.scroll[50],
+				75: localTracking.scroll[75] + remoteTracking.scroll[75],
+				100: localTracking.scroll[100] + remoteTracking.scroll[100],
+			},
+		};
 
 		return {
 			window: {
@@ -3141,29 +3233,39 @@ const internalSecurity = {
 			readEscalationsUnsafe(),
 		]);
 		const escalation = pruneEscalationStates(rawEscalations, rateLimits, policy);
-		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
+		const rawEvents = await loadDashboardEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, {}, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const session = buildAttackSessions(events).find((entry) => entry.id === sessionId);
 		if (!session) throw new errs.ItemNotFoundError(sessionId);
 		const firstSeenMs = parseTimestamp(session.firstSeen)?.getTime() || Date.now();
 		const lastSeenMs = parseTimestamp(session.lastSeen)?.getTime() || firstSeenMs;
-		const appEvents = await internalSecurityAppEvents.findCorrelatedEvents({
-			requestIds: session.timeline.map((event) => event.requestId).filter(Boolean),
-			ip: session.ip,
-			from: new Date(firstSeenMs - 60_000).toISOString(),
-			to: new Date(lastSeenMs + 60_000).toISOString(),
-			limit: 100,
-		});
+		const isLocalSession = (session.nodeId || "local") === "local";
+		const appEvents = isLocalSession
+			? await internalSecurityAppEvents.findCorrelatedEvents({
+				requestIds: session.timeline.map((event) => event.requestId).filter(Boolean),
+				ip: session.ip,
+				from: new Date(firstSeenMs - 60_000).toISOString(),
+				to: new Date(lastSeenMs + 60_000).toISOString(),
+				limit: 100,
+			})
+			: [];
+		const sessionActions = isLocalSession ? actions : [];
+		const sessionChallenges = isLocalSession ? challenges : [];
 		return {
-			...attackSessionDetail(session, blocks, rateLimits, challenges),
-			responseHistory: actions
+			...attackSessionDetail(
+				session,
+				isLocalSession ? blocks : [],
+				isLocalSession ? rateLimits : [],
+				sessionChallenges,
+			),
+			responseHistory: sessionActions
 				.filter((entry) => entry.ip === session.ip)
 				.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 				.slice(-100),
 			appEvents,
-			correlation: buildIncidentCorrelation({ session, appEvents, actions, challenges }),
-			escalation: escalation[session.ip] || null,
+			correlation: buildIncidentCorrelation({ session, appEvents, actions: sessionActions, challenges: sessionChallenges }),
+			escalation: isLocalSession ? escalation[session.ip] || null : null,
 		};
 	},
 
@@ -3181,7 +3283,7 @@ const internalSecurity = {
 			readEscalationsUnsafe(),
 		]);
 		const escalation = pruneEscalationStates(rawEscalations, rateLimits, policy);
-		const rawEvents = await loadEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, MAX_ANALYSIS_SCAN_BYTES);
+		const rawEvents = await loadDashboardEventHistory(MAX_ANALYSIS_EVENT_LIMIT, policy, {}, MAX_ANALYSIS_SCAN_BYTES);
 		const hostPolicyContext = await getHostPolicyContext(policy);
 		const events = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const event = events.find((entry) => entry.requestId === id);
@@ -3191,22 +3293,32 @@ const internalSecurity = {
 			entry.timeline.some((item) => eventIdentity(item) === eventIdentity(event)),
 		);
 		const eventTimeMs = parseTimestamp(event.timestamp)?.getTime() || Date.now();
-		const appEvents = await internalSecurityAppEvents.findCorrelatedEvents({
-			requestId: event.requestId,
-			ip: event.ip,
-			from: new Date(eventTimeMs - 5 * 60_000).toISOString(),
-			to: new Date(eventTimeMs + 5 * 60_000).toISOString(),
-			limit: 100,
-		});
+		const isLocalEvent = (event.nodeId || "local") === "local";
+		const appEvents = isLocalEvent
+			? await internalSecurityAppEvents.findCorrelatedEvents({
+				requestId: event.requestId,
+				ip: event.ip,
+				from: new Date(eventTimeMs - 5 * 60_000).toISOString(),
+				to: new Date(eventTimeMs + 5 * 60_000).toISOString(),
+				limit: 100,
+			})
+			: [];
 
 		return {
 			...event,
 			similarRequests: similarSecurityEvents(event, events),
-			attackSession: session ? attackSessionSummary(session, blocks, rateLimits, challenges) : null,
-			activeResponses: activeResponsesForIp(event.ip, blocks, rateLimits, challenges),
-			responseHistory: responseHistoryForIp(event.ip, actions),
+			attackSession: session
+				? attackSessionSummary(
+					session,
+					isLocalEvent ? blocks : [],
+					isLocalEvent ? rateLimits : [],
+					isLocalEvent ? challenges : [],
+				)
+				: null,
+			activeResponses: isLocalEvent ? activeResponsesForIp(event.ip, blocks, rateLimits, challenges) : [],
+			responseHistory: isLocalEvent ? responseHistoryForIp(event.ip, actions) : [],
 			appEvents,
-			escalation: escalation[event.ip] || null,
+			escalation: isLocalEvent ? escalation[event.ip] || null : null,
 		};
 	},
 

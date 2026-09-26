@@ -3,6 +3,7 @@
 import app from "./app.js";
 import internalCertificate from "./internal/certificate.js";
 import internalControlPlaneNodes from "./internal/control_plane_nodes.js";
+import internalControlPlaneTelemetry from "./internal/control_plane_telemetry.js";
 import internalIpRanges from "./internal/ip_ranges.js";
 import internalSecurity from "./internal/security.js";
 import { global as logger } from "./logger.js";
@@ -32,7 +33,7 @@ async function appStart() {
 			}),
 		)
 		.then(() =>
-			internalControlPlaneNodes.prepare().catch((err) => {
+			Promise.all([internalControlPlaneNodes.prepare(), internalControlPlaneTelemetry.prepare()]).catch((err) => {
 				logger.error("HYROVI control-plane state failed to initialize; local proxy will continue:", err.message);
 			}),
 		)

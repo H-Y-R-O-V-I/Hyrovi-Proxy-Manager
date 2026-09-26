@@ -7,8 +7,10 @@ export interface SecuritySignal {
 }
 
 export interface SecurityEvent {
+	nodeId: string;
 	timestamp: string | null;
 	requestId: string | null;
+	originRequestId: string | null;
 	host: string;
 	method: string;
 	path: string;
@@ -32,7 +34,7 @@ export interface SecurityEvent {
 	proxyHostId: number | null;
 	securityMode: SecurityHostMode;
 	endpointRulePath: string | null;
-	policySource: "host" | "group" | "global";
+	policySource: "host" | "group" | "global" | "remote";
 	groupId: string | null;
 	groupName: string | null;
 	signals: SecuritySignal[];
@@ -40,6 +42,7 @@ export interface SecurityEvent {
 
 export interface SecurityAttackSession {
 	id: string;
+	nodeId: string;
 	ip: string;
 	requests: number;
 	maxRisk: number;
@@ -225,6 +228,7 @@ export interface SecurityEventFilters {
 	method?: string;
 	status?: number;
 	groupId?: string;
+	nodeId?: string;
 	search?: string;
 	sinceMinutes?: number;
 }
@@ -748,6 +752,7 @@ export async function getSecurityOverview(filters: Omit<SecurityEventFilters, "l
 			method: filters.method,
 			status: filters.status,
 			groupId: filters.groupId,
+			nodeId: filters.nodeId,
 			search: filters.search,
 			sinceMinutes: filters.sinceMinutes,
 		},
@@ -862,6 +867,7 @@ export async function getSecurityEvents(
 			method: params.method,
 			status: params.status,
 			groupId: params.groupId,
+			nodeId: params.nodeId,
 			search: params.search,
 			sinceMinutes: params.sinceMinutes,
 		},

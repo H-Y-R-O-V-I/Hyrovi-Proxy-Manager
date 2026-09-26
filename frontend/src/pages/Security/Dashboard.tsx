@@ -3,6 +3,7 @@ import { IconBan, IconFilterOff, IconRefresh } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 import {
 	createSecurityBlock,
+	getControlPlaneNodes,
 	getSecurityAppEvents,
 	getSecurityAttackSession,
 	getSecurityBlocks,
@@ -221,6 +222,7 @@ export default function SecurityDashboard() {
 	const [status, setStatus] = useState(0);
 	const [minRisk, setMinRisk] = useState(0);
 	const [groupId, setGroupId] = useState("");
+	const [nodeId, setNodeId] = useState("");
 	const [sinceMinutes, setSinceMinutes] = useState(60);
 	const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
 	const [selectedSourceIp, setSelectedSourceIp] = useState<string | null>(null);
@@ -230,14 +232,15 @@ export default function SecurityDashboard() {
 	const [filtersOpen, setFiltersOpen] = useState(false);
 
 	const overview = useQuery({
-		queryKey: ["security-overview", search, ip, host, method, status, minRisk, groupId, sinceMinutes],
-		queryFn: () => getSecurityOverview({ search, ip, host, method, status: status || undefined, minRisk, groupId, sinceMinutes }),
+		queryKey: ["security-overview", search, ip, host, method, status, minRisk, groupId, nodeId, sinceMinutes],
+		queryFn: () => getSecurityOverview({ search, ip, host, method, status: status || undefined, minRisk, groupId, nodeId, sinceMinutes }),
 		refetchInterval: 5000,
 	});
 	const groups = useQuery({ queryKey: ["security-host-groups"], queryFn: getSecurityHostGroups, refetchInterval: 15000 });
+	const nodes = useQuery({ queryKey: ["control-plane-nodes"], queryFn: getControlPlaneNodes, refetchInterval: 15_000 });
 	const events = useQuery({
-		queryKey: ["security-dashboard-events", search, ip, host, method, status, minRisk, groupId, sinceMinutes],
-		queryFn: () => getSecurityEvents({ limit: 2000, search, ip, host, method, status: status || undefined, minRisk, groupId, sinceMinutes }),
+		queryKey: ["security-dashboard-events", search, ip, host, method, status, minRisk, groupId, nodeId, sinceMinutes],
+		queryFn: () => getSecurityEvents({ limit: 2000, search, ip, host, method, status: status || undefined, minRisk, groupId, nodeId, sinceMinutes }),
 		refetchInterval: 5000,
 	});
 	const requestDetail = useQuery({
@@ -253,14 +256,14 @@ export default function SecurityDashboard() {
 		refetchInterval: selectedSessionId ? 5000 : false,
 	});
 	const sourceDetail = useQuery({
-		queryKey: ["security-source-detail", selectedSourceIp],
-		queryFn: () => getSecurityEvents({ limit: 2000, ip: selectedSourceIp || undefined, sinceMinutes: 60 }),
+		queryKey: ["security-source-detail", selectedSourceIp, nodeId],
+		queryFn: () => getSecurityEvents({ limit: 2000, ip: selectedSourceIp || undefined, nodeId, sinceMinutes: 60 }),
 		enabled: Boolean(selectedSourceIp),
 		refetchInterval: selectedSourceIp ? 5000 : false,
 	});
 	const sourceOverview = useQuery({
-		queryKey: ["security-source-overview", selectedSourceIp],
-		queryFn: () => getSecurityOverview({ ip: selectedSourceIp || undefined, sinceMinutes: 60 }),
+		queryKey: ["security-source-overview", selectedSourceIp, nodeId],
+		queryFn: () => getSecurityOverview({ ip: selectedSourceIp || undefined, nodeId, sinceMinutes: 60 }),
 		enabled: Boolean(selectedSourceIp),
 		refetchInterval: selectedSourceIp ? 5000 : false,
 	});
@@ -567,6 +570,7 @@ export default function SecurityDashboard() {
 		setStatus(0);
 		setMinRisk(0);
 		setGroupId("");
+		setNodeId("");
 		setSinceMinutes(60);
 	};
 
@@ -595,6 +599,7 @@ export default function SecurityDashboard() {
 		</div>
 
 		<div className={styles.filterBar}>
+			<select className="form-select" value={nodeId} onChange={(e) => setNodeId(e.target.value)}><option value="">All nodes</option>{(nodes.data ?? []).map((node) => <option key={node.id} value={node.id}>{node.name}{node.status !== "online" ? ` · ${node.status}` : ""}</option>)}</select>
 			<select className="form-select" value={sinceMinutes} onChange={(e) => setSinceMinutes(Number(e.target.value))}><option value={15}>15 min</option><option value={60}>1 hour</option><option value={360}>6 hours</option><option value={1440}>24 hours</option><option value={10080}>7 days</option></select>
 			<select className="form-select" value={host} onChange={(e) => setHost(e.target.value)}><option value="">All sites</option>{hostOptions.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select>
 			<div className={styles.filterBarActions}>
@@ -741,7 +746,7 @@ export default function SecurityDashboard() {
 					return <button type="button" key={session.id} onClick={() => openSession(session.id)}>
 						<span className={styles.incidentRisk}><span className={`badge ${riskClass(session.maxRisk)}`}>{session.maxRisk}</span></span>
 						<span className={styles.incidentMain}>
-							<strong>{isCrawler ? "Crawler attack" : "Attack session"} · <span className={styles.mono}>{session.ip}</span></strong>
+							<strong>{isCrawler ? "Crawler attack" : "Attack session"} · <span className={styles.mono}>{session.ip}</span></strong><small className="text-secondary">{(nodes.data ?? []).find((node) => node.id === session.nodeId)?.name ?? session.nodeId}</small>
 							<small>{formatTime(session.firstSeen)} → {formatTime(session.lastSeen)} · {session.hosts.length} host{session.hosts.length === 1 ? "" : "s"}</small>
 							<span className={styles.incidentSignals}>{session.signals.slice(0, 5).map((signal) => <i key={signal}>{humanizeSignal(signal)}</i>)}</span>
 						</span>
@@ -824,9 +829,10 @@ export default function SecurityDashboard() {
 
 		<div className={styles.panel} hidden={analyticsView !== "requests"}>
 			<div className={styles.panelHeader}><h3>Request timeline</h3><span className="text-secondary small">{events.isFetching ? "Updating…" : `${events.data?.length ?? 0} requests`}</span></div>
-			<div className={`${styles.timeline} table-responsive`}><table className="table table-vcenter"><thead><tr><th>Time</th><th>Source</th><th>Request → destination</th><th>Group</th><th>Status</th><th>Risk</th><th>Traffic</th><th /></tr></thead><tbody>
+			<div className={`${styles.timeline} table-responsive`}><table className="table table-vcenter"><thead><tr><th>Time</th><th>Node</th><th>Source</th><th>Request → destination</th><th>Group</th><th>Status</th><th>Risk</th><th>Traffic</th><th /></tr></thead><tbody>
 				{(events.data ?? []).map((event, index) => <tr key={event.requestId || `${event.timestamp}-${index}`}>
 					<td className="text-nowrap">{formatTime(event.timestamp)}</td>
+					<td><span className="badge bg-secondary-lt">{(nodes.data ?? []).find((node) => node.id === event.nodeId)?.name ?? event.nodeId}</span></td>
 					<td><button type="button" className="btn btn-link p-0 font-monospace" onClick={() => openSource(event.ip)}>{event.ip}</button></td>
 					<td className={styles.requestCell}><button type="button" className={styles.requestLink} onClick={() => event.requestId && openRequest(event.requestId)} disabled={!event.requestId}><span><strong>{event.method}</strong> {event.host}</span><span className={styles.requestPath}>{event.path}</span></button></td>
 					<td>{event.groupName ? <span className={styles.groupBadge}>{event.groupName}</span> : <span className="text-secondary">—</span>}</td>
@@ -835,7 +841,7 @@ export default function SecurityDashboard() {
 					<td className="text-nowrap"><div>{formatBytes(event.bytesSent)}</div><small className="text-secondary">{event.requestTime ? `${Math.round(event.requestTime * 1000)} ms` : "—"}</small></td>
 					<td><button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending} onClick={() => block.mutate(event.ip)} title="Block this source IP for 60 minutes"><IconBan size={15} /></button></td>
 				</tr>)}
-				{!events.isLoading && (events.data?.length ?? 0) === 0 ? <tr><td colSpan={8} className="text-secondary p-4">No requests match these filters.</td></tr> : null}
+				{!events.isLoading && (events.data?.length ?? 0) === 0 ? <tr><td colSpan={9} className="text-secondary p-4">No requests match these filters.</td></tr> : null}
 			</tbody></table></div>
 		</div>
 
@@ -1054,6 +1060,7 @@ export default function SecurityDashboard() {
 						<div><span>Status</span><strong>{requestDetail.data.status || "—"}</strong></div>
 						<div><span>Risk</span><strong><span className={`badge ${riskClass(requestDetail.data.risk)}`}>{requestDetail.data.risk}</span></strong></div>
 						<div><span>Policy</span><strong>{requestDetail.data.policySource}{requestDetail.data.groupName ? ` · ${requestDetail.data.groupName}` : ""}</strong></div>
+						<div><span>Node</span><strong>{(nodes.data ?? []).find((node) => node.id === requestDetail.data.nodeId)?.name ?? requestDetail.data.nodeId}</strong></div>
 						<div><span>Request ID</span><strong className={styles.mono}>{requestDetail.data.requestId || "—"}</strong></div>
 						<div><span>Time</span><strong>{formatTime(requestDetail.data.timestamp)}</strong></div>
 						<div><span>Response traffic</span><strong>{formatBytes(requestDetail.data.bytesSent)}</strong></div>
@@ -1065,7 +1072,7 @@ export default function SecurityDashboard() {
 					{requestDetail.data.attackSession ? <div className={styles.detailSection}><div className={styles.detailSectionHeader}><h3>Attack session</h3><button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => openSession(requestDetail.data?.attackSession?.id ?? "")}>Open incident</button></div><div className={styles.detailGridCompact}><div><span>Requests</span><strong>{requestDetail.data.attackSession.requests}</strong></div><div><span>Max risk</span><strong>{requestDetail.data.attackSession.maxRisk}</strong></div><div><span>Hosts</span><strong>{requestDetail.data.attackSession.hosts.length}</strong></div><div><span>Response</span><strong>{requestDetail.data.attackSession.activeResponse ?? "none"}</strong></div></div></div> : null}
 					<div className={styles.detailSection}><h3>Why this request is suspicious</h3><div className={styles.signalList}>{requestDetail.data.signals.length ? requestDetail.data.signals.map((signal) => <div key={signal.id} className={styles.signalRow}><span>{signal.label}</span><strong>+{signal.score}</strong></div>) : <div className="text-secondary">No suspicious signals on this request.</div>}</div></div>
 					<div className={styles.detailSection}><h3>Active responses</h3><div className={styles.signalList}>{requestDetail.data.activeResponses.length ? requestDetail.data.activeResponses.map((response) => <div key={response.id} className={styles.signalRow}><span>{response.type.replace("_", " ")}</span><strong>{response.expiresAt ? formatTime(response.expiresAt) : "active"}</strong></div>) : <div className="text-secondary">No active response for this source.</div>}</div></div>
-					<div className={styles.detailSection}><div className={styles.detailSectionHeader}><h3>Similar requests</h3><button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending} onClick={() => block.mutate(requestDetail.data.ip)}><IconBan size={14} /> Block IP 60m</button></div><div className={styles.similarList}>{requestDetail.data.similarRequests.slice(0, 8).map((item) => <button type="button" key={item.requestId || `${item.timestamp}-${item.path}`} onClick={() => item.requestId && openRequest(item.requestId)}><span>{item.method} {item.host}{item.path}</span><strong>{Math.round(item.similarityScore * 100)}%</strong></button>)}{requestDetail.data.similarRequests.length === 0 ? <div className="text-secondary">No similar requests found.</div> : null}</div></div>
+					<div className={styles.detailSection}><div className={styles.detailSectionHeader}><h3>Similar requests</h3><button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending || requestDetail.data.nodeId !== "local"} onClick={() => block.mutate(requestDetail.data.ip)} title={requestDetail.data.nodeId !== "local" ? "Remote-node response actions are managed on that node" : undefined}><IconBan size={14} /> Block IP 60m</button></div><div className={styles.similarList}>{requestDetail.data.similarRequests.slice(0, 8).map((item) => <button type="button" key={item.requestId || `${item.timestamp}-${item.path}`} onClick={() => item.requestId && openRequest(item.requestId)}><span>{item.method} {item.host}{item.path}</span><strong>{Math.round(item.similarityScore * 100)}%</strong></button>)}{requestDetail.data.similarRequests.length === 0 ? <div className="text-secondary">No similar requests found.</div> : null}</div></div>
 				</div> : null}
 			</section>
 		</div> : null}

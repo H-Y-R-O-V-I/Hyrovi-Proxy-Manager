@@ -116,7 +116,7 @@ const localNode = () =>
 			nginxVersion: null,
 			uptimeSeconds: Math.floor(process.uptime()),
 		},
-		capabilities: ["proxy", "security", "certificates", "logs"],
+		capabilities: ["proxy", "security", "certificates", "logs", "analytics"],
 		addresses: [],
 		desiredRevision: 0,
 		appliedRevision: 0,
@@ -233,6 +233,17 @@ const rotateToken = (id) =>
 		return { node: publicNode(nodes[index]), bootstrapToken: token };
 	});
 
+const authenticateNode = async (id, authorization) => {
+	const nodeId = normalizeNodeId(id);
+	if (nodeId === "local") throw new errs.ValidationError("The local controller does not use a remote node token");
+	const nodes = await readNodesUnsafe();
+	const node = nodes.find((entry) => entry.id === nodeId);
+	if (!node) throw new errs.ItemNotFoundError(nodeId);
+	if (!node.enabled) throw new errs.ValidationError("Node is disabled");
+	if (!verifyBearerToken(authorization, node.tokenHash)) throw new errs.AuthError("Invalid HYROVI node token");
+	return publicNode(node);
+};
+
 const heartbeat = (id, authorization, input = {}) =>
 	withMutation(async () => {
 		const nodeId = normalizeNodeId(id);
@@ -281,5 +292,6 @@ export default {
 	updateNode,
 	deleteNode,
 	rotateToken,
+	authenticateNode,
 	heartbeat,
 };
