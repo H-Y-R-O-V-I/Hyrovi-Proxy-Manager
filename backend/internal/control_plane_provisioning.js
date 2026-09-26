@@ -25,6 +25,28 @@ const normalizeNodeId = (value) => {
 };
 
 const bounded = (value, max = 240) => String(value || "").trim().slice(0, max);
+const normalizeDomain = (value) => bounded(value, 253).toLowerCase().replace(/\.$/, "");
+
+const findPendingDomainConflict = async (domains) => {
+	const wanted = new Set((Array.isArray(domains) ? domains : []).map(normalizeDomain).filter(Boolean));
+	if (!wanted.size) return null;
+	const entries = await fs.promises.readdir(JOBS_DIR, { withFileTypes: true });
+	for (const entry of entries) {
+		if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+		let job;
+		try {
+			job = JSON.parse(await fs.promises.readFile(`${JOBS_DIR}/${entry.name}`, "utf8"));
+		} catch {
+			continue;
+		}
+		if (job?.type !== "proxy_host.create" || !["queued", "running"].includes(job?.status)) continue;
+		for (const domain of job?.input?.proxyHost?.domain_names || []) {
+			const normalized = normalizeDomain(domain);
+			if (wanted.has(normalized)) return { domain: normalized, jobId: job.id, nodeId: job.nodeId };
+		}
+	}
+	return null;
+};
 
 const atomicWriteJson = async (path, value) => {
 	const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
@@ -75,6 +97,12 @@ const enqueueProxyHost = ({ nodeId: nodeIdInput, proxyHost, cloudflareTunnel = t
 	withMutation(async () => {
 		await prepare();
 		const nodeId = normalizeNodeId(nodeIdInput);
+		const pendingConflict = await findPendingDomainConflict(proxyHost?.domain_names);
+		if (pendingConflict) {
+			throw new errs.ValidationError(
+				`${pendingConflict.domain} already has an active provisioning job for node ${pendingConflict.nodeId}`,
+			);
+		}
 		const now = new Date().toISOString();
 		const id = randomUUID();
 		const job = {

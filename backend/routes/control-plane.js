@@ -2,6 +2,7 @@ import express from "express";
 import internalControlPlaneNodes from "../internal/control_plane_nodes.js";
 import internalControlPlaneProvisioning from "../internal/control_plane_provisioning.js";
 import internalControlPlaneTelemetry from "../internal/control_plane_telemetry.js";
+import internalHost from "../internal/host.js";
 import errs from "../lib/error.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import apiValidator from "../lib/validator/api.js";
@@ -152,7 +153,27 @@ router.post("/provision/proxy-hosts", async (req, res, next) => {
 		if (nodeId !== "local" && node.status !== "online") {
 			throw new errs.ValidationError(`Selected node is not online: ${node.status}`);
 		}
+		if (!node.capabilities.includes("provisioning")) {
+			throw new errs.ValidationError("Selected node does not support Proxy Host provisioning");
+		}
 		const proxyHost = await apiValidator(getValidationSchema("/nginx/proxy-hosts", "post"), req.body?.proxy_host);
+		const requestedDomains = (proxyHost.domain_names || [])
+			.map((domain) => String(domain || "").trim().toLowerCase().replace(/\.$/, ""))
+			.filter(Boolean);
+		for (const domain of requestedDomains) {
+			const localConflict = await internalHost.isHostnameTaken(domain);
+			if (localConflict.is_taken) {
+				throw new errs.ValidationError(`${domain} already exists on Raspberry Pi 5`);
+			}
+		}
+		const allNodes = await internalControlPlaneNodes.listNodes();
+		for (const remoteNode of allNodes.filter((entry) => entry.mode === "remote")) {
+			for (const existingHost of remoteNode.proxyHosts || []) {
+				const existingDomains = (existingHost.domainNames || []).map((domain) => String(domain || "").trim().toLowerCase().replace(/\.$/, ""));
+				const conflict = requestedDomains.find((domain) => existingDomains.includes(domain));
+				if (conflict) throw new errs.ValidationError(`${conflict} already exists on ${remoteNode.name}`);
+			}
+		}
 		const rawPolicy = req.body?.security_policy;
 		const securityPolicy = rawPolicy?.mode && rawPolicy.mode !== "inherit" ? {
 			mode: rawPolicy.mode,
