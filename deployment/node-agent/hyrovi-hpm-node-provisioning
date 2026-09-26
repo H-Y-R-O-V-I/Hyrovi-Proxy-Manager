@@ -218,14 +218,15 @@ try {
   host = await internalProxyHost.create(access, input.proxyHost);
   if (input.securityPolicy) await internalSecurity.updateHostPolicy(access, host.id, input.securityPolicy);
   if (input.securityAccess) await internalSecurityHostGroups.updateHostAccess(access, host.id, input.securityAccess);
-  console.log("HYROVI_RESULT=" + JSON.stringify({
+  fs.writeSync(1, "HYROVI_RESULT=" + JSON.stringify({
     id: host.id,
     domainNames: host.domain_names,
     forwardScheme: host.forward_scheme,
     forwardHost: host.forward_host,
     forwardPort: host.forward_port,
     certificateId: host.certificate_id,
-  }));
+  }) + "\n");
+  process.exit(0);
 } catch (error) {
   if (host?.id) {
     try { await internalProxyHost.delete(access, { id: host.id }); } catch {}
@@ -235,6 +236,7 @@ try {
 """
 
 DELETE_JS = r"""
+import fs from "node:fs";
 import Access from "/app/lib/access.js";
 import internalProxyHost from "/app/internal/proxy-host.js";
 const id = Number.parseInt(process.env.HYROVI_HOST_ID || "0", 10);
@@ -242,7 +244,8 @@ if (!id) process.exit(2);
 const access = new Access();
 await access.load(true);
 await internalProxyHost.delete(access, { id });
-console.log("HYROVI_ROLLBACK_OK");
+fs.writeSync(1, "HYROVI_ROLLBACK_OK\n");
+process.exit(0);
 """
 
 
