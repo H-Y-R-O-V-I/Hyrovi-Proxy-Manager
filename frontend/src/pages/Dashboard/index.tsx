@@ -7,6 +7,7 @@ import {
 	IconBoltOff,
 	IconDisc,
 	IconNetwork,
+	IconPlus,
 	IconRoute,
 	IconShield,
 	IconWorld,
@@ -15,9 +16,11 @@ import { useNavigate } from "react-router-dom";
 import { getSecurityOverview } from "src/api/backend";
 import { HasPermission } from "src/components";
 import { useHostReport, useUser } from "src/hooks";
+import { showDeadHostModal, showProxyHostModal, showRedirectionHostModal, showStreamModal } from "src/modals";
 import {
 	ADMIN,
 	DEAD_HOSTS,
+	MANAGE,
 	PROXY_HOSTS,
 	REDIRECTION_HOSTS,
 	STREAMS,
@@ -69,11 +72,33 @@ const Dashboard = () => {
 					<h1>Proxy Manager</h1>
 					<p>Traffic, hosts and HYROVI Sec in one control surface.</p>
 				</div>
-				<div className={styles.statusStrip}>
-					<span className={styles.liveDot} />
-					<span>Live telemetry</span>
-					<span className={styles.statusDivider} />
-					<span>Real client IP via Cloudflare</span>
+				<div className={styles.heroActions}>
+					<div className={`dropdown ${styles.quickCreate}`}>
+						<button type="button" className={styles.quickCreateButton} data-bs-toggle="dropdown" aria-expanded="false" aria-label="Create host">
+							<IconPlus size={24} />
+						</button>
+						<div className={`dropdown-menu dropdown-menu-end ${styles.quickCreateMenu}`}>
+							<div className={styles.quickCreateHeader}>Create</div>
+							<HasPermission section={PROXY_HOSTS} permission={MANAGE} hideError>
+								<button type="button" className="dropdown-item" onClick={() => showProxyHostModal("new")}><IconBolt size={17} /><span><strong>Proxy host</strong><small>Route a domain to an application</small></span></button>
+							</HasPermission>
+							<HasPermission section={REDIRECTION_HOSTS} permission={MANAGE} hideError>
+								<button type="button" className="dropdown-item" onClick={() => showRedirectionHostModal("new")}><IconArrowsCross size={17} /><span><strong>Redirect host</strong><small>Redirect a domain or path</small></span></button>
+							</HasPermission>
+							<HasPermission section={DEAD_HOSTS} permission={MANAGE} hideError>
+								<button type="button" className="dropdown-item" onClick={() => showDeadHostModal("new")}><IconBoltOff size={17} /><span><strong>404 host</strong><small>Return a managed dead-host response</small></span></button>
+							</HasPermission>
+							<HasPermission section={STREAMS} permission={MANAGE} hideError>
+								<button type="button" className="dropdown-item" onClick={() => showStreamModal("new")}><IconDisc size={17} /><span><strong>Stream</strong><small>Forward TCP/UDP traffic</small></span></button>
+							</HasPermission>
+						</div>
+					</div>
+					<div className={styles.statusStrip}>
+						<span className={styles.liveDot} />
+						<span>Live telemetry</span>
+						<span className={styles.statusDivider} />
+						<span>Real client IP via Cloudflare</span>
+					</div>
 				</div>
 			</div>
 

@@ -144,3 +144,20 @@ label.row {
 	padding-top: .7rem;
 	padding-bottom: .7rem;
 }
+
+/* Keep the host navigation above dashboard/table cards. Backdrop-filter creates
+   a stacking context, so the header must explicitly own a higher layer. */
+.hyrovi-site-menu {
+	position: relative;
+	z-index: 1030;
+}
+
+.hyrovi-site-menu #navbar-menu,
+.hyrovi-site-menu .navbar,
+.hyrovi-site-menu .container-xl {
+	overflow: visible;
+}
+
+.hyrovi-site-menu .dropdown-menu {
+	z-index: 1050;
+}

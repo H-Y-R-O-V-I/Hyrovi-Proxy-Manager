@@ -207,7 +207,7 @@ export function SiteMenu() {
 		}, 300);
 
 	return (
-		<header className="navbar-expand-md">
+		<header className="navbar-expand-md hyrovi-site-menu">
 			<div className="collapse navbar-collapse" id="navbar-menu">
 				<div className="navbar">
 					<div className="container-xl">
