@@ -332,6 +332,14 @@ def main():
         if job.get("type") != "proxy_host.create":
             raise RuntimeError(f'Unsupported provisioning job type: {job.get("type")}')
         result = create_proxy_host(config, job)
+        if node_id != "local":
+            subprocess.run(
+                ["systemctl", "start", "hyrovi-hpm-node-heartbeat.service"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=25,
+            )
         success = True
         print(f'HYROVI provisioner: created proxy host on {node_id}')
     except Exception as exc:

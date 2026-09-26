@@ -154,6 +154,11 @@ export interface ProxyHost {
 	hstsEnabled: boolean;
 	hstsSubdomains: boolean;
 	trustForwardedProto: boolean;
+	// HYROVI control-plane metadata for the combined multi-node list.
+	hyroviNodeId?: string;
+	hyroviNodeName?: string;
+	hyroviRemote?: boolean;
+	hyroviCertificateName?: string | null;
 	// Expansions:
 	owner?: User;
 	accessList?: AccessList;

@@ -5,9 +5,7 @@ source /etc/hyrovi-hpm-node/node.env
 hostname_value=$(hostname -f 2>/dev/null || hostname)
 platform_value="$(uname -s) $(uname -m)"
 uptime_value=$(awk '{print int($1)}' /proc/uptime)
-addresses_json=$(hostname -I 2>/dev/null | tr ' ' '
-' | sed '/^$/d' | head -n 8 | jq -Rsc 'split("
-") | map(select(length>0))')
+addresses_json=$(hostname -I 2>/dev/null | tr ' ' '\n' | sed '/^$/d' | head -n 8 | jq -Rsc 'split("\n") | map(select(length>0))')
 
 container=""
 for name in hyrovi-proxy-manager nginx-proxy-manager; do
@@ -17,18 +15,61 @@ done
 nginx_version=""
 agent_version="hpm-node-agent/1"
 caps='["proxy","certificates","logs"]'
+proxy_hosts_json='[]'
 if [ -n "$container" ]; then
   nginx_version=$(docker exec "$container" nginx -v 2>&1 | sed -n 's/^nginx version: //p' | head -1 || true)
   if [ "$container" = "hyrovi-proxy-manager" ]; then
     caps='["proxy","security","certificates","logs","analytics","provisioning"]'
     image=$(docker inspect "$container" --format '{{.Config.Image}}' 2>/dev/null || true)
     [ -n "$image" ] && agent_version="$image"
+
+    inventory_output=$(docker exec "$container" node --input-type=module -e '
+import fs from "node:fs";
+import Access from "/app/lib/access.js";
+import internalProxyHost from "/app/internal/proxy-host.js";
+const access = new Access();
+await access.load(true);
+const rows = await internalProxyHost.getAll(access, ["certificate"], "");
+const proxyHosts = rows.slice(0, 200).map((row) => ({
+  id: row.id,
+  domainNames: row.domain_names,
+  forwardScheme: row.forward_scheme,
+  forwardHost: row.forward_host,
+  forwardPort: row.forward_port,
+  certificateId: row.certificate_id,
+  certificateName: row.certificate?.nice_name || null,
+  enabled: Boolean(row.enabled),
+  sslForced: Boolean(row.ssl_forced),
+  http2Support: Boolean(row.http2_support),
+  createdOn: row.created_on || null,
+  modifiedOn: row.modified_on || null,
+}));
+fs.writeSync(1, "HYROVI_PROXY_HOSTS=" + JSON.stringify(proxyHosts) + "\n");
+process.exit(0);
+' 2>/dev/null || true)
+    inventory_json=$(printf '%s\n' "$inventory_output" | sed -n 's/^HYROVI_PROXY_HOSTS=//p' | tail -1)
+    if [ -n "$inventory_json" ] && printf '%s' "$inventory_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      proxy_hosts_json="$inventory_json"
+    fi
   else
     image=$(docker inspect "$container" --format '{{.Config.Image}}' 2>/dev/null || true)
     [ -n "$image" ] && agent_version="migration:$image"
   fi
 fi
 
-payload=$(jq -nc   --arg hostname "$hostname_value"   --arg platform "$platform_value"   --arg version "$agent_version"   --arg nginxVersion "$nginx_version"   --argjson uptimeSeconds "$uptime_value"   --argjson capabilities "$caps"   --argjson addresses "$addresses_json"   '{hostname:$hostname,platform:$platform,version:$version,nginxVersion:$nginxVersion,uptimeSeconds:$uptimeSeconds,capabilities:$capabilities,addresses:$addresses,appliedRevision:0}')
+payload=$(jq -nc \
+  --arg hostname "$hostname_value" \
+  --arg platform "$platform_value" \
+  --arg version "$agent_version" \
+  --arg nginxVersion "$nginx_version" \
+  --argjson uptimeSeconds "$uptime_value" \
+  --argjson capabilities "$caps" \
+  --argjson addresses "$addresses_json" \
+  --argjson proxyHosts "$proxy_hosts_json" \
+  '{hostname:$hostname,platform:$platform,version:$version,nginxVersion:$nginxVersion,uptimeSeconds:$uptimeSeconds,capabilities:$capabilities,addresses:$addresses,proxyHosts:$proxyHosts,appliedRevision:0}')
 
-curl -fsS --max-time 15   -H "Authorization: Bearer $HYROVI_NODE_TOKEN"   -H 'Content-Type: application/json'   --data "$payload"   "$HYROVI_CONTROLLER/agent/nodes/$HYROVI_NODE_ID/heartbeat" >/dev/null
+curl -fsS --max-time 15 \
+  -H "Authorization: Bearer $HYROVI_NODE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data "$payload" \
+  "$HYROVI_CONTROLLER/agent/nodes/$HYROVI_NODE_ID/heartbeat" >/dev/null

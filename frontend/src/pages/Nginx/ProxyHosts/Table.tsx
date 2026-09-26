@@ -64,6 +64,16 @@ export default function Table({
 				},
 			}),
 			columnHelper.accessor((row: any) => row, {
+				id: "hyroviNode",
+				header: "Node",
+				enableSorting: true,
+				sortFn: (a, b) => (a.original.hyroviNodeName || "").localeCompare(b.original.hyroviNodeName || ""),
+				cell: (info: any) => {
+					const row = info.getValue();
+					return <span className={`badge ${row.hyroviRemote ? "bg-blue-lt" : "bg-lime-lt"}`}>{row.hyroviNodeName || "Raspberry Pi 5"}</span>;
+				},
+			}),
+			columnHelper.accessor((row: any) => row, {
 				id: "forwardHost",
 				header: intl.formatMessage({ id: "column.destination" }),
 				sortFn: (a, b) => {
@@ -81,6 +91,8 @@ export default function Table({
 				enableSorting: false,
 				header: intl.formatMessage({ id: "column.ssl" }),
 				cell: (info: any) => {
+					const row = info.row.original;
+					if (row.hyroviRemote) return <span>{row.hyroviCertificateName || (row.certificateId ? `Certificate #${row.certificateId}` : "—")}</span>;
 					return <CertificateFormatter certificate={info.getValue()} />;
 				},
 			}),
@@ -89,6 +101,7 @@ export default function Table({
 				enableSorting: false,
 				header: intl.formatMessage({ id: "column.access" }),
 				cell: (info: any) => {
+					if ((info.row.original as ProxyHost).hyroviRemote) return <span className="text-secondary">Remote</span>;
 					return <AccessListFormatter access={info.getValue()} />;
 				},
 			}),
@@ -102,6 +115,9 @@ export default function Table({
 			columnHelper.display({
 				id: "id",
 				cell: (info: any) => {
+					if (info.row.original.hyroviRemote) {
+						return <span className="badge bg-secondary-lt" title="Remote editing will be routed through the node control plane in a follow-up">Remote</span>;
+					}
 					return (
 						<span className="dropdown">
 							<button

@@ -4,6 +4,22 @@ import type { SecurityHostAccessPolicy, SecurityHostPolicy } from "./security";
 
 export type ControlPlaneNodeStatus = "online" | "stale" | "pending" | "disabled";
 
+
+export interface ControlPlaneProxyHost {
+	id: number;
+	domainNames: string[];
+	forwardScheme: string;
+	forwardHost: string;
+	forwardPort: number;
+	certificateId: number;
+	certificateName: string | null;
+	enabled: boolean;
+	sslForced: boolean;
+	http2Support: boolean;
+	createdOn: string | null;
+	modifiedOn: string | null;
+}
+
 export interface ControlPlaneNode {
 	id: string;
 	name: string;
@@ -22,6 +38,7 @@ export interface ControlPlaneNode {
 	} | null;
 	capabilities: string[];
 	addresses: string[];
+	proxyHosts: ControlPlaneProxyHost[];
 	desiredRevision: number;
 	appliedRevision: number;
 }

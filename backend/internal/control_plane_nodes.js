@@ -7,6 +7,7 @@ const NODES_FILE = `${CONTROL_PLANE_DIR}/nodes.json`;
 const MAX_NODES = 100;
 const MAX_CAPABILITIES = 32;
 const MAX_ADDRESSES = 16;
+const MAX_PROXY_HOSTS = 200;
 const HEARTBEAT_STALE_MS = 90 * 1000;
 const TOKEN_PREFIX = "hyrnode_";
 
@@ -44,6 +45,32 @@ const normalizeStringList = (value, maxEntries, maxLength) => {
 	return [...new Set(value.map((entry) => boundedString(entry, maxLength)).filter(Boolean))].slice(0, maxEntries);
 };
 
+const normalizeProxyHosts = (value) => {
+	if (typeof value === "undefined" || value === null) return [];
+	if (!Array.isArray(value)) throw new errs.ValidationError("proxyHosts must be an array");
+	return value.slice(0, MAX_PROXY_HOSTS).map((entry) => {
+		const id = Math.max(0, Number.parseInt(entry?.id, 10) || 0);
+		const domainNames = normalizeStringList(entry?.domainNames, 40, 253);
+		const forwardScheme = boundedString(entry?.forwardScheme, 16) || "http";
+		const forwardHost = boundedString(entry?.forwardHost, 253) || "";
+		const forwardPort = Math.max(0, Math.min(65535, Number.parseInt(entry?.forwardPort, 10) || 0));
+		return {
+			id,
+			domainNames,
+			forwardScheme,
+			forwardHost,
+			forwardPort,
+			certificateId: Math.max(0, Number.parseInt(entry?.certificateId, 10) || 0),
+			certificateName: boundedString(entry?.certificateName, 160),
+			enabled: entry?.enabled !== false,
+			sslForced: entry?.sslForced === true,
+			http2Support: entry?.http2Support === true,
+			createdOn: boundedString(entry?.createdOn, 40),
+			modifiedOn: boundedString(entry?.modifiedOn, 40),
+		};
+	}).filter((entry) => entry.id > 0 && entry.domainNames.length > 0);
+};
+
 const hashToken = (token) => createHash("sha256").update(String(token || ""), "utf8").digest();
 
 const publicNode = (node) => {
@@ -72,6 +99,7 @@ const publicNode = (node) => {
 		agent: node.agent || null,
 		capabilities: node.capabilities || [],
 		addresses: node.addresses || [],
+		proxyHosts: node.proxyHosts || [],
 		desiredRevision: Number.parseInt(node.desiredRevision, 10) || 0,
 		appliedRevision: Number.parseInt(node.appliedRevision, 10) || 0,
 	};
@@ -118,6 +146,7 @@ const localNode = () =>
 		},
 		capabilities: ["proxy", "security", "certificates", "logs", "analytics", "provisioning"],
 		addresses: [],
+		proxyHosts: [],
 		desiredRevision: 0,
 		appliedRevision: 0,
 	});
@@ -180,6 +209,7 @@ const createNode = (input = {}) =>
 			agent: null,
 			capabilities: [],
 			addresses: [],
+			proxyHosts: [],
 			desiredRevision: 0,
 			appliedRevision: 0,
 		};
@@ -258,6 +288,7 @@ const heartbeat = (id, authorization, input = {}) =>
 		const now = new Date().toISOString();
 		const capabilities = normalizeStringList(input.capabilities, MAX_CAPABILITIES, 80);
 		const addresses = normalizeStringList(input.addresses, MAX_ADDRESSES, 120);
+		const proxyHosts = normalizeProxyHosts(input.proxyHosts);
 		const appliedRevision = Math.max(0, Number.parseInt(input.appliedRevision, 10) || 0);
 		const agent = {
 			hostname: boundedString(input.hostname, 120),
@@ -273,6 +304,7 @@ const heartbeat = (id, authorization, input = {}) =>
 			agent,
 			capabilities,
 			addresses,
+			proxyHosts,
 			appliedRevision,
 		};
 		nodes[index] = updated;
