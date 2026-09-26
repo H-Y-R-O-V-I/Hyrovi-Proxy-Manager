@@ -1,0 +1,11 @@
+[Unit]
+Description=Upload HYROVI HPM node telemetry every 30 seconds
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=3s
+Unit=hyrovi-hpm-node-telemetry.service
+
+[Install]
+WantedBy=timers.target

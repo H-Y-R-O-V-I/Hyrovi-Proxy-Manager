@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import tempfile
+import urllib.request
+from pathlib import Path
+
+ENV_FILE = Path('/etc/hyrovi-hpm-node/node.env')
+STATE_DIR = Path('/var/lib/hyrovi-hpm-node')
+STATE_FILE = STATE_DIR / 'telemetry-state.json'
+SECURITY_LOG = Path('/opt/nginx-proxy-manager/data/logs/hyrovi-sec.log')
+ANALYTICS_LOG = Path('/opt/nginx-proxy-manager/data/logs/hyrovi-analytics-events.log')
+MAX_BYTES_PER_FILE = 32 * 1024
+MAX_LINES_PER_FILE = 20
+INITIAL_TAIL_BYTES = 64 * 1024
+
+
+def load_env():
+    values = {}
+    for raw in ENV_FILE.read_text(encoding='utf-8').splitlines():
+        raw = raw.strip()
+        if not raw or raw.startswith('#') or '=' not in raw:
+            continue
+        key, value = raw.split('=', 1)
+        values[key.strip()] = value.strip()
+    required = ['HYROVI_NODE_ID', 'HYROVI_NODE_TOKEN', 'HYROVI_CONTROLLER']
+    missing = [key for key in required if not values.get(key)]
+    if missing:
+        raise RuntimeError('Missing node configuration: ' + ', '.join(missing))
+    return values
+
+
+def load_state():
+    try:
+        value = json.loads(STATE_FILE.read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_state(value):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix='telemetry-state-', dir=STATE_DIR)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(value, handle, separators=(',', ':'))
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, STATE_FILE)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+def read_batch(path, prior):
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return [], prior or {'inode': 0, 'offset': 0}
+
+    inode = int(stat.st_ino)
+    size = int(stat.st_size)
+    prior = prior if isinstance(prior, dict) else {}
+    prior_inode = int(prior.get('inode') or 0)
+    prior_offset = max(0, int(prior.get('offset') or 0))
+
+    if prior_inode == inode and prior_offset <= size:
+        start = prior_offset
+    elif prior_inode == 0:
+        start = max(0, size - INITIAL_TAIL_BYTES)
+    else:
+        start = 0
+
+    records = []
+    consumed = 0
+    with path.open('rb') as handle:
+        handle.seek(start)
+        if start > 0 and prior_inode == 0:
+            # Initial tail may begin in the middle of a JSON line.
+            skipped = handle.readline()
+            start += len(skipped)
+        while len(records) < MAX_LINES_PER_FILE and consumed < MAX_BYTES_PER_FILE:
+            before = handle.tell()
+            raw = handle.readline(min(64 * 1024, MAX_BYTES_PER_FILE - consumed + 1))
+            if not raw:
+                break
+            # Do not consume a partial final line; retry it next run.
+            if not raw.endswith(b'\n'):
+                handle.seek(before)
+                break
+            consumed += len(raw)
+            try:
+                value = json.loads(raw.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict):
+                records.append(value)
+        next_offset = handle.tell()
+
+    return records, {'inode': inode, 'offset': next_offset}
+
+
+def post_payload(config, payload):
+    controller = config['HYROVI_CONTROLLER'].rstrip('/')
+    node_id = config['HYROVI_NODE_ID']
+    url = f'{controller}/agent/nodes/{node_id}/telemetry'
+    body = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method='POST',
+        headers={
+            'Authorization': f"Bearer {config['HYROVI_NODE_TOKEN']}",
+            'Content-Type': 'application/json',
+            'User-Agent': 'HYROVI-HPM-Node-Telemetry/1',
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        response_body = response.read(128 * 1024)
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(f'Controller returned HTTP {response.status}')
+        return json.loads(response_body.decode('utf-8')) if response_body else {}
+
+
+def main():
+    config = load_env()
+    state = load_state()
+    total_security = 0
+    total_analytics = 0
+    total_rejected = 0
+
+    # Multiple small requests keep every HTTP body safely below the controller's
+    # normal JSON limit while still allowing a busy node to catch up quickly.
+    for _ in range(12):
+        security, next_security = read_batch(SECURITY_LOG, state.get('security'))
+        analytics, next_analytics = read_batch(ANALYTICS_LOG, state.get('analytics'))
+
+        if not security and not analytics:
+            # Persist inode/offset changes after empty-file rotations as well.
+            state['security'] = next_security
+            state['analytics'] = next_analytics
+            save_state(state)
+            break
+
+        payload = {'securityEvents': security, 'analyticsEvents': analytics}
+        encoded_size = len(json.dumps(payload, separators=(',', ':')).encode('utf-8'))
+        if encoded_size >= 90 * 1024:
+            raise RuntimeError(f'telemetry batch unexpectedly large: {encoded_size} bytes')
+
+        result = post_payload(config, payload)
+        state['security'] = next_security
+        state['analytics'] = next_analytics
+        save_state(state)
+        total_security += int(result.get('acceptedSecurity', 0) or 0)
+        total_analytics += int(result.get('acceptedAnalytics', 0) or 0)
+        total_rejected += int(result.get('rejectedSecurity', 0) or 0) + int(result.get('rejectedAnalytics', 0) or 0)
+
+    if total_security or total_analytics or total_rejected:
+        print(
+            f'HYROVI telemetry: sent security={total_security} analytics={total_analytics} '
+            f'rejected={total_rejected}'
+        )
+    else:
+        print('HYROVI telemetry: no new complete events')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f'HYROVI telemetry error: {exc}', file=sys.stderr)
+        raise SystemExit(1)

@@ -1,0 +1,11 @@
+[Unit]
+Description=HYROVI HPM remote node telemetry uploader
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hyrovi-hpm-node-telemetry
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

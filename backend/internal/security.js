@@ -3137,6 +3137,7 @@ const internalSecurity = {
 		const decoratedEvents = decorateEventsWithHostPolicy(rawEvents, hostPolicyContext);
 		const filters = normalizeEventFilterOptions(options);
 		const events = filterSecurityEvents(decoratedEvents, options);
+		const localResponseScope = !filters.nodeId || filters.nodeId === "local";
 		const oldestLoadedMs = rawEvents.reduce((oldest, event) => {
 			const timestamp = parseTimestamp(event.timestamp)?.getTime();
 			return Number.isFinite(timestamp) ? Math.min(oldest, timestamp) : oldest;
@@ -3207,9 +3208,9 @@ const internalSecurity = {
 			requests: events.length,
 			suspicious: suspicious.length,
 			critical: critical.length,
-			activeBlocks: blocks.length,
-			activeRateLimits: rateLimits.length,
-			activeEscalations,
+			activeBlocks: localResponseScope ? blocks.length : 0,
+			activeRateLimits: localResponseScope ? rateLimits.length : 0,
+			activeEscalations: localResponseScope ? activeEscalations : [],
 			analytics: buildAttackAnalytics(events, filters),
 			webAnalytics,
 			automation: {

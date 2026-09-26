@@ -268,16 +268,16 @@ export default function SecurityDashboard() {
 		refetchInterval: selectedSourceIp ? 5000 : false,
 	});
 	const sourceAppEvents = useQuery({
-		queryKey: ["security-source-app-events", selectedSourceIp],
+		queryKey: ["security-source-app-events", selectedSourceIp, nodeId],
 		queryFn: () => getSecurityAppEvents(500),
-		enabled: Boolean(selectedSourceIp),
-		refetchInterval: selectedSourceIp ? 10_000 : false,
+		enabled: Boolean(selectedSourceIp) && nodeId === "local",
+		refetchInterval: selectedSourceIp && nodeId === "local" ? 10_000 : false,
 	});
 	const sourceBlocks = useQuery({
-		queryKey: ["security-source-blocks", selectedSourceIp],
+		queryKey: ["security-source-blocks", selectedSourceIp, nodeId],
 		queryFn: getSecurityBlocks,
-		enabled: Boolean(selectedSourceIp),
-		refetchInterval: selectedSourceIp ? 5000 : false,
+		enabled: Boolean(selectedSourceIp) && nodeId === "local",
+		refetchInterval: selectedSourceIp && nodeId === "local" ? 5000 : false,
 	});
 
 	const sourceStats = useMemo(() => {
@@ -323,10 +323,10 @@ export default function SecurityDashboard() {
 		if (incidentFilter === "crawler") return session.signals.includes("crawler_attack");
 		if (incidentFilter === "blocked") return session.activeResponse === "block";
 		if (incidentFilter === "critical") return session.maxRisk >= 80;
-		if (incidentFilter === "unanswered") return session.activeResponse === null;
+		if (incidentFilter === "unanswered") return session.nodeId === "local" && session.activeResponse === null;
 		return true;
 	}), [attackSessions, incidentFilter]);
-	const unansweredIncidents = useMemo(() => attackSessions.filter((session) => session.activeResponse === null).length, [attackSessions]);
+	const unansweredIncidents = useMemo(() => attackSessions.filter((session) => session.nodeId === "local" && session.activeResponse === null).length, [attackSessions]);
 	const crawlerAttackCount = useMemo(() => attackSessions.filter((session) => session.signals.includes("crawler_attack")).length, [attackSessions]);
 	const totalBytes = overview.data?.analytics.responseBytes ?? (events.data ?? []).reduce((sum, event) => sum + Math.max(0, event.bytesSent || 0), 0);
 	const destinationCount = overview.data?.analytics.observedHosts ?? new Set((events.data ?? []).map((event) => event.host).filter(Boolean)).size;
@@ -516,7 +516,9 @@ export default function SecurityDashboard() {
 			case "threats":
 				return [
 					metric("Suspicious", data?.suspicious ?? 0), metric("Critical", data?.critical ?? 0), metric("Attack sessions", attackSessions.length),
-					metric("Crawler attacks", crawlerAttackCount), metric("Active blocks", data?.activeBlocks ?? 0), metric("Unanswered", unansweredIncidents),
+					metric("Crawler attacks", crawlerAttackCount),
+					metric("Active blocks", nodeId && nodeId !== "local" ? "—" : data?.activeBlocks ?? 0, nodeId && nodeId !== "local" ? "response state stays on remote node" : !nodeId ? "Pi controller response state" : undefined),
+					metric("Unanswered", nodeId && nodeId !== "local" ? "—" : unansweredIncidents, nodeId && nodeId !== "local" ? "remote response state not synced" : undefined),
 				];
 			case "requests":
 				return [
@@ -529,7 +531,7 @@ export default function SecurityDashboard() {
 					metric("Suspicious", data?.suspicious ?? 0), metric("Peak rate", `${data?.analytics.peakRequestsPerMinute ?? 0}/min`), metric("P95 latency", `${data?.analytics.performance.p95Ms ?? 0} ms`),
 				];
 		}
-	}, [analyticsView, attackSessions.length, crawlerAttackCount, destinationCount, events.data?.length, overview.data, totalBytes, unansweredIncidents]);
+	}, [analyticsView, attackSessions.length, crawlerAttackCount, destinationCount, events.data?.length, nodeId, overview.data, totalBytes, unansweredIncidents]);
 
 	const openSource = (sourceIp: string) => {
 		setSelectedRequestId(null);
@@ -734,7 +736,7 @@ export default function SecurityDashboard() {
 			<div className={styles.panelHeader}>
 				<h3>Attack / incident sessions</h3>
 				<div className={styles.incidentHeaderTools}>
-					<span className="text-secondary small">{overview.data?.automation.mode === "enforce" ? "Enforcement active" : "Observe only"} · 5 minute correlation</span>
+					<span className="text-secondary small">{nodeId && nodeId !== "local" ? "Remote detection · response state stays on that node" : `${overview.data?.automation.mode === "enforce" ? "Enforcement active" : "Observe only"} · 5 minute correlation`}</span>
 					<div className={styles.incidentFilters}>
 						{(["all", "crawler", "blocked", "critical", "unanswered"] as const).map((value) => <button type="button" key={value} className={incidentFilter === value ? styles.incidentFilterActive : ""} onClick={() => setIncidentFilter(value)}>{value}</button>)}
 					</div>
@@ -752,7 +754,7 @@ export default function SecurityDashboard() {
 						</span>
 						<span className={styles.incidentMeta}>
 							<strong>{session.requests} suspicious req</strong>
-							<span className={`badge ${responseBadgeClass(session.activeResponse)}`}>{session.activeResponse ? session.activeResponse.replace("_", " ") : "detected"}</span>
+							<span className={`badge ${responseBadgeClass(session.activeResponse)}`}>{session.nodeId !== "local" ? "remote response" : session.activeResponse ? session.activeResponse.replace("_", " ") : "detected"}</span>
 						</span>
 					</button>;
 				})}
@@ -839,7 +841,7 @@ export default function SecurityDashboard() {
 					<td>{event.status || "—"}</td>
 					<td><button type="button" className="btn btn-link p-0" onClick={() => event.requestId && openRequest(event.requestId)} disabled={!event.requestId} title="Open why this request is suspicious"><span className={`badge ${riskClass(event.risk)}`}>{event.risk}</span></button></td>
 					<td className="text-nowrap"><div>{formatBytes(event.bytesSent)}</div><small className="text-secondary">{event.requestTime ? `${Math.round(event.requestTime * 1000)} ms` : "—"}</small></td>
-					<td><button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending} onClick={() => block.mutate(event.ip)} title="Block this source IP for 60 minutes"><IconBan size={15} /></button></td>
+					<td><button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending || event.nodeId !== "local"} onClick={() => block.mutate(event.ip)} title={event.nodeId === "local" ? "Block this source IP for 60 minutes" : "Remote-node response actions are managed on that node"}><IconBan size={15} /></button></td>
 				</tr>)}
 				{!events.isLoading && (events.data?.length ?? 0) === 0 ? <tr><td colSpan={9} className="text-secondary p-4">No requests match these filters.</td></tr> : null}
 			</tbody></table></div>
@@ -967,7 +969,7 @@ export default function SecurityDashboard() {
 							<h3>Recent requests</h3>
 							<div className="d-flex gap-2">
 								<button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => { setIp(selectedSourceIp); setSelectedSourceIp(null); }}>Filter dashboard</button>
-								<button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending} onClick={() => block.mutate(selectedSourceIp)}><IconBan size={14} /> Block 60m</button>
+								<button type="button" className="btn btn-sm btn-outline-danger" disabled={block.isPending || nodeId !== "local"} onClick={() => block.mutate(selectedSourceIp)} title={nodeId === "local" ? "Block this source on Raspberry Pi 5" : "Select Raspberry Pi 5 to manage its local response actions"}><IconBan size={14} /> Block 60m</button>
 							</div>
 						</div>
 						<div className={styles.similarList}>

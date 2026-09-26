@@ -1,0 +1,11 @@
+[Unit]
+Description=Run HYROVI HPM node heartbeat every 30 seconds
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=30s
+AccuracySec=2s
+Unit=hyrovi-hpm-node-heartbeat.service
+
+[Install]
+WantedBy=timers.target
