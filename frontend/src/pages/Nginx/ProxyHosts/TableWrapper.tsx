@@ -42,6 +42,7 @@ export default function TableWrapper() {
 			(item) =>
 				item.domainNames.some((domain: string) => domain.toLowerCase().includes(search)) ||
 				item.forwardHost.toLowerCase().includes(search) ||
+				(item.hyroviNodeName || "").toLowerCase().includes(search) ||
 				`${item.forwardPort}`.includes(search),
 		);
 	} else if (search !== "") {
