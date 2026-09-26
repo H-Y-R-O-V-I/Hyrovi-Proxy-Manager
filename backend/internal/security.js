@@ -28,8 +28,9 @@ const ESCALATIONS_FILE = `${SECURITY_DIR}/escalations.json`;
 const EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/events`;
 const APP_EVENT_ARCHIVE_DIR = `${SECURITY_DIR}/app-events`;
 const GIB = 1024 * 1024 * 1024;
-const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v9`;
+const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v10`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
+const HOST_PROTECTION_DIR = `${SECURITY_DIR}/host-protection`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const MAX_ANALYSIS_SCAN_BYTES = 8 * 1024 * 1024;
 const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
@@ -44,6 +45,19 @@ const PROCESSED_EVENT_LIMIT = 5_000;
 const ARCHIVED_EVENT_ID_LIMIT = 10_000;
 const MAX_ARCHIVE_SCAN_BYTES_PER_DAY = 512 * 1024;
 const MAX_ARCHIVE_FILE_BYTES = 8 * 1024 * 1024;
+const PROTECTION_RULE_KEYS = ["crawler", "ddos", "criticalFiles", "exploit", "authAbuse", "recon", "unusualMethods"];
+const PROTECTION_RULE_ACTIONS = new Set(["inherit", "observe", "deny", "rate_limit", "challenge", "block"]);
+const PRE_REQUEST_DENY_RULES = new Set(["criticalFiles", "exploit", "unusualMethods"]);
+const DEFAULT_PROTECTION_RULES = Object.freeze({
+	crawler: "block",
+	ddos: "rate_limit",
+	criticalFiles: "deny",
+	exploit: "challenge",
+	authAbuse: "challenge",
+	recon: "rate_limit",
+	unusualMethods: "deny",
+});
+
 const DEFAULT_POLICY = Object.freeze({
 	autoBlockEnabled: false,
 	autoRateLimitThreshold: 50,
@@ -56,6 +70,7 @@ const DEFAULT_POLICY = Object.freeze({
 	eventRetentionDays: 14,
 	eventArchiveMinRisk: 20,
 	trustedSources: [],
+	protectionRules: DEFAULT_PROTECTION_RULES,
 	hostPolicies: {},
 });
 const HOST_POLICY_MODES = new Set(["off", "observe", "protect", "strict"]);
@@ -71,6 +86,44 @@ let securityConfigMutationQueue = Promise.resolve();
 let eventArchiveMutationQueue = Promise.resolve();
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const normalizeProtectionRules = (value, fallback = DEFAULT_PROTECTION_RULES, allowInherit = false) => {
+	const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	const result = {};
+	for (const key of PROTECTION_RULE_KEYS) {
+		const action = source[key];
+		if (typeof action === "string" && PROTECTION_RULE_ACTIONS.has(action) && (allowInherit || action !== "inherit")) {
+			result[key] = action;
+		} else {
+			result[key] = allowInherit ? "inherit" : fallback?.[key] || DEFAULT_PROTECTION_RULES[key];
+		}
+	}
+	return result;
+};
+
+const resolveProtectionRules = (value, fallback = DEFAULT_PROTECTION_RULES) => {
+	const normalized = normalizeProtectionRules(value, fallback, true);
+	const resolved = {};
+	for (const key of PROTECTION_RULE_KEYS) {
+		resolved[key] = normalized[key] === "inherit" ? fallback?.[key] || DEFAULT_PROTECTION_RULES[key] : normalized[key];
+	}
+	return resolved;
+};
+
+const validateProtectionRulesInput = (value, allowInherit = false) => {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new errs.ValidationError("Protection rules must be an object");
+	}
+	for (const [key, action] of Object.entries(value)) {
+		if (!PROTECTION_RULE_KEYS.includes(key)) throw new errs.ValidationError(`Unknown protection rule: ${key}`);
+		if (!PROTECTION_RULE_ACTIONS.has(action) || (!allowInherit && action === "inherit")) {
+			throw new errs.ValidationError(`Invalid action for ${key}: ${String(action)}`);
+		}
+		if (action === "deny" && !PRE_REQUEST_DENY_RULES.has(key)) {
+			throw new errs.ValidationError(`Deny request is not supported for ${key}; use rate_limit, challenge or block`);
+		}
+	}
+};
 
 const emergencyBypassEnabled = () =>
 	/^(1|true|yes|on)$/i.test(String(process.env.HYROVI_SEC_EMERGENCY_BYPASS || "").trim());
@@ -203,6 +256,7 @@ const normalizeHostPolicy = (value = {}, globalPolicy = DEFAULT_POLICY) => {
 			10,
 			22,
 		),
+		protectionRules: normalizeProtectionRules(source.protectionRules, globalPolicy.protectionRules || DEFAULT_PROTECTION_RULES, true),
 		endpointRules: normalizeEndpointRules(source.endpointRules),
 	};
 };
@@ -967,6 +1021,7 @@ const normalizePolicy = (value = {}) => {
 			100,
 		),
 		trustedSources: normalizeTrustedSources(value.trustedSources),
+		protectionRules: normalizeProtectionRules(value.protectionRules, DEFAULT_PROTECTION_RULES, false),
 	};
 	return { ...normalized, hostPolicies: normalizeHostPolicies(value.hostPolicies, normalized) };
 };
@@ -1019,6 +1074,20 @@ const rememberEvent = (event) => {
 		processedEventIds.delete(processedEventOrder.shift());
 	}
 	return true;
+};
+
+const protectionRuleForEvent = (event) => {
+	const ids = new Set((event.signals || []).map((signal) => signal.id));
+	if (ids.has("sensitive_file_probe")) return { key: "criticalFiles", label: "critical file probe" };
+	if (ids.has("path_traversal") || ids.has("injection_probe")) return { key: "exploit", label: "exploit / injection probe" };
+	if (ids.has("auth_failure_burst")) return { key: "authAbuse", label: "authentication abuse burst" };
+	if (ids.has("crawler_attack")) return { key: "crawler", label: "crawler / scanner attack" };
+	if (ids.has("extreme_request_burst") || ids.has("request_burst")) return { key: "ddos", label: "request burst / DDoS pattern" };
+	if (ids.has("reconnaissance_burst") || ids.has("path_enumeration") || ids.has("scanner_user_agent") || ids.has("cms_probe")) {
+		return { key: "recon", label: "reconnaissance / enumeration" };
+	}
+	if (ids.has("unusual_method")) return { key: "unusualMethods", label: "unusual HTTP method" };
+	return null;
 };
 
 const eventIsCrawlerAttackCandidate = (event, policy) => {
@@ -1335,6 +1404,24 @@ const getProxyHostForSecurity = async (access, hostId, permission, fields = ["id
 const groupForHostId = (groups, hostId) =>
 	groups.find((group) => Array.isArray(group.hostIds) && group.hostIds.includes(Number(hostId))) || null;
 
+const groupHasProtectionOverrides = (group) =>
+	Object.values(group?.protectionRules || {}).some((action) => action && action !== "inherit");
+
+const effectiveGlobalMode = (policy) => (policy.autoBlockEnabled ? "protect" : "observe");
+
+const buildGroupHostPolicy = (group, policy) => {
+	if (!group) return null;
+	const hasModeOverride = group.securityMode && group.securityMode !== "inherit";
+	if (!hasModeOverride && !groupHasProtectionOverrides(group)) return null;
+	return normalizeHostPolicy(
+		{
+			mode: hasModeOverride ? group.securityMode : effectiveGlobalMode(policy),
+			protectionRules: group.protectionRules,
+		},
+		policy,
+	);
+};
+
 const defaultEffectiveHostPolicy = (policy) => ({
 	mode: policy.autoBlockEnabled ? "protect" : "observe",
 	autoRateLimitThreshold: policy.autoRateLimitThreshold,
@@ -1343,15 +1430,16 @@ const defaultEffectiveHostPolicy = (policy) => ({
 	autoBlockMinutes: policy.autoBlockMinutes,
 	challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
 	challengeDifficulty: 14,
+	protectionRules: policy.protectionRules || DEFAULT_PROTECTION_RULES,
 	endpointRules: [],
 });
 
 const hostPolicyEntry = (host, policy, group = null) => {
 	const explicit = policy.hostPolicies[String(host.id)] || null;
-	const groupPolicy =
-		!explicit && group && group.securityMode && group.securityMode !== "inherit"
-			? normalizeHostPolicy({ mode: group.securityMode }, policy)
-			: null;
+	const groupPolicy = buildGroupHostPolicy(group, policy);
+	const groupRuleFallback = groupPolicy
+		? resolveProtectionRules(groupPolicy.protectionRules, policy.protectionRules)
+		: policy.protectionRules;
 	return {
 		id: host.id,
 		domainNames: host.domain_names || [],
@@ -1361,20 +1449,25 @@ const hostPolicyEntry = (host, policy, group = null) => {
 					id: group.id,
 					name: group.name,
 					securityMode: group.securityMode,
+					protectionRules: group.protectionRules || normalizeProtectionRules({}, policy.protectionRules, true),
 					accessMode: group.accessMode,
 					sources: group.sources || [],
 				}
 			: null,
 		policy: explicit,
 		policySource: explicit ? "host" : groupPolicy ? "group" : "global",
-		effective: explicit || groupPolicy || defaultEffectiveHostPolicy(policy),
+		effective: explicit
+			? { ...explicit, protectionRules: resolveProtectionRules(explicit.protectionRules, groupRuleFallback) }
+			: groupPolicy
+				? { ...groupPolicy, protectionRules: groupRuleFallback }
+				: defaultEffectiveHostPolicy(policy),
 	};
 };
 
 const createHostPolicyContext = (policy, hosts = [], groups = []) => {
 	const exact = new Map();
 	const wildcards = [];
-	const globalMode = policy.autoBlockEnabled ? "protect" : "observe";
+	const globalMode = effectiveGlobalMode(policy);
 	const globalEffective = {
 		proxyHostId: null,
 		mode: globalMode,
@@ -1385,6 +1478,7 @@ const createHostPolicyContext = (policy, hosts = [], groups = []) => {
 		autoBlockMinutes: policy.autoBlockMinutes,
 		challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
 		challengeDifficulty: 14,
+		protectionRules: policy.protectionRules || DEFAULT_PROTECTION_RULES,
 		endpointRules: [],
 		inherited: true,
 	};
@@ -1392,20 +1486,23 @@ const createHostPolicyContext = (policy, hosts = [], groups = []) => {
 	for (const host of hosts) {
 		const explicit = policy.hostPolicies[String(host.id)] || null;
 		const group = groupForHostId(groups, host.id);
-		const groupPolicy =
-			!explicit && group && group.securityMode && group.securityMode !== "inherit"
-				? normalizeHostPolicy({ mode: group.securityMode }, policy)
-				: null;
+		const groupPolicy = buildGroupHostPolicy(group, policy);
+		const groupRuleFallback = groupPolicy
+			? resolveProtectionRules(groupPolicy.protectionRules, policy.protectionRules)
+			: policy.protectionRules;
 		const source = explicit || groupPolicy;
 		const hostEffective = source
 			? {
 					proxyHostId: host.id,
 					...source,
+					protectionRules: explicit
+						? resolveProtectionRules(explicit.protectionRules, groupRuleFallback)
+						: groupRuleFallback,
 					autoBlockEnabled: policy.autoBlockEnabled && ["protect", "strict"].includes(source.mode),
 					inherited: false,
 					policySource: explicit ? "host" : "group",
-					groupId: groupPolicy ? group.id : null,
-					groupName: groupPolicy ? group.name : null,
+					groupId: group ? group.id : null,
+					groupName: group ? group.name : null,
 				}
 			: {
 					...globalEffective,
@@ -1458,6 +1555,67 @@ const createHostPolicyContext = (policy, hosts = [], groups = []) => {
 			return applyEndpointRule(wildcard?.effective || globalEffective, requestPath);
 		},
 	};
+};
+
+const preRequestActionEnabled = (action) => action === "deny" || action === "block";
+
+const renderHostProtectionConfig = (effective, enforcementEnabled) => {
+	const lines = ["# Managed by HYROVI Sec. Do not edit manually."];
+	if (!enforcementEnabled || !["protect", "strict"].includes(effective.mode)) {
+		lines.push("# Pre-request protection is inactive for this host.", "");
+		return lines.join("\n");
+	}
+	const rules = effective.protectionRules || DEFAULT_PROTECTION_RULES;
+	if (preRequestActionEnabled(rules.criticalFiles)) {
+		lines.push(
+			"# Critical files / repositories",
+			'if ($uri ~* "(^|/)(\\.env|\\.git|\\.svn|\\.hg)(/|$)|/etc/passwd|/proc/self") { return 403; }',
+		);
+	}
+	if (preRequestActionEnabled(rules.exploit)) {
+		lines.push(
+			"# Traversal and injection-style URI probes",
+			'if ($request_uri ~* "\\.\\./|%2e%2e|%252e%252e|<script|%3cscript|union(%20|\\+)select|sleep\\(|benchmark\\(") { return 403; }',
+		);
+	}
+	if (preRequestActionEnabled(rules.unusualMethods)) {
+		lines.push("# Methods that ordinary reverse-proxy applications should not receive", 'if ($request_method ~* "^(TRACE|TRACK|CONNECT)$") { return 405; }');
+	}
+	if (lines.length === 1) lines.push("# No pre-request deny rules are enabled.");
+	lines.push("");
+	return lines.join("\n");
+};
+
+const syncHostProtectionFiles = async (policy, reload = true) => {
+	await fs.promises.mkdir(HOST_PROTECTION_DIR, { recursive: true });
+	const [hosts, groups] = await Promise.all([listProxyHostsForSecurity(), internalSecurityHostGroups.listInternal()]);
+	const active = new Set();
+	let changed = false;
+	for (const host of hosts) {
+		active.add(String(host.id));
+		const effective = hostPolicyEntry(host, policy, groupForHostId(groups, host.id)).effective;
+		const filePath = `${HOST_PROTECTION_DIR}/${host.id}.conf`;
+		const next = renderHostProtectionConfig(effective, policy.autoBlockEnabled);
+		let previous = null;
+		try { previous = await fs.promises.readFile(filePath, "utf8"); } catch (err) { if (err.code !== "ENOENT") throw err; }
+		if (previous !== next) {
+			await writeTextAtomic(filePath, next);
+			changed = true;
+		}
+	}
+	for (const entry of await fs.promises.readdir(HOST_PROTECTION_DIR, { withFileTypes: true })) {
+		if (!entry.isFile() || !entry.name.endsWith(".conf")) continue;
+		const id = entry.name.slice(0, -5);
+		if (!active.has(id)) {
+			await fs.promises.unlink(`${HOST_PROTECTION_DIR}/${entry.name}`).catch(() => {});
+			changed = true;
+		}
+	}
+	if (changed && reload) {
+		await internalNginx.test();
+		await internalNginx.reload();
+	}
+	return { changed, hosts: hosts.length };
 };
 
 const getHostPolicyContext = async (policy) => {
@@ -1574,6 +1732,52 @@ const monitorThreats = async () => {
 				autoRateLimitThreshold: effective.autoRateLimitThreshold,
 				autoBlockThreshold: effective.autoBlockThreshold,
 			};
+
+			const ruleMatch = protectionRuleForEvent(event);
+			if (ruleMatch && !isPrivateOrLoopback(event.ip) && !isTrustedSource(event.ip, policy.trustedSources)) {
+				const action = effective.protectionRules?.[ruleMatch.key] || DEFAULT_PROTECTION_RULES[ruleMatch.key] || "observe";
+				const ruleReason = `Protection rule ${ruleMatch.key}=${action} (${effective.mode}): ${ruleMatch.label}; risk ${event.risk}; host ${event.host}`;
+
+				if (action === "observe" || action === "deny") continue;
+
+				if (action === "block") {
+					const block = createBlockRecord({
+						ip: event.ip,
+						durationMinutes: effective.autoBlockMinutes,
+						source: `policy-${ruleMatch.key}-block`,
+						reason: ruleReason,
+					});
+					blockAdditions.push(block);
+					blockedIps.add(event.ip);
+					if (existingChallengeByIp.has(event.ip)) challengeRemovals.add(event.ip);
+					delete escalations[event.ip];
+					continue;
+				}
+
+				if (action === "challenge") {
+					if (effective.proxyHostId && !challengedIps.has(event.ip)) {
+						queueChallenge({ event, effective, source: `policy-${ruleMatch.key}-challenge`, reason: ruleReason });
+					}
+					continue;
+				}
+
+				if (action === "rate_limit") {
+					const existingRateLimit =
+						rateLimitByIp.get(event.ip) || rateLimits.find((entry) => responseTargetContainsIp(entry.ip, event.ip));
+					if (!existingRateLimit) {
+						const entry = createRateLimitRecord({
+							ip: event.ip,
+							durationMinutes: effective.autoRateLimitMinutes,
+							source: `policy-${ruleMatch.key}-rate-limit`,
+							reason: ruleReason,
+						});
+						rateLimitAdditions.push(entry);
+						rateLimitedIps.add(event.ip);
+						rateLimitByIp.set(event.ip, entry);
+					}
+					continue;
+				}
+			}
 
 			if (eventIsCrawlerAttackCandidate(event, candidatePolicy)) {
 				const reason = `Crawler/scanner attack blocked (${effective.mode}): risk ${event.risk}; host ${event.host}; ${event.signals
@@ -2841,6 +3045,7 @@ const internalSecurity = {
 		}
 
 		const startupPolicy = await readPolicyUnsafe();
+		const protectionSync = await syncHostProtectionFiles(startupPolicy, false);
 		await purgeArchivedEvents(startupPolicy.eventRetentionDays);
 		for (const event of await loadArchivedEvents(ARCHIVED_EVENT_ID_LIMIT, startupPolicy.eventRetentionDays)) {
 			rememberArchivedEvent(event);
@@ -2858,6 +3063,10 @@ const internalSecurity = {
 
 		try {
 			await fs.promises.access(INSTRUMENTATION_MARKER);
+			if (protectionSync.changed) {
+				await internalNginx.test();
+				await internalNginx.reload();
+			}
 			return { instrumented: true, regenerated: false };
 		} catch (_) {
 			// Existing NPM installations already have generated host configs. Regenerate
@@ -2901,6 +3110,10 @@ const internalSecurity = {
 				.then((policy) => purgeArchivedEvents(policy.eventRetentionDays))
 				.catch((err) => logger.error("HYROVI Sec event retention failed:", err.message));
 		const checkStorageHealth = () => alertOnStorageHealth();
+		const syncProtection = () =>
+			readPolicyUnsafe()
+				.then((policy) => syncHostProtectionFiles(policy))
+				.catch((err) => logger.error("HYROVI Sec host protection sync failed:", err.message));
 		purge();
 		purgeRateLimits();
 		purgeEscalationStates();
@@ -2914,6 +3127,7 @@ const internalSecurity = {
 		setInterval(purgeChallenges, 60_000).unref();
 		setInterval(purgeArchive, 60 * 60_000).unref();
 		setInterval(checkStorageHealth, 15 * 60_000).unref();
+		setInterval(syncProtection, 30_000).unref();
 		setInterval(monitor, MONITOR_INTERVAL_MS).unref();
 	},
 
@@ -3331,6 +3545,7 @@ const internalSecurity = {
 	updatePolicy: async (access, data) => {
 		await access.can("users:list");
 		const current = await readPolicyUnsafe();
+		if (typeof data.protectionRules !== "undefined") validateProtectionRulesInput(data.protectionRules, false);
 		if (typeof data.trustedSources !== "undefined") {
 			if (!Array.isArray(data.trustedSources)) throw new errs.ValidationError("Trusted sources must be an array");
 			if (data.trustedSources.length > 200) throw new errs.ValidationError("Trusted sources are limited to 200 entries");
@@ -3339,7 +3554,7 @@ const internalSecurity = {
 				throw new errs.ValidationError(`Invalid trusted source: ${String(invalid).slice(0, 120)}`);
 			}
 		}
-		return writePolicyUnsafe({
+		const updated = await writePolicyUnsafe({
 			...current,
 			...(typeof data.autoBlockEnabled === "boolean" ? { autoBlockEnabled: data.autoBlockEnabled } : {}),
 			...(typeof data.autoRateLimitThreshold !== "undefined"
@@ -3362,7 +3577,17 @@ const internalSecurity = {
 			...(typeof data.eventRetentionDays !== "undefined" ? { eventRetentionDays: data.eventRetentionDays } : {}),
 			...(typeof data.eventArchiveMinRisk !== "undefined" ? { eventArchiveMinRisk: data.eventArchiveMinRisk } : {}),
 			...(typeof data.trustedSources !== "undefined" ? { trustedSources: data.trustedSources } : {}),
+			...(typeof data.protectionRules !== "undefined" ? { protectionRules: data.protectionRules } : {}),
 		});
+
+		try {
+			await syncHostProtectionFiles(updated);
+			return updated;
+		} catch (err) {
+			await writePolicyUnsafe(current).catch(() => {});
+			await syncHostProtectionFiles(current).catch(() => {});
+			throw err;
+		}
 	},
 
 	listHostPolicies: async (access) => {
@@ -3386,6 +3611,7 @@ const internalSecurity = {
 			autoBlockMinutes: policy.autoBlockMinutes,
 			challengeMinutes: Math.min(30, Math.max(5, policy.autoRateLimitMinutes)),
 			challengeDifficulty: 14,
+			protectionRules: policy.protectionRules || DEFAULT_PROTECTION_RULES,
 			endpointRules: [],
 		};
 	},
@@ -3407,6 +3633,7 @@ const internalSecurity = {
 		if (typeof data.mode !== "undefined" && !HOST_POLICY_MODES.has(data.mode)) {
 			throw new errs.ValidationError("Security mode must be off, observe, protect or strict");
 		}
+		if (typeof data.protectionRules !== "undefined") validateProtectionRulesInput(data.protectionRules, true);
 		if (typeof data.endpointRules !== "undefined") {
 			if (!Array.isArray(data.endpointRules)) {
 				throw new errs.ValidationError("Endpoint rules must be an array");
@@ -3476,6 +3703,7 @@ const internalSecurity = {
 			autoBlockMinutes: current.autoBlockMinutes,
 			challengeMinutes: Math.min(30, Math.max(5, current.autoRateLimitMinutes)),
 			challengeDifficulty: 14,
+			protectionRules: normalizeProtectionRules({}, current.protectionRules, true),
 		};
 		const definedData = Object.fromEntries(
 			Object.entries(data).filter(([, value]) => typeof value !== "undefined"),
@@ -3491,7 +3719,14 @@ const internalSecurity = {
 			...current,
 			hostPolicies: { ...current.hostPolicies, [String(id)]: nextHostPolicy },
 		});
-		return updated.hostPolicies[String(id)];
+		try {
+			await syncHostProtectionFiles(updated);
+			return updated.hostPolicies[String(id)];
+		} catch (err) {
+			await writePolicyUnsafe(current).catch(() => {});
+			await syncHostProtectionFiles(current).catch(() => {});
+			throw err;
+		}
 	},
 
 	deleteHostPolicy: async (access, hostId) => {
@@ -3503,8 +3738,15 @@ const internalSecurity = {
 		if (!current.hostPolicies[String(id)]) return { success: true };
 		const hostPolicies = { ...current.hostPolicies };
 		delete hostPolicies[String(id)];
-		await writePolicyUnsafe({ ...current, hostPolicies });
-		return { success: true };
+		const updated = await writePolicyUnsafe({ ...current, hostPolicies });
+		try {
+			await syncHostProtectionFiles(updated);
+			return { success: true };
+		} catch (err) {
+			await writePolicyUnsafe(current).catch(() => {});
+			await syncHostProtectionFiles(current).catch(() => {});
+			throw err;
+		}
 	},
 	listChallenges: async (access) => {
 		await access.can("logs:list");

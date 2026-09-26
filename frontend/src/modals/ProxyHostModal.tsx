@@ -81,6 +81,13 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 			hyroviAutoBlockMinutes,
 			hyroviChallengeMinutes,
 			hyroviChallengeDifficulty,
+			hyroviRuleCrawler,
+			hyroviRuleDdos,
+			hyroviRuleCriticalFiles,
+			hyroviRuleExploit,
+			hyroviRuleAuthAbuse,
+			hyroviRuleRecon,
+			hyroviRuleUnusualMethods,
 			hyroviEndpointRules,
 			...proxyHostValues
 		} = values;
@@ -109,6 +116,15 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 						autoBlockMinutes: Number(hyroviAutoBlockMinutes),
 						challengeMinutes: Number(hyroviChallengeMinutes),
 						challengeDifficulty: Number(hyroviChallengeDifficulty),
+						protectionRules: {
+							crawler: hyroviRuleCrawler,
+							ddos: hyroviRuleDdos,
+							criticalFiles: hyroviRuleCriticalFiles,
+							exploit: hyroviRuleExploit,
+							authAbuse: hyroviRuleAuthAbuse,
+							recon: hyroviRuleRecon,
+							unusualMethods: hyroviRuleUnusualMethods,
+						},
 						endpointRules: (Array.isArray(hyroviEndpointRules) ? hyroviEndpointRules : [])
 							.map((rule: any) => ({
 								pathPrefix: String(rule?.pathPrefix || "").trim(),
@@ -190,6 +206,13 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hyroviAutoBlockMinutes: effectiveSecurity?.autoBlockMinutes ?? 60,
 							hyroviChallengeMinutes: effectiveSecurity?.challengeMinutes ?? 10,
 							hyroviChallengeDifficulty: effectiveSecurity?.challengeDifficulty ?? 14,
+							hyroviRuleCrawler: securityHostPolicy.data?.policy?.protectionRules?.crawler ?? effectiveSecurity?.protectionRules?.crawler ?? "block",
+							hyroviRuleDdos: securityHostPolicy.data?.policy?.protectionRules?.ddos ?? effectiveSecurity?.protectionRules?.ddos ?? "rate_limit",
+							hyroviRuleCriticalFiles: securityHostPolicy.data?.policy?.protectionRules?.criticalFiles ?? effectiveSecurity?.protectionRules?.criticalFiles ?? "deny",
+							hyroviRuleExploit: securityHostPolicy.data?.policy?.protectionRules?.exploit ?? effectiveSecurity?.protectionRules?.exploit ?? "challenge",
+							hyroviRuleAuthAbuse: securityHostPolicy.data?.policy?.protectionRules?.authAbuse ?? effectiveSecurity?.protectionRules?.authAbuse ?? "challenge",
+							hyroviRuleRecon: securityHostPolicy.data?.policy?.protectionRules?.recon ?? effectiveSecurity?.protectionRules?.recon ?? "rate_limit",
+							hyroviRuleUnusualMethods: securityHostPolicy.data?.policy?.protectionRules?.unusualMethods ?? effectiveSecurity?.protectionRules?.unusualMethods ?? "deny",
 							hyroviEndpointRules: securityHostPolicy.data?.policy?.endpointRules ?? [],
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
@@ -693,6 +716,36 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 										</div>
 									</div>
 								</div>
+
+								<div className="border-top pt-3 mt-2">
+									<h4 className="mb-1">Protection behavior</h4>
+									<div className="text-secondary small mb-3">Choose the response for each detected attack class. Block means IP block; Deny request stops matching requests before they reach the upstream.</div>
+									<div className="row g-2">
+										{[
+											["hyroviRuleCrawler", "Crawler / scanner", "Malicious crawler and scanner attack patterns", false],
+											["hyroviRuleDdos", "DDoS / request burst", "Burst and extreme request-rate patterns", false],
+											["hyroviRuleCriticalFiles", "Critical files", ".env, .git, .svn, .hg, passwd/proc probes", true],
+											["hyroviRuleExploit", "Exploit / injection", "Traversal and injection-style URI probes", true],
+											["hyroviRuleAuthAbuse", "Auth abuse", "Repeated 401/403 authentication failures", false],
+											["hyroviRuleRecon", "Recon / enumeration", "Path scans, CMS probes and scanner signatures", false],
+											["hyroviRuleUnusualMethods", "Unusual methods", "TRACE, TRACK and CONNECT", true],
+										].map(([name, label, hint, canDeny]) => (
+											<div className="col-md-6" key={String(name)}>
+												<label className="form-label mb-1" htmlFor={String(name)}>{String(label)}</label>
+												<Field as="select" id={String(name)} name={String(name)} className="form-select" disabled={values.hyroviSecurityMode === "inherit"}>
+													<option value="inherit">Inherit global</option>
+													<option value="observe">Observe only</option>
+													{canDeny ? <option value="deny">Deny request</option> : null}
+													<option value="rate_limit">Rate limit IP</option>
+													<option value="challenge">Challenge client</option>
+													<option value="block">Block IP</option>
+												</Field>
+												<div className="form-hint">{String(hint)}</div>
+											</div>
+										))}
+									</div>
+								</div>
+
 
 								<div className="border-top pt-3 mt-2">
 									<div className="d-flex align-items-center justify-content-between mb-2">

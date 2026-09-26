@@ -10,9 +10,11 @@ import {
 	getSecurityHostPolicies,
 	updateSecurityHostAccess,
 	updateSecurityHostGroup,
+	updateSecurityPolicy,
 	type SecurityHostAccessMode,
 	type SecurityHostGroup,
 	type SecurityHostMode,
+	type SecurityProtectionRules,
 } from "src/api/backend";
 import styles from "./Security.module.css";
 
@@ -24,6 +26,7 @@ type Draft = {
 	accessMode: "open" | "allowlist" | "denylist";
 	sourcesText: string;
 	securityMode: "inherit" | SecurityHostMode;
+	protectionRules: SecurityProtectionRules;
 };
 
 const emptyDraft = (): Draft => ({
@@ -34,6 +37,7 @@ const emptyDraft = (): Draft => ({
 	accessMode: "open",
 	sourcesText: "",
 	securityMode: "inherit",
+	protectionRules: { crawler: "inherit", ddos: "inherit", criticalFiles: "inherit", exploit: "inherit", authAbuse: "inherit", recon: "inherit", unusualMethods: "inherit" },
 });
 
 const draftFromGroup = (group: SecurityHostGroup): Draft => ({
@@ -44,6 +48,7 @@ const draftFromGroup = (group: SecurityHostGroup): Draft => ({
 	accessMode: group.accessMode,
 	sourcesText: group.sources.join("\n"),
 	securityMode: group.securityMode,
+	protectionRules: group.protectionRules,
 });
 
 const parseSources = (text: string) => text.split(/[\n,]+/).map((entry) => entry.trim()).filter(Boolean);
@@ -130,6 +135,7 @@ export default function SecurityGroups() {
 				accessMode: draft.accessMode,
 				sources: parseSources(draft.sourcesText),
 				securityMode: draft.securityMode,
+				protectionRules: draft.protectionRules,
 			};
 			if (!payload.name) throw new Error("Group name is required");
 			if (payload.accessMode === "allowlist" && payload.sources.length === 0) {
@@ -138,6 +144,8 @@ export default function SecurityGroups() {
 			return draft.id ? updateSecurityHostGroup(draft.id, payload) : createSecurityHostGroup(payload);
 		},
 		onSuccess: async (group) => {
+			// Re-render inherited pre-request protection immediately; the backend timer is only a recovery path.
+			await updateSecurityPolicy({});
 			await refresh();
 			setDraft(draftFromGroup(group));
 		},
@@ -330,6 +338,24 @@ export default function SecurityGroups() {
 					<div className={styles.gridFull}><label className="form-label" htmlFor="security-group-description">Description</label><input id="security-group-description" className="form-control" value={draft.description} onChange={(e) => setDraft((current) => ({ ...current, description: e.target.value }))} placeholder="Internal dashboards and admin tools" /></div>
 					<div><label className="form-label" htmlFor="security-group-access">IP access</label><select id="security-group-access" className="form-select" value={draft.accessMode} onChange={(e) => setDraft((current) => ({ ...current, accessMode: e.target.value as Draft["accessMode"] }))}><option value="open">Open</option><option value="allowlist">Only allow listed IPs</option><option value="denylist">Block listed IPs</option></select></div>
 					<div><label className="form-label" htmlFor="security-group-sources">IPs / CIDRs</label><textarea id="security-group-sources" className="form-control font-monospace" rows={4} value={draft.sourcesText} disabled={draft.accessMode === "open"} onChange={(e) => setDraft((current) => ({ ...current, sourcesText: e.target.value }))} placeholder={draft.accessMode === "allowlist" ? "192.168.178.0/24\n203.0.113.10" : "203.0.113.0/24"} /><div className="form-hint">IPv4 and IPv6 addresses or CIDRs. Cloudflare traffic uses the restored real client IP.</div></div>
+				</div>
+
+				<div className="mt-4 border-top pt-3">
+					<div className="mb-3">
+						<div className="form-label mb-1">Protection behavior</div>
+						<div className="text-secondary small">Override global attack responses for every host in this group. Individual host rules still win.</div>
+					</div>
+					<div className="row g-2">
+						{[
+							["crawler", "Crawler / scanner", false], ["ddos", "DDoS / burst", false], ["criticalFiles", "Critical files", true],
+							["exploit", "Exploit / injection", true], ["authAbuse", "Auth abuse", false], ["recon", "Recon / enumeration", false], ["unusualMethods", "Unusual methods", true],
+						].map(([key, label, canDeny]) => <div className="col-12 col-md-6" key={String(key)}>
+							<label className="form-label mb-1" htmlFor={`security-group-rule-${String(key)}`}>{String(label)}</label>
+							<select id={`security-group-rule-${String(key)}`} className="form-select" value={(draft.protectionRules as any)[String(key)]} onChange={(event) => setDraft((current) => ({ ...current, protectionRules: { ...current.protectionRules, [String(key)]: event.target.value } as SecurityProtectionRules }))}>
+								<option value="inherit">Inherit global</option><option value="observe">Observe only</option>{canDeny ? <option value="deny">Deny request</option> : null}<option value="rate_limit">Rate limit IP</option><option value="challenge">Challenge client</option><option value="block">Block IP</option>
+							</select>
+						</div>)}
+					</div>
 				</div>
 
 				<div className="mt-4">

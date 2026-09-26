@@ -8,6 +8,7 @@ import internalNginx from "./nginx.js";
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const GROUPS_FILE = `${SECURITY_DIR}/host-groups.json`;
 const ACL_DIR = `${SECURITY_DIR}/host-acl`;
+const PROTECTION_DIR = `${SECURITY_DIR}/host-protection`;
 const HTTP_GEO_FILE = `${SECURITY_DIR}/host-groups-http.conf`;
 const MAX_GROUPS = 100;
 const MAX_HOSTS_PER_GROUP = 500;
@@ -16,6 +17,9 @@ const MAX_HOST_ACCESS_POLICIES = 1000;
 const ACCESS_MODES = new Set(["open", "allowlist", "denylist"]);
 const HOST_ACCESS_MODES = new Set(["inherit", "open", "allowlist", "denylist"]);
 const SECURITY_MODES = new Set(["inherit", "off", "observe", "protect", "strict"]);
+const PROTECTION_RULE_KEYS = ["crawler", "ddos", "criticalFiles", "exploit", "authAbuse", "recon", "unusualMethods"];
+const PROTECTION_RULE_ACTIONS = new Set(["inherit", "observe", "deny", "rate_limit", "challenge", "block"]);
+const PRE_REQUEST_DENY_RULES = new Set(["criticalFiles", "exploit", "unusualMethods"]);
 
 let mutationQueue = Promise.resolve();
 
@@ -46,6 +50,14 @@ const normalizeSources = (value) => {
 	return [...new Set(value.map(normalizeSource).filter(Boolean))].slice(0, MAX_SOURCES_PER_GROUP);
 };
 
+const normalizeProtectionRules = (value = {}) => {
+	const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	return Object.fromEntries(PROTECTION_RULE_KEYS.map((key) => {
+		const action = PROTECTION_RULE_ACTIONS.has(source[key]) ? source[key] : "inherit";
+		return [key, action === "deny" && !PRE_REQUEST_DENY_RULES.has(key) ? "inherit" : action];
+	}));
+};
+
 const normalizeHostIds = (value) => {
 	if (!Array.isArray(value)) return [];
 	return [...new Set(value.map((id) => Number.parseInt(id, 10)).filter((id) => Number.isInteger(id) && id > 0))].slice(
@@ -61,6 +73,7 @@ const normalizeGroup = (value = {}, existing = null) => {
 	const accessMode = ACCESS_MODES.has(value.accessMode) ? value.accessMode : existing?.accessMode || "open";
 	const securityMode = SECURITY_MODES.has(value.securityMode) ? value.securityMode : existing?.securityMode || "inherit";
 	const sources = normalizeSources(typeof value.sources === "undefined" ? existing?.sources || [] : value.sources);
+	const protectionRules = normalizeProtectionRules(typeof value.protectionRules === "undefined" ? existing?.protectionRules || {} : value.protectionRules);
 	if (accessMode === "allowlist" && sources.length === 0) {
 		throw new errs.ValidationError("Allowlist groups require at least one IP address or CIDR");
 	}
@@ -73,6 +86,7 @@ const normalizeGroup = (value = {}, existing = null) => {
 		accessMode,
 		sources,
 		securityMode,
+		protectionRules,
 		createdAt: existing?.createdAt || now,
 		updatedAt: existing && value === existing ? existing.updatedAt || now : now,
 	};
@@ -180,6 +194,7 @@ const listHostRows = () =>
 
 const writeRuntimeFiles = async (state, hosts) => {
 	await fs.promises.mkdir(ACL_DIR, { recursive: true });
+	await fs.promises.mkdir(PROTECTION_DIR, { recursive: true });
 	await fs.promises.writeFile(HTTP_GEO_FILE, buildGeoConfig(state), "utf8");
 	const activeIds = new Set();
 	for (const host of hosts) {
@@ -189,11 +204,22 @@ const writeRuntimeFiles = async (state, hosts) => {
 			buildHostAcl(host.id, groupForHost(state.groups, host.id), state.hostAccess?.[String(host.id)] || null),
 			"utf8",
 		);
+		try {
+			await fs.promises.access(`${PROTECTION_DIR}/${host.id}.conf`);
+		} catch (err) {
+			if (err.code !== "ENOENT") throw err;
+			await fs.promises.writeFile(`${PROTECTION_DIR}/${host.id}.conf`, "# HYROVI Sec host protection: no pre-request rules\n", "utf8");
+		}
 	}
 	for (const entry of await fs.promises.readdir(ACL_DIR, { withFileTypes: true })) {
 		if (!entry.isFile() || !entry.name.endsWith(".conf")) continue;
 		const id = entry.name.slice(0, -5);
 		if (!activeIds.has(id)) await fs.promises.unlink(`${ACL_DIR}/${entry.name}`).catch(() => {});
+	}
+	for (const entry of await fs.promises.readdir(PROTECTION_DIR, { withFileTypes: true })) {
+		if (!entry.isFile() || !entry.name.endsWith(".conf")) continue;
+		const id = entry.name.slice(0, -5);
+		if (!activeIds.has(id)) await fs.promises.unlink(`${PROTECTION_DIR}/${entry.name}`).catch(() => {});
 	}
 };
 
@@ -258,6 +284,7 @@ const internalSecurityHostGroups = {
 	prepare: async () => {
 		await fs.promises.mkdir(SECURITY_DIR, { recursive: true });
 		await fs.promises.mkdir(ACL_DIR, { recursive: true });
+		await fs.promises.mkdir(PROTECTION_DIR, { recursive: true });
 		try {
 			await fs.promises.access(GROUPS_FILE);
 		} catch (_) {
@@ -362,12 +389,19 @@ const internalSecurityHostGroups = {
 
 	ensureHostAclFile: async (hostId) => {
 		await fs.promises.mkdir(ACL_DIR, { recursive: true });
+		await fs.promises.mkdir(PROTECTION_DIR, { recursive: true });
 		const state = await readState();
 		await fs.promises.writeFile(
 			`${ACL_DIR}/${hostId}.conf`,
 			buildHostAcl(hostId, groupForHost(state.groups, hostId), state.hostAccess?.[String(hostId)] || null),
 			"utf8",
 		);
+		try {
+			await fs.promises.access(`${PROTECTION_DIR}/${hostId}.conf`);
+		} catch (err) {
+			if (err.code !== "ENOENT") throw err;
+			await fs.promises.writeFile(`${PROTECTION_DIR}/${hostId}.conf`, "# HYROVI Sec host protection: no pre-request rules\n", "utf8");
+		}
 	},
 
 	removeHostAclFile: async (hostId) =>
@@ -379,6 +413,9 @@ const internalSecurityHostGroups = {
 				await writeState({ ...state, version: 2, hostAccess });
 			}
 			await fs.promises.unlink(`${ACL_DIR}/${hostId}.conf`).catch((err) => {
+				if (err.code !== "ENOENT") throw err;
+			});
+			await fs.promises.unlink(`${PROTECTION_DIR}/${hostId}.conf`).catch((err) => {
 				if (err.code !== "ENOENT") throw err;
 			});
 		}),

@@ -799,6 +799,44 @@ const SecuritySettings = () => {
 								</Button>
 							</div>
 						</div>
+						<div className="border-top mt-3 pt-3">
+							<div className="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
+								<div>
+									<strong>Protection behavior</strong>
+									<div className="text-secondary small">Default response per attack class. Hosts can override these values in their HYROVI Sec tab.</div>
+								</div>
+								<div className="text-secondary small">Deny request acts before the upstream for supported URI/method classes.</div>
+							</div>
+							<div className="row g-2">
+								{[
+									["crawler", "Crawler / scanner", false],
+									["ddos", "DDoS / request burst", false],
+									["criticalFiles", "Critical files", true],
+									["exploit", "Exploit / injection", true],
+									["authAbuse", "Auth abuse", false],
+									["recon", "Recon / enumeration", false],
+									["unusualMethods", "Unusual methods", true],
+								].map(([key, label, canDeny]) => (
+									<div className="col-12 col-md-6 col-xl-4" key={String(key)}>
+										<label className="form-label mb-1" htmlFor={`hyrovi-sec-rule-${String(key)}`}>{String(label)}</label>
+										<select
+											id={`hyrovi-sec-rule-${String(key)}`}
+											className="form-select"
+											value={(policy.data?.protectionRules as any)?.[String(key)] ?? "observe"}
+											disabled={!policy.data || updatePolicy.isPending}
+											onChange={(event) => updatePolicy.mutate({ protectionRules: { ...(policy.data?.protectionRules ?? {}), [String(key)]: event.target.value } as any })}
+										>
+											<option value="observe">Observe only</option>
+											{canDeny ? <option value="deny">Deny request</option> : null}
+											<option value="rate_limit">Rate limit IP</option>
+											<option value="challenge">Challenge client</option>
+											<option value="block">Block IP</option>
+										</select>
+									</div>
+								))}
+							</div>
+						</div>
+
 						<div className="row g-3 mt-1">
 							<div className="col-12 col-lg-5">
 								<div className="form-label mb-1">Soft-limit escalation</div>

@@ -142,6 +142,16 @@ export interface SecurityEventDetail extends SecurityEvent {
 }
 
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
+export type SecurityProtectionAction = "inherit" | "observe" | "deny" | "rate_limit" | "challenge" | "block";
+export interface SecurityProtectionRules {
+	crawler: SecurityProtectionAction;
+	ddos: SecurityProtectionAction;
+	criticalFiles: SecurityProtectionAction;
+	exploit: SecurityProtectionAction;
+	authAbuse: SecurityProtectionAction;
+	recon: SecurityProtectionAction;
+	unusualMethods: SecurityProtectionAction;
+}
 
 export interface SecurityEndpointRule {
 	pathPrefix: string;
@@ -156,6 +166,7 @@ export interface SecurityHostPolicy {
 	autoBlockMinutes: number;
 	challengeMinutes: number;
 	challengeDifficulty: number;
+	protectionRules: SecurityProtectionRules;
 	endpointRules: SecurityEndpointRule[];
 }
 
@@ -167,6 +178,7 @@ export interface SecurityHostPolicyGroupRef {
 	id: string;
 	name: string;
 	securityMode: "inherit" | SecurityHostMode;
+	protectionRules: SecurityProtectionRules;
 	accessMode: "open" | "allowlist" | "denylist";
 	sources: string[];
 }
@@ -215,6 +227,7 @@ export interface SecurityHostGroup {
 	accessMode: "open" | "allowlist" | "denylist";
 	sources: string[];
 	securityMode: "inherit" | SecurityHostMode;
+	protectionRules: SecurityProtectionRules;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -244,6 +257,7 @@ export interface SecurityPolicy {
 	eventRetentionDays: number;
 	eventArchiveMinRisk: number;
 	trustedSources: string[];
+	protectionRules: SecurityProtectionRules;
 	hostPolicies: Record<string, SecurityHostPolicy>;
 }
 
@@ -933,14 +947,14 @@ export async function getSecurityHostGroups(): Promise<SecurityHostGroup[]> {
 }
 
 export async function createSecurityHostGroup(
-	data: Pick<SecurityHostGroup, "name" | "description" | "hostIds" | "accessMode" | "sources" | "securityMode">,
+	data: Pick<SecurityHostGroup, "name" | "description" | "hostIds" | "accessMode" | "sources" | "securityMode" | "protectionRules">,
 ): Promise<SecurityHostGroup> {
 	return await api.post({ url: "/security/host-groups", data });
 }
 
 export async function updateSecurityHostGroup(
 	id: string,
-	data: Partial<Pick<SecurityHostGroup, "name" | "description" | "hostIds" | "accessMode" | "sources" | "securityMode">>,
+	data: Partial<Pick<SecurityHostGroup, "name" | "description" | "hostIds" | "accessMode" | "sources" | "securityMode" | "protectionRules">>,
 ): Promise<SecurityHostGroup> {
 	return await api.put({ url: `/security/host-groups/${encodeURIComponent(id)}`, data });
 }
