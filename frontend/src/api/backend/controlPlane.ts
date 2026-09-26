@@ -1,4 +1,6 @@
 import * as api from "./base";
+import type { ProxyHost } from "./models";
+import type { SecurityHostAccessPolicy, SecurityHostPolicy } from "./security";
 
 export type ControlPlaneNodeStatus = "online" | "stale" | "pending" | "disabled";
 
@@ -29,6 +31,42 @@ export interface ControlPlaneNodeBootstrap {
 	bootstrapToken: string;
 }
 
+export type ProvisioningJobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface ProxyHostProvisioningJob {
+	id: string;
+	type: "proxy_host.create";
+	nodeId: string;
+	status: ProvisioningJobStatus;
+	createdAt: string;
+	updatedAt: string;
+	startedAt: string | null;
+	finishedAt: string | null;
+	attempts: number;
+	result: {
+		nodeId?: string;
+		proxyHost?: {
+			id: number;
+			domainNames: string[];
+			forwardScheme: string;
+			forwardHost: string;
+			forwardPort: number;
+			certificateId: number;
+		};
+		cloudflare?: {
+			tunnel: string;
+			config: string;
+			domains: string[];
+			ingressAdded: string[];
+		} | null;
+		health?: {
+			origin: Array<{ domain: string; status: number; ok: boolean }>;
+			public: Array<{ domain: string; status: number; ok: boolean }>;
+		};
+	} | null;
+	error: string | null;
+}
+
 export async function getControlPlaneNodes(): Promise<ControlPlaneNode[]> {
 	return await api.get({ url: "/control-plane/nodes" });
 }
@@ -54,4 +92,37 @@ export async function deleteControlPlaneNode(id: string): Promise<{ success: boo
 
 export async function rotateControlPlaneNodeToken(id: string): Promise<ControlPlaneNodeBootstrap> {
 	return await api.post({ url: `/control-plane/nodes/${encodeURIComponent(id)}/rotate-token` });
+}
+
+export async function provisionProxyHost(data: {
+	nodeId: string;
+	cloudflareTunnel: boolean;
+	proxyHost: Omit<ProxyHost, "id"> & { id?: number };
+	securityPolicy?: SecurityHostPolicy | null;
+	securityAccess?: Pick<SecurityHostAccessPolicy, "accessMode" | "sources"> | null;
+}): Promise<ProxyHostProvisioningJob> {
+	return await api.post({
+		url: "/control-plane/provision/proxy-hosts",
+		data,
+	});
+}
+
+export async function getProxyHostProvisioningJob(id: string): Promise<ProxyHostProvisioningJob> {
+	return await api.get({ url: `/control-plane/provision/jobs/${encodeURIComponent(id)}` });
+}
+
+const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+export async function waitForProxyHostProvisioningJob(
+	id: string,
+	timeoutMs = 60_000,
+): Promise<ProxyHostProvisioningJob> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const job = await getProxyHostProvisioningJob(id);
+		if (job.status === "completed") return job;
+		if (job.status === "failed") throw new Error(job.error || "Proxy Host provisioning failed");
+		await wait(700);
+	}
+	throw new Error("Proxy Host provisioning timed out. The job is still visible in HPM and may finish shortly.");
 }

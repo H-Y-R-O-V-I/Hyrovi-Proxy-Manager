@@ -20,7 +20,7 @@ caps='["proxy","certificates","logs"]'
 if [ -n "$container" ]; then
   nginx_version=$(docker exec "$container" nginx -v 2>&1 | sed -n 's/^nginx version: //p' | head -1 || true)
   if [ "$container" = "hyrovi-proxy-manager" ]; then
-    caps='["proxy","security","certificates","logs","analytics"]'
+    caps='["proxy","security","certificates","logs","analytics","provisioning"]'
     image=$(docker inspect "$container" --format '{{.Config.Image}}' 2>/dev/null || true)
     [ -n "$image" ] && agent_version="$image"
   else

@@ -18,6 +18,7 @@ import {
 	SSLOptionsFields,
 } from "src/components";
 import {
+	getControlPlaneNodes,
 	getSecurityHostAccess,
 	getSecurityHostPolicy,
 	getSecurityHostPolicyDefaults,
@@ -54,6 +55,11 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		queryFn: () => getSecurityHostAccess(id as number),
 		enabled: id !== "new",
 	});
+	const controlPlaneNodes = useQuery({
+		queryKey: ["control-plane-nodes"],
+		queryFn: getControlPlaneNodes,
+		enabled: id === "new",
+	});
 	const { mutate: setProxyHost } = useSetProxyHost();
 	const [errorMsg, setErrorMsg] = useState<ReactNode | null>(null);
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -64,6 +70,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		setErrorMsg(null);
 
 		const {
+			hyroviNodeId,
+			hyroviCloudflareTunnel,
 			hyroviAccessMode,
 			hyroviAccessSources,
 			hyroviSecurityMode,
@@ -112,6 +120,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 		const payload: ProxyHostMutationInput = {
 			id: id === "new" ? undefined : id,
 			...proxyHostValues,
+			hyroviNodeId,
+			hyroviCloudflareTunnel,
 			hyroviSecurityPolicy,
 			hyroviSecurityAccess,
 		} as ProxyHostMutationInput;
@@ -130,9 +140,12 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 	};
 
 	const securityIsLoading =
-		securityDefaults.isLoading || (id !== "new" && (securityHostPolicy.isLoading || securityHostAccess.isLoading));
+		securityDefaults.isLoading ||
+		(id !== "new" && (securityHostPolicy.isLoading || securityHostAccess.isLoading)) ||
+		(id === "new" && controlPlaneNodes.isLoading);
 	const securityError =
-		securityDefaults.error || (id !== "new" ? securityHostPolicy.error || securityHostAccess.error : null);
+		securityDefaults.error ||
+		(id !== "new" ? securityHostPolicy.error || securityHostAccess.error : controlPlaneNodes.error);
 	const effectiveSecurity = securityHostPolicy.data?.policy ?? securityHostPolicy.data?.effective ?? securityDefaults.data;
 
 	return (
@@ -148,6 +161,8 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 					initialValues={
 						{
 							// Details tab
+							hyroviNodeId: "local",
+							hyroviCloudflareTunnel: true,
 							domainNames: data?.domainNames || [],
 							forwardScheme: data?.forwardScheme || "http",
 							forwardHost: data?.forwardHost || "",
@@ -263,6 +278,51 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 									<div className="card-body">
 										<div className="tab-content">
 											<div className="tab-pane active show" id="tab-details" role="tabpanel">
+												{id === "new" ? (
+													<div className="card bg-secondary-lt border mb-3">
+														<div className="card-body py-3">
+															<div className="row g-3">
+																<div className="col-md-6">
+																	<label className="form-label" htmlFor="hyroviNodeId">Deployment node</label>
+																	<Field as="select" className="form-select" id="hyroviNodeId" name="hyroviNodeId">
+																		{(controlPlaneNodes.data ?? [])
+																			.filter((node) => node.enabled && node.capabilities.includes("provisioning"))
+																			.map((node) => (
+																				<option
+																					key={node.id}
+																					value={node.id}
+																					disabled={node.id !== "local" && node.status !== "online"}
+																				>
+																					{node.name}{node.id !== "local" ? ` · ${node.status}` : ""}
+																				</option>
+																			))}
+																	</Field>
+																	<div className="form-hint">The Proxy Host is created directly on the selected HPM node.</div>
+																</div>
+																<div className="col-md-6">
+																	<div className="form-label">Cloudflare Tunnel</div>
+																	<label className="form-check form-switch mb-1" htmlFor="hyroviCloudflareTunnel">
+																		<Field name="hyroviCloudflareTunnel">
+																			{({ field }: any) => (
+																				<input
+																					{...field}
+																					id="hyroviCloudflareTunnel"
+																					type="checkbox"
+																					checked={Boolean(field.value)}
+																					className={cn("form-check-input", { "bg-lime": field.value })}
+																				/>
+																			)}
+																		</Field>
+																		<span className="form-check-label">Configure automatically</span>
+																	</label>
+																	<div className="form-hint">
+																		Routes DNS to the selected node&apos;s existing Cloudflare Tunnel, uses the HYROVI wildcard certificate, regenerates Nginx and verifies the result automatically.
+																	</div>
+																</div>
+															</div>
+														</div>
+													</div>
+												) : null}
 												<DomainNamesField isWildcardPermitted dnsProviderWildcardSupported />
 												<div className="row">
 													<div className="col-md-3">

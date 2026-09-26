@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	createProxyHost,
 	deleteSecurityHostAccess,
 	deleteSecurityHostPolicy,
 	getProxyHost,
+	provisionProxyHost,
 	type ProxyHost,
 	type SecurityHostAccessPolicy,
 	type SecurityHostPolicy,
 	updateProxyHost,
 	updateSecurityHostAccess,
 	updateSecurityHostPolicy,
+	waitForProxyHostProvisioningJob,
 } from "src/api/backend";
 
 const fetchProxyHost = (id: number | "new") => {
@@ -45,7 +46,7 @@ const useProxyHost = (id: number | "new", options = {}) => {
 	return useQuery<ProxyHost, Error>({
 		queryKey: ["proxy-host", id],
 		queryFn: () => fetchProxyHost(id),
-		staleTime: 60 * 1000, // 1 minute
+		staleTime: 60 * 1000,
 		...options,
 	});
 };
@@ -54,6 +55,8 @@ type ProxyHostMutationInput = Omit<ProxyHost, "id"> & {
 	id?: number;
 	hyroviSecurityPolicy?: SecurityHostPolicy | null;
 	hyroviSecurityAccess?: Pick<SecurityHostAccessPolicy, "accessMode" | "sources"> | null;
+	hyroviNodeId?: string;
+	hyroviCloudflareTunnel?: boolean;
 };
 
 type ProxyHostRollback = () => void;
@@ -62,11 +65,37 @@ const useSetProxyHost = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async (values: ProxyHostMutationInput) => {
-			const { hyroviSecurityPolicy, hyroviSecurityAccess, ...proxyHostValues } = values;
-			const savedHost = proxyHostValues.id
-				? await updateProxyHost(proxyHostValues as ProxyHost)
-				: await createProxyHost(proxyHostValues as ProxyHost);
+			const {
+				hyroviSecurityPolicy,
+				hyroviSecurityAccess,
+				hyroviNodeId = "local",
+				hyroviCloudflareTunnel = true,
+				...proxyHostValues
+			} = values;
 
+			if (!proxyHostValues.id) {
+				const queued = await provisionProxyHost({
+					nodeId: hyroviNodeId,
+					cloudflareTunnel: hyroviCloudflareTunnel,
+					proxyHost: proxyHostValues as Omit<ProxyHost, "id">,
+					securityPolicy: hyroviSecurityPolicy,
+					securityAccess: hyroviSecurityAccess,
+				});
+				const completed = await waitForProxyHostProvisioningJob(queued.id);
+				const provisioned = completed.result?.proxyHost;
+				if (!provisioned?.id) throw new Error("Provisioning completed without a Proxy Host ID");
+				return {
+					...proxyHostValues,
+					id: provisioned.id,
+					domainNames: provisioned.domainNames ?? proxyHostValues.domainNames,
+					forwardScheme: provisioned.forwardScheme ?? proxyHostValues.forwardScheme,
+					forwardHost: provisioned.forwardHost ?? proxyHostValues.forwardHost,
+					forwardPort: provisioned.forwardPort ?? proxyHostValues.forwardPort,
+					certificateId: provisioned.certificateId ?? proxyHostValues.certificateId,
+				} as ProxyHost;
+			}
+
+			const savedHost = await updateProxyHost(proxyHostValues as ProxyHost);
 			try {
 				if (hyroviSecurityPolicy === null) {
 					await deleteSecurityHostPolicy(savedHost.id);
@@ -86,10 +115,14 @@ const useSetProxyHost = () => {
 			return savedHost;
 		},
 		onMutate: (values: ProxyHostMutationInput) => {
-			if (!values.id) {
-				return () => undefined;
-			}
-			const { hyroviSecurityPolicy: _, hyroviSecurityAccess: __, ...proxyHostValues } = values;
+			if (!values.id) return () => undefined;
+			const {
+				hyroviSecurityPolicy: _,
+				hyroviSecurityAccess: __,
+				hyroviNodeId: ___,
+				hyroviCloudflareTunnel: ____,
+				...proxyHostValues
+			} = values;
 			const previousObject = queryClient.getQueryData(["proxy-host", values.id]);
 			queryClient.setQueryData(["proxy-host", values.id], (old: ProxyHost) => ({
 				...old,
@@ -108,6 +141,7 @@ const useSetProxyHost = () => {
 			queryClient.invalidateQueries({ queryKey: ["audit-logs"] });
 			queryClient.invalidateQueries({ queryKey: ["host-report"] });
 			queryClient.invalidateQueries({ queryKey: ["certificates"] });
+			queryClient.invalidateQueries({ queryKey: ["control-plane-nodes"] });
 		},
 	});
 };

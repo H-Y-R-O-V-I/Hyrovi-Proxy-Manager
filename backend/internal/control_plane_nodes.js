@@ -116,7 +116,7 @@ const localNode = () =>
 			nginxVersion: null,
 			uptimeSeconds: Math.floor(process.uptime()),
 		},
-		capabilities: ["proxy", "security", "certificates", "logs", "analytics"],
+		capabilities: ["proxy", "security", "certificates", "logs", "analytics", "provisioning"],
 		addresses: [],
 		desiredRevision: 0,
 		appliedRevision: 0,

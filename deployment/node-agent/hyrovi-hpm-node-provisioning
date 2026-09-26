@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ENV_FILE = Path("/etc/hyrovi-hpm-node/node.env")
+LOCAL_ENV_FILE = Path("/etc/hyrovi-hpm-node/provisioning.env")
+DEFAULT_CONTAINER = "hyrovi-proxy-manager"
+
+
+def load_kv_file(path):
+    values = {}
+    if not path.exists():
+        return values
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def load_config():
+    values = {}
+    values.update(load_kv_file(ENV_FILE))
+    values.update(load_kv_file(LOCAL_ENV_FILE))
+    node_id = values.get("HYROVI_NODE_ID", "").strip()
+    controller = values.get("HYROVI_CONTROLLER", "").rstrip("/")
+    if not node_id or not controller:
+        raise RuntimeError("Missing HYROVI_NODE_ID or HYROVI_CONTROLLER")
+    if node_id == "local":
+        token_file = Path(values.get("HYROVI_LOCAL_TOKEN_FILE", ""))
+        if not token_file.exists():
+            raise RuntimeError("Missing local provisioner token")
+        token = token_file.read_text(encoding="utf-8").strip()
+    else:
+        token = values.get("HYROVI_NODE_TOKEN", "").strip()
+    if len(token) < 32:
+        raise RuntimeError("Invalid provisioner token")
+    return {
+        "node_id": node_id,
+        "controller": controller,
+        "token": token,
+        "container": values.get("HYROVI_HPM_CONTAINER", DEFAULT_CONTAINER),
+        "cloudflare_config": values.get("HYROVI_CLOUDFLARE_CONFIG", "").strip(),
+    }
+
+
+def request_json(config, method, path, body=None):
+    data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        config["controller"] + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f'Bearer {config["token"]}',
+            "Content-Type": "application/json",
+            "User-Agent": "HYROVI-HPM-Provisioner/1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=25) as response:
+            payload = response.read(256 * 1024)
+            return response.status, json.loads(payload.decode("utf-8")) if payload else None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 204:
+            return 204, None
+        payload = exc.read(64 * 1024).decode("utf-8", errors="replace")
+        raise RuntimeError(f"Controller returned HTTP {exc.code}: {payload[:2000]}") from exc
+
+
+def job_paths(config):
+    node_id = config["node_id"]
+    if node_id == "local":
+        return "/agent/local/provisioning/next", None
+    return f"/agent/nodes/{node_id}/provisioning/next", None
+
+
+def result_path(config, job_id):
+    node_id = config["node_id"]
+    if node_id == "local":
+        return f"/agent/local/provisioning/{job_id}/result"
+    return f"/agent/nodes/{node_id}/provisioning/{job_id}/result"
+
+
+def active_cloudflare_config(config):
+    explicit = config.get("cloudflare_config")
+    if explicit and Path(explicit).exists():
+        return Path(explicit)
+    unit = subprocess.run(
+        ["systemctl", "show", "cloudflared.service", "--property=ExecStart,User", "--value"],
+        text=True,
+        capture_output=True,
+        check=False,
+    ).stdout
+    match = re.search(r"--config\s+([^\s;]+)", unit)
+    if match and Path(match.group(1)).exists():
+        return Path(match.group(1))
+    user_match = re.search(r"(?:^|\n)([A-Za-z_][A-Za-z0-9_-]*)$", unit.strip())
+    candidates = []
+    if "carsten" in unit:
+        candidates.append(Path("/home/carsten/.cloudflared/config.yml"))
+    candidates.extend([Path("/etc/cloudflared/config.yml"), Path("/root/.cloudflared/config.yml")])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("No active Cloudflare tunnel config found")
+
+
+def parse_tunnel(config_path):
+    for raw in config_path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\s*tunnel:\s*['\"]?([^'\"#]+)", raw)
+        if match:
+            return match.group(1).strip()
+    raise RuntimeError(f"No tunnel configured in {config_path}")
+
+
+def parse_ingress_hosts(config_path):
+    hosts = []
+    for raw in config_path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\s*-\s*hostname:\s*['\"]?([^'\"#]+)", raw)
+        if match:
+            hosts.append(match.group(1).strip().lower())
+    return hosts
+
+
+def host_covered(host, patterns):
+    host = host.lower().rstrip(".")
+    for pattern in patterns:
+        pattern = pattern.lower().rstrip(".")
+        if pattern == host:
+            return True
+        if pattern.startswith("*.") and host.endswith(pattern[1:]) and host != pattern[2:]:
+            return True
+    return False
+
+
+def ensure_ingress(config_path, domain):
+    patterns = parse_ingress_hosts(config_path)
+    if host_covered(domain, patterns):
+        return False
+    text = config_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    ingress_index = next((i for i, line in enumerate(lines) if re.match(r"^\s*ingress:\s*$", line)), None)
+    if ingress_index is None:
+        raise RuntimeError(f"No ingress block in {config_path}")
+    insert_at = None
+    for i in range(ingress_index + 1, len(lines)):
+        if re.match(r"^\s{2}-\s*service:\s*", lines[i]):
+            insert_at = i
+            break
+    if insert_at is None:
+        insert_at = len(lines)
+    entry = f'  - hostname: "{domain}"\n    service: http://127.0.0.1:80\n'
+    backup = config_path.with_name(config_path.name + ".bak-hpm-provision")
+    backup.write_text(text, encoding="utf-8")
+    lines.insert(insert_at, entry)
+    config_path.write_text("".join(lines), encoding="utf-8")
+    validate = subprocess.run(
+        ["cloudflared", "--config", str(config_path), "tunnel", "ingress", "validate"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if validate.returncode != 0:
+        config_path.write_text(text, encoding="utf-8")
+        raise RuntimeError(f"Cloudflare ingress validation failed: {validate.stderr.strip()[:1000]}")
+    subprocess.run(["systemctl", "restart", "cloudflared.service"], check=True, timeout=30)
+    return True
+
+
+def cloudflare_command_prefix():
+    if Path("/root/.cloudflared/cert.pem").exists():
+        return ["cloudflared"]
+    if Path("/home/carsten/.cloudflared/cert.pem").exists():
+        return ["runuser", "-u", "carsten", "--", "cloudflared"]
+    raise RuntimeError("No Cloudflare origin certificate available for DNS provisioning")
+
+
+def provision_cloudflare(config, domains):
+    config_path = active_cloudflare_config(config)
+    tunnel = parse_tunnel(config_path)
+    changed_ingress = []
+    for domain in domains:
+        changed = ensure_ingress(config_path, domain)
+        if changed:
+            changed_ingress.append(domain)
+        cmd = cloudflare_command_prefix() + ["tunnel", "route", "dns", tunnel, domain]
+        result = subprocess.run(cmd, text=True, capture_output=True, check=False, timeout=40)
+        if result.returncode != 0:
+            raise RuntimeError(f"Cloudflare DNS route failed for {domain}: {(result.stderr or result.stdout).strip()[:1200]}")
+    return {
+        "tunnel": tunnel,
+        "config": str(config_path),
+        "domains": domains,
+        "ingressAdded": changed_ingress,
+    }
+
+
+CREATE_JS = r"""
+import fs from "node:fs";
+import Access from "/app/lib/access.js";
+import internalProxyHost from "/app/internal/proxy-host.js";
+import internalSecurity from "/app/internal/security.js";
+import internalSecurityHostGroups from "/app/internal/security_host_groups.js";
+
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const access = new Access();
+await access.load(true);
+let host = null;
+try {
+  host = await internalProxyHost.create(access, input.proxyHost);
+  if (input.securityPolicy) await internalSecurity.updateHostPolicy(access, host.id, input.securityPolicy);
+  if (input.securityAccess) await internalSecurityHostGroups.updateHostAccess(access, host.id, input.securityAccess);
+  console.log("HYROVI_RESULT=" + JSON.stringify({
+    id: host.id,
+    domainNames: host.domain_names,
+    forwardScheme: host.forward_scheme,
+    forwardHost: host.forward_host,
+    forwardPort: host.forward_port,
+    certificateId: host.certificate_id,
+  }));
+} catch (error) {
+  if (host?.id) {
+    try { await internalProxyHost.delete(access, { id: host.id }); } catch {}
+  }
+  throw error;
+}
+"""
+
+DELETE_JS = r"""
+import Access from "/app/lib/access.js";
+import internalProxyHost from "/app/internal/proxy-host.js";
+const id = Number.parseInt(process.env.HYROVI_HOST_ID || "0", 10);
+if (!id) process.exit(2);
+const access = new Access();
+await access.load(true);
+await internalProxyHost.delete(access, { id });
+console.log("HYROVI_ROLLBACK_OK");
+"""
+
+
+def create_proxy_host(config, job):
+    payload = job.get("input") or {}
+    process = subprocess.run(
+        ["docker", "exec", "-i", config["container"], "node", "--input-type=module", "-e", CREATE_JS],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=90,
+    )
+    if process.returncode != 0:
+        raise RuntimeError((process.stderr or process.stdout)[-3000:])
+    result = None
+    for line in process.stdout.splitlines():
+        if line.startswith("HYROVI_RESULT="):
+            result = json.loads(line.split("=", 1)[1])
+    if not result or not result.get("id"):
+        raise RuntimeError("HPM did not return the created proxy host")
+
+    cloudflare = None
+    try:
+        if payload.get("cloudflareTunnel", True):
+            domains = [str(v).strip().lower() for v in (payload.get("proxyHost") or {}).get("domain_names", []) if str(v).strip()]
+            cloudflare = provision_cloudflare(config, domains)
+    except Exception:
+        subprocess.run(
+            ["docker", "exec", "-e", f'HYROVI_HOST_ID={result["id"]}', config["container"], "node", "--input-type=module", "-e", DELETE_JS],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+        raise
+
+    subprocess.run(["docker", "exec", config["container"], "nginx", "-t"], check=True, timeout=30)
+
+    health = {"origin": [], "public": []}
+    domains = [str(v).strip().lower() for v in (payload.get("proxyHost") or {}).get("domain_names", []) if str(v).strip()]
+    for domain in domains:
+        origin = subprocess.run(
+            ["curl", "-sS", "--max-time", "8", "-o", "/dev/null", "-w", "%{http_code}", "-H", f"Host: {domain}", "http://127.0.0.1/"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        origin_code = int(origin.stdout.strip()) if origin.stdout.strip().isdigit() else 0
+        health["origin"].append({"domain": domain, "status": origin_code, "ok": 100 <= origin_code < 500})
+
+        public_code = 0
+        if payload.get("cloudflareTunnel", True):
+            import time
+            for _ in range(3):
+                public = subprocess.run(
+                    ["curl", "-sS", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", f"https://{domain}/"],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                public_code = int(public.stdout.strip()) if public.stdout.strip().isdigit() else 0
+                if public_code:
+                    break
+                time.sleep(2)
+        health["public"].append({"domain": domain, "status": public_code, "ok": 100 <= public_code < 500})
+
+    return {"nodeId": config["node_id"], "proxyHost": result, "cloudflare": cloudflare, "health": health}
+
+
+def main():
+    config = load_config()
+    node_id = config["node_id"]
+    next_path = "/agent/local/provisioning/next" if node_id == "local" else f"/agent/nodes/{node_id}/provisioning/next"
+    status, job = request_json(config, "GET", next_path)
+    if status == 204 or not job:
+        print("HYROVI provisioner: no queued jobs")
+        return 0
+
+    success = False
+    result = None
+    error = None
+    try:
+        if job.get("type") != "proxy_host.create":
+            raise RuntimeError(f'Unsupported provisioning job type: {job.get("type")}')
+        result = create_proxy_host(config, job)
+        success = True
+        print(f'HYROVI provisioner: created proxy host on {node_id}')
+    except Exception as exc:
+        error = str(exc)[:2000]
+        print(f"HYROVI provisioner error: {error}", file=sys.stderr)
+
+    request_json(config, "POST", result_path(config, job["id"]), {"success": success, "result": result, "error": error})
+    return 0 if success else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

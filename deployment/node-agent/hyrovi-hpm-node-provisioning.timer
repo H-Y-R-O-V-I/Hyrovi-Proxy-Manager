@@ -1,0 +1,11 @@
+[Unit]
+Description=Process HYROVI HPM provisioning jobs
+
+[Timer]
+OnBootSec=12s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=hyrovi-hpm-node-provisioning.service
+
+[Install]
+WantedBy=timers.target
