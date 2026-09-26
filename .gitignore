@@ -10,3 +10,7 @@ docker/dev/dnsrouter-config.json.tmp
 docker/dev/resolv.conf
 .claude
 
+
+# Python cache
+__pycache__/
+*.pyc
