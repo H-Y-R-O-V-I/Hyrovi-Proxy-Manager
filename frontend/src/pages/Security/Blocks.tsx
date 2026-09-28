@@ -177,6 +177,14 @@ const SecurityBlocks = () => {
 				</div>
 			</div>
 
+			<div className="alert alert-success d-flex align-items-start gap-2 mb-0" role="status">
+				<IconShieldOff size={20} className="mt-1 flex-shrink-0" />
+				<div>
+					<strong>Management access protected</strong>
+					<div className="small mt-1">HYROVI Sec IP blocks apply to protected proxy traffic, not to <code>hpm.hyrovi.com</code>. The management hostname is reserved and stays on its direct Cloudflare → HPM admin path so you can always return here to revoke a block.</div>
+				</div>
+			</div>
+
 			<div className={styles.metrics}>
 				<div className={styles.metric}>
 					<div className={styles.metricLabel}>Active blocks</div>

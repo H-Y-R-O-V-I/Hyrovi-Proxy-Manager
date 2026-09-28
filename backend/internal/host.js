@@ -4,6 +4,16 @@ import deadHostModel from "../models/dead_host.js";
 import proxyHostModel from "../models/proxy_host.js";
 import redirectionHostModel from "../models/redirection_host.js";
 
+const MANAGEMENT_HOSTS = new Set([
+	"hpm.hyrovi.com",
+	...String(process.env.HYROVI_MANAGEMENT_HOSTS || "")
+		.split(",")
+		.map((value) => value.trim().toLowerCase().replace(/\.$/, ""))
+		.filter(Boolean),
+]);
+
+const normalizeHostname = (value) => String(value || "").trim().toLowerCase().replace(/\.$/, "");
+
 const internalHost = {
 	/**
 	 * Makes sure that the ssl_* and hsts_* fields play nicely together.
@@ -103,6 +113,16 @@ const internalHost = {
 	 * @returns {Promise}
 	 */
 	isHostnameTaken: (hostname, ignore_type, ignore_id) => {
+		const normalizedHostname = normalizeHostname(hostname);
+		if (MANAGEMENT_HOSTS.has(normalizedHostname)) {
+			return Promise.resolve({
+				hostname,
+				is_taken: true,
+				reserved: true,
+				reason: "HYROVI management access is reserved and must remain outside proxy-host security blocking",
+			});
+		}
+
 		const promises = [
 			proxyHostModel
 				.query()
@@ -163,6 +183,8 @@ const internalHost = {
 			return {
 				hostname: hostname,
 				is_taken: is_taken,
+				reserved: false,
+				reason: null,
 			};
 		});
 	},

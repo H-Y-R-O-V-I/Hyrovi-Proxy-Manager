@@ -163,6 +163,7 @@ router.post("/provision/proxy-hosts", async (req, res, next) => {
 		for (const domain of requestedDomains) {
 			const localConflict = await internalHost.isHostnameTaken(domain);
 			if (localConflict.is_taken) {
+				if (localConflict.reserved) throw new errs.ValidationError(`${domain} is reserved for HYROVI management access`);
 				throw new errs.ValidationError(`${domain} already exists on Raspberry Pi 5`);
 			}
 		}

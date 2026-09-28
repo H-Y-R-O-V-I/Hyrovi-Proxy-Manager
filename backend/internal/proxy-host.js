@@ -68,7 +68,7 @@ const internalProxyHost = {
 				return Promise.all(domain_name_check_promises).then((check_results) => {
 					check_results.map((result) => {
 						if (result.is_taken) {
-							throw new errs.ValidationError(`${result.hostname} is already in use`);
+							throw new errs.ValidationError(result.reserved ? `${result.hostname} is reserved for HYROVI management access` : `${result.hostname} is already in use`);
 						}
 						return true;
 					});
