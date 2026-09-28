@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconBan, IconRefresh, IconShield } from "@tabler/icons-react";
+import { IconBan, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import {
 	acknowledgeSecurityAlert,
@@ -8,7 +8,6 @@ import {
 	createSecurityDetectionRule,
 	createSecurityRateLimit,
 	createSecurityTrustedDevice,
-	deleteSecurityBlock,
 	deleteSecurityChallenge,
 	deleteSecurityDetectionRule,
 	deleteSecurityHostPolicy,
@@ -17,7 +16,6 @@ import {
 	getSecurityAlerts,
 	getSecurityAppEvents,
 	getSecurityAttackSession,
-	getSecurityBlocks,
 	getSecurityChallenges,
 	getSecurityDetectionRuleAnalytics,
 	getSecurityDetectionRules,
@@ -51,6 +49,7 @@ import {
 import { Button, HasPermission } from "src/components";
 import { ADMIN, VIEW } from "src/modules/Permissions";
 import SecurityDashboard from "./Dashboard";
+import SecurityBlocks from "./Blocks";
 import SecurityGroups from "./Groups";
 import styles from "./Security.module.css";
 
@@ -290,11 +289,6 @@ const SecuritySettings = () => {
 		refetchInterval: POLL_MS,
 	});
 
-	const blocks = useQuery({
-		queryKey: ["security-blocks"],
-		queryFn: getSecurityBlocks,
-		refetchInterval: POLL_MS,
-	});
 	const rateLimits = useQuery({
 		queryKey: ["security-rate-limits"],
 		queryFn: getSecurityRateLimits,
@@ -405,10 +399,6 @@ const SecuritySettings = () => {
 		},
 	});
 
-	const removeBlock = useMutation({
-		mutationFn: deleteSecurityBlock,
-		onSuccess: refresh,
-	});
 	const addRateLimit = useMutation({
 		mutationFn: createSecurityRateLimit,
 		onSuccess: async () => {
@@ -2751,60 +2741,12 @@ const SecuritySettings = () => {
 						</table>
 					</div>
 				</div>
-				<div className="card">
-					<div className="card-header">
-						<div className="d-flex align-items-center gap-2">
-							<IconShield size={20} />
-							<h3 className="card-title mb-0">Active IP blocks</h3>
-						</div>
-					</div>
-					<div className="table-responsive">
-						<table className="table table-vcenter card-table">
-							<thead>
-								<tr>
-									<th>IP</th>
-									<th>Reason</th>
-									<th>Source</th>
-									<th>Expires</th>
-									<th />
-								</tr>
-							</thead>
-							<tbody>
-								{(blocks.data ?? []).map((block) => (
-									<tr key={block.id}>
-										<td className="font-monospace">{block.ip}</td>
-										<td>{block.reason}</td>
-										<td>{block.source}</td>
-										<td>{formatTime(block.expiresAt)}</td>
-										<td>
-											<button
-												type="button"
-												className="btn btn-sm btn-outline-secondary"
-												disabled={removeBlock.isPending}
-												onClick={() => removeBlock.mutate(block.id)}
-											>
-												Unblock
-											</button>
-										</td>
-									</tr>
-								))}
-								{!blocks.isLoading && (blocks.data?.length ?? 0) === 0 ? (
-									<tr>
-										<td colSpan={5} className="text-secondary">
-											No active IP blocks.
-										</td>
-									</tr>
-								) : null}
-							</tbody>
-						</table>
-					</div>
-				</div>
 			</div>
 		</HasPermission>
 	);
 };
 
-type SecurityTab = "dashboard" | "groups" | "settings";
+type SecurityTab = "dashboard" | "blocks" | "groups" | "settings";
 
 const Security = () => {
 	const [tab, setTab] = useState<SecurityTab>("dashboard");
@@ -2819,6 +2761,13 @@ const Security = () => {
 						onClick={() => setTab("dashboard")}
 					>
 						Dashboard
+					</button>
+					<button
+						type="button"
+						className={`${styles.tab} ${tab === "blocks" ? styles.tabActive : ""}`}
+						onClick={() => setTab("blocks")}
+					>
+						Blocked IPs
 					</button>
 					<button
 						type="button"
@@ -2838,6 +2787,7 @@ const Security = () => {
 
 				<div className="mt-3">
 					{tab === "dashboard" ? <SecurityDashboard /> : null}
+					{tab === "blocks" ? <SecurityBlocks /> : null}
 					{tab === "groups" ? <SecurityGroups /> : null}
 					{tab === "settings" ? <SecuritySettings /> : null}
 				</div>

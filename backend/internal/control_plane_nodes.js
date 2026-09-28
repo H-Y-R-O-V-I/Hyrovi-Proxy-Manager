@@ -8,6 +8,7 @@ const MAX_NODES = 100;
 const MAX_CAPABILITIES = 32;
 const MAX_ADDRESSES = 16;
 const MAX_PROXY_HOSTS = 200;
+const MAX_SECURITY_BLOCKS = 2000;
 const HEARTBEAT_STALE_MS = 90 * 1000;
 const TOKEN_PREFIX = "hyrnode_";
 
@@ -71,6 +72,19 @@ const normalizeProxyHosts = (value) => {
 	}).filter((entry) => entry.id > 0 && entry.domainNames.length > 0);
 };
 
+const normalizeSecurityBlocks = (value) => {
+	if (typeof value === "undefined" || value === null) return [];
+	if (!Array.isArray(value)) throw new errs.ValidationError("securityBlocks must be an array");
+	return value.slice(0, MAX_SECURITY_BLOCKS).map((entry) => ({
+		id: boundedString(entry?.id, 120),
+		ip: boundedString(entry?.ip, 160),
+		reason: boundedString(entry?.reason, 500) || "",
+		source: boundedString(entry?.source, 160) || "unknown",
+		createdAt: boundedString(entry?.createdAt, 40),
+		expiresAt: boundedString(entry?.expiresAt, 40),
+	})).filter((entry) => entry.id && entry.ip);
+};
+
 const hashToken = (token) => createHash("sha256").update(String(token || ""), "utf8").digest();
 
 const publicNode = (node) => {
@@ -100,6 +114,7 @@ const publicNode = (node) => {
 		capabilities: node.capabilities || [],
 		addresses: node.addresses || [],
 		proxyHosts: node.proxyHosts || [],
+		securityBlocks: node.securityBlocks || [],
 		desiredRevision: Number.parseInt(node.desiredRevision, 10) || 0,
 		appliedRevision: Number.parseInt(node.appliedRevision, 10) || 0,
 	};
@@ -147,6 +162,7 @@ const localNode = () =>
 		capabilities: ["proxy", "security", "certificates", "logs", "analytics", "provisioning"],
 		addresses: [],
 		proxyHosts: [],
+		securityBlocks: [],
 		desiredRevision: 0,
 		appliedRevision: 0,
 	});
@@ -289,6 +305,7 @@ const heartbeat = (id, authorization, input = {}) =>
 		const capabilities = normalizeStringList(input.capabilities, MAX_CAPABILITIES, 80);
 		const addresses = normalizeStringList(input.addresses, MAX_ADDRESSES, 120);
 		const proxyHosts = normalizeProxyHosts(input.proxyHosts);
+		const securityBlocks = normalizeSecurityBlocks(input.securityBlocks);
 		const appliedRevision = Math.max(0, Number.parseInt(input.appliedRevision, 10) || 0);
 		const agent = {
 			hostname: boundedString(input.hostname, 120),
@@ -305,6 +322,7 @@ const heartbeat = (id, authorization, input = {}) =>
 			capabilities,
 			addresses,
 			proxyHosts,
+			securityBlocks,
 			appliedRevision,
 		};
 		nodes[index] = updated;

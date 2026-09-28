@@ -130,6 +130,41 @@ const enqueueProxyHost = ({ nodeId: nodeIdInput, proxyHost, cloudflareTunnel = t
 		return job;
 	});
 
+const enqueueSecurityBlockCreate = ({ nodeId: nodeIdInput, ip, durationMinutes, reason, source, requestedBy }) =>
+	withMutation(async () => {
+		await prepare();
+		const nodeId = normalizeNodeId(nodeIdInput);
+		const target = bounded(ip, 160);
+		if (!target) throw new errs.ValidationError("IP or CIDR is required");
+		const duration = Math.max(1, Math.min(60 * 24 * 30, Number.parseInt(durationMinutes, 10) || 60));
+		const now = new Date().toISOString();
+		const id = randomUUID();
+		const job = {
+			id, type: "security.block.create", nodeId, status: "queued", createdAt: now, updatedAt: now, startedAt: null, finishedAt: null, leaseUntil: null, attempts: 0,
+			requestedBy: Number.parseInt(requestedBy, 10) || 0,
+			input: { ip: target, durationMinutes: duration, reason: bounded(reason || "Manual HYROVI Sec block", 500), source: bounded(source || "manual", 160) },
+			result: null, error: null,
+		};
+		await atomicWriteJson(jobPath(id), job);
+		return job;
+	});
+
+const enqueueSecurityBlockDelete = ({ nodeId: nodeIdInput, blockId, requestedBy }) =>
+	withMutation(async () => {
+		await prepare();
+		const nodeId = normalizeNodeId(nodeIdInput);
+		const targetId = bounded(blockId, 120);
+		if (!targetId) throw new errs.ValidationError("Block ID is required");
+		const now = new Date().toISOString();
+		const id = randomUUID();
+		const job = {
+			id, type: "security.block.delete", nodeId, status: "queued", createdAt: now, updatedAt: now, startedAt: null, finishedAt: null, leaseUntil: null, attempts: 0,
+			requestedBy: Number.parseInt(requestedBy, 10) || 0, input: { blockId: targetId }, result: null, error: null,
+		};
+		await atomicWriteJson(jobPath(id), job);
+		return job;
+	});
+
 const listJobsUnsafe = async () => {
 	await prepare();
 	const entries = await fs.promises.readdir(JOBS_DIR, { withFileTypes: true });
@@ -214,6 +249,8 @@ export default {
 	prepare,
 	verifyLocalToken,
 	enqueueProxyHost,
+	enqueueSecurityBlockCreate,
+	enqueueSecurityBlockDelete,
 	claimNext,
 	complete,
 	getJob,

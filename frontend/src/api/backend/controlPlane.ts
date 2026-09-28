@@ -5,6 +5,15 @@ import type { SecurityHostAccessPolicy, SecurityHostPolicy } from "./security";
 export type ControlPlaneNodeStatus = "online" | "stale" | "pending" | "disabled";
 
 
+export interface ControlPlaneSecurityBlock {
+	id: string;
+	ip: string;
+	reason: string;
+	source: string;
+	createdAt: string | null;
+	expiresAt: string | null;
+}
+
 export interface ControlPlaneProxyHost {
 	id: number;
 	domainNames: string[];
@@ -39,6 +48,7 @@ export interface ControlPlaneNode {
 	capabilities: string[];
 	addresses: string[];
 	proxyHosts: ControlPlaneProxyHost[];
+	securityBlocks: ControlPlaneSecurityBlock[];
 	desiredRevision: number;
 	appliedRevision: number;
 }
@@ -52,7 +62,7 @@ export type ProvisioningJobStatus = "queued" | "running" | "completed" | "failed
 
 export interface ProxyHostProvisioningJob {
 	id: string;
-	type: "proxy_host.create";
+	type: "proxy_host.create" | "security.block.create" | "security.block.delete";
 	nodeId: string;
 	status: ProvisioningJobStatus;
 	createdAt: string;
@@ -124,11 +134,30 @@ export async function provisionProxyHost(data: {
 	});
 }
 
+export async function createControlPlaneSecurityBlock(nodeId: string, data: { ip: string; durationMinutes?: number; reason?: string; source?: string }): Promise<ProxyHostProvisioningJob> {
+	return await api.post({ url: `/control-plane/nodes/${encodeURIComponent(nodeId)}/security/blocks`, data });
+}
+
+export async function deleteControlPlaneSecurityBlock(nodeId: string, blockId: string): Promise<ProxyHostProvisioningJob> {
+	return await api.del({ url: `/control-plane/nodes/${encodeURIComponent(nodeId)}/security/blocks/${encodeURIComponent(blockId)}` });
+}
+
 export async function getProxyHostProvisioningJob(id: string): Promise<ProxyHostProvisioningJob> {
 	return await api.get({ url: `/control-plane/provision/jobs/${encodeURIComponent(id)}` });
 }
 
 const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+export async function waitForControlPlaneProvisioningJob(id: string, timeoutMs = 60_000): Promise<ProxyHostProvisioningJob> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const job = await getProxyHostProvisioningJob(id);
+		if (job.status === "completed") return job;
+		if (job.status === "failed") throw new Error(job.error || "Control-plane action failed");
+		await wait(700);
+	}
+	throw new Error("Control-plane action timed out and may still finish shortly.");
+}
 
 export async function waitForProxyHostProvisioningJob(
 	id: string,

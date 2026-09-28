@@ -235,6 +235,35 @@ try {
 }
 """
 
+SECURITY_BLOCK_CREATE_JS = r"""
+import fs from "node:fs";
+import Access from "/app/lib/access.js";
+import internalSecurity from "/app/internal/security.js";
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const access = new Access();
+await access.load(true);
+const block = await internalSecurity.blockIp(access, {
+  ip: input.ip,
+  durationMinutes: input.durationMinutes,
+  reason: input.reason,
+  source: input.source || "control-plane",
+});
+fs.writeSync(1, "HYROVI_SECURITY_RESULT=" + JSON.stringify(block) + "\n");
+process.exit(0);
+"""
+
+SECURITY_BLOCK_DELETE_JS = r"""
+import fs from "node:fs";
+import Access from "/app/lib/access.js";
+import internalSecurity from "/app/internal/security.js";
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const access = new Access();
+await access.load(true);
+await internalSecurity.unblockIp(access, input.blockId);
+fs.writeSync(1, "HYROVI_SECURITY_RESULT=" + JSON.stringify({ success: true, blockId: input.blockId }) + "\n");
+process.exit(0);
+"""
+
 DELETE_JS = r"""
 import fs from "node:fs";
 import Access from "/app/lib/access.js";
@@ -247,6 +276,24 @@ await internalProxyHost.delete(access, { id });
 fs.writeSync(1, "HYROVI_ROLLBACK_OK\n");
 process.exit(0);
 """
+
+
+def run_security_job(config, job, script):
+    payload = job.get("input") or {}
+    process = subprocess.run(
+        ["docker", "exec", "-i", config["container"], "node", "--input-type=module", "-e", script],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=60,
+    )
+    if process.returncode != 0:
+        raise RuntimeError((process.stderr or process.stdout)[-3000:])
+    for line in process.stdout.splitlines():
+        if line.startswith("HYROVI_SECURITY_RESULT="):
+            return json.loads(line.split("=", 1)[1])
+    raise RuntimeError("HPM did not return a security action result")
 
 
 def create_proxy_host(config, job):
@@ -329,9 +376,18 @@ def main():
     result = None
     error = None
     try:
-        if job.get("type") != "proxy_host.create":
-            raise RuntimeError(f'Unsupported provisioning job type: {job.get("type")}')
-        result = create_proxy_host(config, job)
+        job_type = job.get("type")
+        if job_type == "proxy_host.create":
+            result = create_proxy_host(config, job)
+            message = f'HYROVI provisioner: created proxy host on {node_id}'
+        elif job_type == "security.block.create":
+            result = run_security_job(config, job, SECURITY_BLOCK_CREATE_JS)
+            message = f'HYROVI provisioner: created security block on {node_id}'
+        elif job_type == "security.block.delete":
+            result = run_security_job(config, job, SECURITY_BLOCK_DELETE_JS)
+            message = f'HYROVI provisioner: removed security block on {node_id}'
+        else:
+            raise RuntimeError(f'Unsupported provisioning job type: {job_type}')
         if node_id != "local":
             subprocess.run(
                 ["systemctl", "start", "hyrovi-hpm-node-heartbeat.service"],
@@ -341,7 +397,7 @@ def main():
                 timeout=25,
             )
         success = True
-        print(f'HYROVI provisioner: created proxy host on {node_id}')
+        print(message)
     except Exception as exc:
         error = str(exc)[:2000]
         print(f"HYROVI provisioner error: {error}", file=sys.stderr)

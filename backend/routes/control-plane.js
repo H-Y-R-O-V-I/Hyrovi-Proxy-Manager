@@ -204,6 +204,41 @@ router.post("/provision/proxy-hosts", async (req, res, next) => {
 	}
 });
 
+router.post("/nodes/:node_id/security/blocks", async (req, res, next) => {
+	try {
+		await res.locals.access.can("users:list");
+		const node = await internalControlPlaneNodes.getNode(req.params.node_id);
+		if (!node.enabled || node.status === "disabled") throw new errs.ValidationError("Selected node is disabled");
+		if (node.id !== "local" && node.status !== "online") throw new errs.ValidationError(`Selected node is not online: ${node.status}`);
+		if (!node.capabilities.includes("security") || !node.capabilities.includes("provisioning")) throw new errs.ValidationError("Selected node does not support remote security actions");
+		const job = await internalControlPlaneProvisioning.enqueueSecurityBlockCreate({
+			nodeId: node.id,
+			ip: req.body?.ip,
+			durationMinutes: req.body?.duration_minutes ?? req.body?.durationMinutes,
+			reason: req.body?.reason,
+			source: req.body?.source || "security-blocks-ui",
+			requestedBy: res.locals.access.token.getUserId(1),
+		});
+		res.status(202).send(await internalControlPlaneProvisioning.getJob(job.id));
+	} catch (err) { next(err); }
+});
+
+router.delete("/nodes/:node_id/security/blocks/:block_id", async (req, res, next) => {
+	try {
+		await res.locals.access.can("users:list");
+		const node = await internalControlPlaneNodes.getNode(req.params.node_id);
+		if (!node.enabled || node.status === "disabled") throw new errs.ValidationError("Selected node is disabled");
+		if (node.id !== "local" && node.status !== "online") throw new errs.ValidationError(`Selected node is not online: ${node.status}`);
+		if (!node.capabilities.includes("security") || !node.capabilities.includes("provisioning")) throw new errs.ValidationError("Selected node does not support remote security actions");
+		const job = await internalControlPlaneProvisioning.enqueueSecurityBlockDelete({
+			nodeId: node.id,
+			blockId: req.params.block_id,
+			requestedBy: res.locals.access.token.getUserId(1),
+		});
+		res.status(202).send(await internalControlPlaneProvisioning.getJob(job.id));
+	} catch (err) { next(err); }
+});
+
 router.get("/provision/jobs/:job_id", async (req, res, next) => {
 	try {
 		await res.locals.access.can("proxy_hosts:list");
