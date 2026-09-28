@@ -206,13 +206,13 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 							hyroviAutoBlockMinutes: effectiveSecurity?.autoBlockMinutes ?? 60,
 							hyroviChallengeMinutes: effectiveSecurity?.challengeMinutes ?? 10,
 							hyroviChallengeDifficulty: effectiveSecurity?.challengeDifficulty ?? 14,
-							hyroviRuleCrawler: securityHostPolicy.data?.policy?.protectionRules?.crawler ?? effectiveSecurity?.protectionRules?.crawler ?? "block",
-							hyroviRuleDdos: securityHostPolicy.data?.policy?.protectionRules?.ddos ?? effectiveSecurity?.protectionRules?.ddos ?? "rate_limit",
-							hyroviRuleCriticalFiles: securityHostPolicy.data?.policy?.protectionRules?.criticalFiles ?? effectiveSecurity?.protectionRules?.criticalFiles ?? "deny",
-							hyroviRuleExploit: securityHostPolicy.data?.policy?.protectionRules?.exploit ?? effectiveSecurity?.protectionRules?.exploit ?? "challenge",
-							hyroviRuleAuthAbuse: securityHostPolicy.data?.policy?.protectionRules?.authAbuse ?? effectiveSecurity?.protectionRules?.authAbuse ?? "challenge",
-							hyroviRuleRecon: securityHostPolicy.data?.policy?.protectionRules?.recon ?? effectiveSecurity?.protectionRules?.recon ?? "rate_limit",
-							hyroviRuleUnusualMethods: securityHostPolicy.data?.policy?.protectionRules?.unusualMethods ?? effectiveSecurity?.protectionRules?.unusualMethods ?? "deny",
+							hyroviRuleCrawler: securityHostPolicy.data?.policy?.protectionRules?.crawler ?? effectiveSecurity?.protectionRules?.crawler ?? "auto",
+							hyroviRuleDdos: securityHostPolicy.data?.policy?.protectionRules?.ddos ?? effectiveSecurity?.protectionRules?.ddos ?? "auto",
+							hyroviRuleCriticalFiles: securityHostPolicy.data?.policy?.protectionRules?.criticalFiles ?? effectiveSecurity?.protectionRules?.criticalFiles ?? "auto",
+							hyroviRuleExploit: securityHostPolicy.data?.policy?.protectionRules?.exploit ?? effectiveSecurity?.protectionRules?.exploit ?? "auto",
+							hyroviRuleAuthAbuse: securityHostPolicy.data?.policy?.protectionRules?.authAbuse ?? effectiveSecurity?.protectionRules?.authAbuse ?? "auto",
+							hyroviRuleRecon: securityHostPolicy.data?.policy?.protectionRules?.recon ?? effectiveSecurity?.protectionRules?.recon ?? "auto",
+							hyroviRuleUnusualMethods: securityHostPolicy.data?.policy?.protectionRules?.unusualMethods ?? effectiveSecurity?.protectionRules?.unusualMethods ?? "auto",
 							hyroviEndpointRules: securityHostPolicy.data?.policy?.endpointRules ?? [],
 							// Advanced tab
 							advancedConfig: data?.advancedConfig || "",
@@ -734,6 +734,7 @@ const ProxyHostModal = EasyModal.create(({ id, visible, remove }: Props) => {
 												<label className="form-label mb-1" htmlFor={String(name)}>{String(label)}</label>
 												<Field as="select" id={String(name)} name={String(name)} className="form-select" disabled={values.hyroviSecurityMode === "inherit"}>
 													<option value="inherit">Inherit global</option>
+													<option value="auto">Auto · Autopilot</option>
 													<option value="observe">Observe only</option>
 													{canDeny ? <option value="deny">Deny request</option> : null}
 													<option value="rate_limit">Rate limit IP</option>

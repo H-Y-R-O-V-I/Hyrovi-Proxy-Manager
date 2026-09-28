@@ -32,30 +32,37 @@ const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v10`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const HOST_PROTECTION_DIR = `${SECURITY_DIR}/host-protection`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
-const MAX_ANALYSIS_SCAN_BYTES = 8 * 1024 * 1024;
+const MAX_ANALYSIS_SCAN_BYTES = 32 * 1024 * 1024;
 const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 250;
 const MAX_EVENT_LIST_LIMIT = 2000;
-const MAX_ANALYSIS_EVENT_LIMIT = 20_000;
+const MAX_ANALYSIS_EVENT_LIMIT = 100_000;
 const SESSION_WINDOW_MS = 5 * 60 * 1000;
 const REQUEST_CONTEXT_WINDOW_MS = 60_000;
 const MONITOR_INTERVAL_MS = 5_000;
 const CHALLENGE_GRACE_MS = 30_000;
 const PROCESSED_EVENT_LIMIT = 5_000;
-const ARCHIVED_EVENT_ID_LIMIT = 10_000;
-const MAX_ARCHIVE_SCAN_BYTES_PER_DAY = 512 * 1024;
-const MAX_ARCHIVE_FILE_BYTES = 8 * 1024 * 1024;
+const ARCHIVED_EVENT_ID_LIMIT = 100_000;
+const MAX_ARCHIVE_SCAN_BYTES_PER_DAY = 32 * 1024 * 1024;
+const MAX_ARCHIVE_FILE_BYTES = 128 * 1024 * 1024;
 const PROTECTION_RULE_KEYS = ["crawler", "ddos", "criticalFiles", "exploit", "authAbuse", "recon", "unusualMethods"];
-const PROTECTION_RULE_ACTIONS = new Set(["inherit", "observe", "deny", "rate_limit", "challenge", "block"]);
+const PROTECTION_RULE_ACTIONS = new Set(["inherit", "auto", "observe", "deny", "rate_limit", "challenge", "block"]);
 const PRE_REQUEST_DENY_RULES = new Set(["criticalFiles", "exploit", "unusualMethods"]);
+const AUTOPILOT_PROFILES = new Set(["conservative", "balanced", "aggressive"]);
+const AUTOPILOT_THRESHOLDS = Object.freeze({
+	conservative: { rateLimit: 60, challenge: 82, block: 96 },
+	balanced: { rateLimit: 48, challenge: 72, block: 90 },
+	aggressive: { rateLimit: 40, challenge: 62, block: 82 },
+});
+const AUTOPILOT_REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PROTECTION_RULES = Object.freeze({
-	crawler: "block",
-	ddos: "rate_limit",
-	criticalFiles: "deny",
-	exploit: "challenge",
-	authAbuse: "challenge",
-	recon: "rate_limit",
-	unusualMethods: "deny",
+	crawler: "auto",
+	ddos: "auto",
+	criticalFiles: "auto",
+	exploit: "auto",
+	authAbuse: "auto",
+	recon: "auto",
+	unusualMethods: "auto",
 });
 
 const DEFAULT_POLICY = Object.freeze({
@@ -67,6 +74,8 @@ const DEFAULT_POLICY = Object.freeze({
 	autoEscalationHits: 3,
 	autoEscalationWindowMinutes: 15,
 	autoEscalationCooldownSeconds: 60,
+	autopilotProfile: "balanced",
+	archiveAllRequests: true,
 	eventRetentionDays: 14,
 	eventArchiveMinRisk: 20,
 	trustedSources: [],
@@ -616,7 +625,7 @@ const persistArchivedEvents = async (events, policy) =>
 	withEventArchiveMutation(async () => {
 		const seen = new Set();
 		const candidates = events
-			.filter((event) => event.risk >= policy.eventArchiveMinRisk)
+			.filter((event) => policy.archiveAllRequests || event.risk >= policy.eventArchiveMinRisk)
 			.filter((event) => {
 				const id = eventIdentity(event);
 				if (archivedEventIds.has(id) || seen.has(id)) return false;
@@ -966,6 +975,7 @@ const recordResponseAction = async (type, action, record) => {
 			reason: String(record.reason || "").slice(0, 300),
 			createdAt: record.createdAt || null,
 			expiresAt: record.expiresAt || null,
+			decision: record.decision || null,
 		});
 	} catch (err) {
 		logger.error(`HYROVI Sec response audit write failed: ${err.message}`);
@@ -983,6 +993,8 @@ const normalizePolicy = (value = {}) => {
 	const archiveMinRisk = Number.parseInt(value.eventArchiveMinRisk, 10);
 	const normalized = {
 		autoBlockEnabled: value.autoBlockEnabled === true,
+		autopilotProfile: AUTOPILOT_PROFILES.has(value.autopilotProfile) ? value.autopilotProfile : DEFAULT_POLICY.autopilotProfile,
+		archiveAllRequests: typeof value.archiveAllRequests === "boolean" ? value.archiveAllRequests : DEFAULT_POLICY.archiveAllRequests,
 		autoRateLimitThreshold: clamp(
 			Number.parseInt(value.autoRateLimitThreshold, 10) || DEFAULT_POLICY.autoRateLimitThreshold,
 			40,
@@ -1088,6 +1100,59 @@ const protectionRuleForEvent = (event) => {
 	}
 	if (ids.has("unusual_method")) return { key: "unusualMethods", label: "unusual HTTP method" };
 	return null;
+};
+
+const recentStartedBlockCount = (actions, ip, now = Date.now()) =>
+	(actions || []).filter((entry) => {
+		if (entry?.type !== "block" || entry?.action !== "started" || entry?.ip !== ip) return false;
+		const at = Date.parse(entry.at || entry.createdAt || "");
+		return Number.isFinite(at) && now - at <= AUTOPILOT_REPEAT_WINDOW_MS;
+	}).length;
+
+const autopilotDecisionForEvent = ({ event, policy, ruleMatch, activeRateLimit, activeChallenge, challengeMature = false, recentActions }) => {
+	const profile = AUTOPILOT_PROFILES.has(policy.autopilotProfile) ? policy.autopilotProfile : "balanced";
+	const thresholds = AUTOPILOT_THRESHOLDS[profile];
+	const ids = (event.signals || []).map((signal) => signal.id);
+	const strongIds = new Set([
+		"crawler_attack", "extreme_request_burst", "auth_failure_burst", "reconnaissance_burst",
+		"path_traversal", "injection_probe", "sensitive_file_probe", "scanner_user_agent",
+	]);
+	const strongSignals = ids.filter((id) => strongIds.has(id)).length;
+	const repeatBlocks = recentStartedBlockCount(recentActions, event.ip);
+	const baseRisk = clamp(Number(event.automationRisk ?? event.risk) || 0, 0, 100);
+	const stateBoost = activeChallenge ? 16 : activeRateLimit ? 8 : 0;
+	const evidenceBoost = Math.min(8, strongSignals * 2);
+	const repeatBoost = Math.min(12, repeatBlocks * 4);
+	const confidence = clamp(baseRisk + stateBoost + evidenceBoost + repeatBoost, 0, 100);
+	let action = "observe";
+	if (activeChallenge && !challengeMature) action = "challenge";
+	else if (activeChallenge && confidence >= thresholds.challenge) action = "block";
+	else if (confidence >= thresholds.block) action = "block";
+	else if (activeRateLimit && confidence >= thresholds.rateLimit) action = "challenge";
+	else if (confidence >= thresholds.challenge) action = "challenge";
+	else if (confidence >= thresholds.rateLimit) action = "rate_limit";
+
+	const durationMultiplier = Math.min(4, 1 + repeatBlocks);
+	const previousResponse = activeChallenge ? "challenge" : activeRateLimit ? "rate_limit" : "none";
+	return {
+		mode: "autopilot",
+		profile,
+		rule: ruleMatch?.key || "generic",
+		classification: ruleMatch?.label || "suspicious request",
+		action,
+		confidence,
+		risk: baseRisk,
+		strongSignals,
+		signals: ids.slice(0, 20),
+		repeatBlocks24h: repeatBlocks,
+		previousResponse,
+		challengeMature: activeChallenge ? challengeMature : null,
+		durationMultiplier,
+		requestId: event.requestId || null,
+		host: event.host || null,
+		path: event.path || null,
+		decidedAt: new Date().toISOString(),
+	};
 };
 
 const eventIsCrawlerAttackCandidate = (event, policy) => {
@@ -1316,13 +1381,14 @@ const synchronizeRateLimitConfigUnsafe = async () => {
 	return active;
 };
 
-const createRateLimitRecord = ({ ip, reason, source, durationMinutes }) => {
+const createRateLimitRecord = ({ ip, reason, source, durationMinutes, decision = null }) => {
 	const now = new Date();
 	return {
 		id: randomUUID(),
 		ip,
 		reason: String(reason || "HYROVI Sec rate limit").trim().slice(0, 300),
 		source: source || "manual",
+		decision,
 		createdAt: now.toISOString(),
 		expiresAt: new Date(now.getTime() + durationMinutes * 60_000).toISOString(),
 	};
@@ -1342,13 +1408,14 @@ const addRateLimitUnsafe = async ({ ip, reason, source, durationMinutes }) => {
 	await recordResponseAction("rate_limit", "started", entry);
 	return entry;
 };
-const createBlockRecord = ({ ip, reason, source, durationMinutes }) => {
+const createBlockRecord = ({ ip, reason, source, durationMinutes, decision = null }) => {
 	const now = new Date();
 	return {
 		id: randomUUID(),
 		ip,
 		reason: String(reason || "HYROVI Sec block").trim().slice(0, 300),
 		source: source || "hyrovi-sec",
+		decision,
 		createdAt: now.toISOString(),
 		expiresAt: new Date(now.getTime() + durationMinutes * 60_000).toISOString(),
 	};
@@ -1557,7 +1624,7 @@ const createHostPolicyContext = (policy, hosts = [], groups = []) => {
 	};
 };
 
-const preRequestActionEnabled = (action) => action === "deny" || action === "block";
+const preRequestActionEnabled = (action) => action === "deny" || action === "block" || action === "auto";
 
 const renderHostProtectionConfig = (effective, enforcementEnabled) => {
 	const lines = ["# Managed by HYROVI Sec. Do not edit manually."];
@@ -1619,10 +1686,8 @@ const syncHostProtectionFiles = async (policy, reload = true) => {
 };
 
 const getHostPolicyContext = async (policy) => {
-	const groups = await internalSecurityHostGroups.listInternal();
-	const hasGroupedHosts = groups.some((group) => group.hostIds?.length);
-	if (Object.keys(policy.hostPolicies).length === 0 && !hasGroupedHosts) return createHostPolicyContext(policy);
-	return createHostPolicyContext(policy, await listProxyHostsForSecurity(), groups);
+	const [groups, hosts] = await Promise.all([internalSecurityHostGroups.listInternal(), listProxyHostsForSecurity()]);
+	return createHostPolicyContext(policy, hosts, groups);
 };
 
 const decorateEventsWithHostPolicy = (events, context) =>
@@ -1675,6 +1740,7 @@ const monitorThreats = async () => {
 		const blocks = await purgeExpiredUnsafe();
 		const rateLimits = await purgeExpiredRateLimitsUnsafe();
 		const activeChallenges = await internalSecurityChallenge.listChallenges();
+		const recentActions = await loadSecurityActions(2000);
 		const rawEscalations = await readEscalationsUnsafe();
 		const escalations = pruneEscalationStates(rawEscalations, rateLimits, policy);
 		const initialEscalationSnapshot = JSON.stringify(escalations);
@@ -1697,13 +1763,14 @@ const monitorThreats = async () => {
 			return Number.isFinite(createdAt) && eventAt - createdAt >= CHALLENGE_GRACE_MS;
 		};
 
-		const queueChallenge = ({ event, effective, source, reason }) => {
+		const queueChallenge = ({ event, effective, source, reason, decision = null }) => {
 			challengeRequests.push({
 				ip: event.ip,
 				durationMinutes: effective.challengeMinutes,
 				difficulty: effective.challengeDifficulty,
 				reason,
 				source,
+				decision,
 			});
 			challengeFallbackBlocks.push(
 				createBlockRecord({
@@ -1711,6 +1778,7 @@ const monitorThreats = async () => {
 					durationMinutes: effective.autoBlockMinutes,
 					source: `${source}-fallback`,
 					reason: `Challenge unavailable; ${reason}`,
+					decision,
 				}),
 			);
 			challengedIps.add(event.ip);
@@ -1735,17 +1803,32 @@ const monitorThreats = async () => {
 
 			const ruleMatch = protectionRuleForEvent(event);
 			if (ruleMatch && !isPrivateOrLoopback(event.ip) && !isTrustedSource(event.ip, policy.trustedSources)) {
-				const action = effective.protectionRules?.[ruleMatch.key] || DEFAULT_PROTECTION_RULES[ruleMatch.key] || "observe";
-				const ruleReason = `Protection rule ${ruleMatch.key}=${action} (${effective.mode}): ${ruleMatch.label}; risk ${event.risk}; host ${event.host}`;
+				const configuredAction = effective.protectionRules?.[ruleMatch.key] || DEFAULT_PROTECTION_RULES[ruleMatch.key] || "auto";
+				const activeRateLimit =
+					rateLimitByIp.get(event.ip) || rateLimits.find((entry) => responseTargetContainsIp(entry.ip, event.ip)) || null;
+				const activeChallenge = existingChallengeByIp.get(event.ip) || null;
+				const decision = configuredAction === "auto"
+					? autopilotDecisionForEvent({
+						event, policy, ruleMatch, activeRateLimit, activeChallenge,
+						challengeMature: activeChallenge ? challengeGraceExpired(event) : false,
+						recentActions,
+					})
+					: null;
+				const action = decision?.action || configuredAction;
+				const actionText = decision
+					? `Autopilot ${decision.profile} ${decision.confidence}% confidence -> ${action}; previous ${decision.previousResponse}; repeats24h ${decision.repeatBlocks24h}`
+					: `Protection rule ${ruleMatch.key}=${action}`;
+				const ruleReason = `${actionText} (${effective.mode}): ${ruleMatch.label}; risk ${event.risk}; host ${event.host}`;
 
 				if (action === "observe" || action === "deny") continue;
 
 				if (action === "block") {
 					const block = createBlockRecord({
 						ip: event.ip,
-						durationMinutes: effective.autoBlockMinutes,
-						source: `policy-${ruleMatch.key}-block`,
+						durationMinutes: Math.min(43_200, effective.autoBlockMinutes * (decision?.durationMultiplier || 1)),
+						source: decision ? `autopilot-${ruleMatch.key}-block` : `policy-${ruleMatch.key}-block`,
 						reason: ruleReason,
+						decision,
 					});
 					blockAdditions.push(block);
 					blockedIps.add(event.ip);
@@ -1756,24 +1839,28 @@ const monitorThreats = async () => {
 
 				if (action === "challenge") {
 					if (effective.proxyHostId && !challengedIps.has(event.ip)) {
-						queueChallenge({ event, effective, source: `policy-${ruleMatch.key}-challenge`, reason: ruleReason });
+						queueChallenge({
+							event, effective,
+							source: decision ? `autopilot-${ruleMatch.key}-challenge` : `policy-${ruleMatch.key}-challenge`,
+							reason: ruleReason, decision,
+						});
 					}
 					continue;
 				}
 
 				if (action === "rate_limit") {
-					const existingRateLimit =
-						rateLimitByIp.get(event.ip) || rateLimits.find((entry) => responseTargetContainsIp(entry.ip, event.ip));
-					if (!existingRateLimit) {
+					if (!activeRateLimit) {
 						const entry = createRateLimitRecord({
 							ip: event.ip,
-							durationMinutes: effective.autoRateLimitMinutes,
-							source: `policy-${ruleMatch.key}-rate-limit`,
+							durationMinutes: Math.min(43_200, effective.autoRateLimitMinutes * (decision?.durationMultiplier || 1)),
+							source: decision ? `autopilot-${ruleMatch.key}-rate-limit` : `policy-${ruleMatch.key}-rate-limit`,
 							reason: ruleReason,
+							decision,
 						});
 						rateLimitAdditions.push(entry);
 						rateLimitedIps.add(event.ip);
 						rateLimitByIp.set(event.ip, entry);
+						if (decision) escalations[event.ip] = createEscalationState(entry);
 					}
 					continue;
 				}
@@ -1892,9 +1979,23 @@ const monitorThreats = async () => {
 			}
 		}
 
-		if (rateLimitAdditions.length > 0) {
-			await commitRateLimitState(rateLimits, [...rateLimits, ...rateLimitAdditions]);
-			for (const entry of rateLimitAdditions) {
+		const blockTargets = blockAdditions.map((entry) => entry.ip);
+		const rateLimitRemovals = rateLimits.filter((entry) =>
+			blockTargets.some((ip) => responseTargetContainsIp(entry.ip, ip)),
+		);
+		const survivingRateLimits = rateLimits.filter((entry) => !rateLimitRemovals.some((removed) => removed.id === entry.id));
+		const survivingRateLimitAdditions = rateLimitAdditions.filter(
+			(entry) => !blockTargets.some((ip) => responseTargetContainsIp(entry.ip, ip)),
+		);
+		if (rateLimitAdditions.length > 0 || rateLimitRemovals.length > 0) {
+			await commitRateLimitState(rateLimits, [...survivingRateLimits, ...survivingRateLimitAdditions]);
+			for (const entry of rateLimitRemovals) {
+				await recordResponseAction("rate_limit", "removed", {
+					...entry,
+					reason: `Superseded by a stronger HYROVI Sec block: ${entry.reason}`,
+				});
+			}
+			for (const entry of survivingRateLimitAdditions) {
 				await recordResponseAction("rate_limit", "started", entry);
 				await internalSecurityAlerts.createAlertBestEffort({
 					severity: "medium",
@@ -1912,6 +2013,7 @@ const monitorThreats = async () => {
 			try {
 				const createdChallenges = await internalSecurityChallenge.challengeIps(challengeRequests);
 				for (const challenge of createdChallenges) {
+					await recordResponseAction("challenge", "started", challenge);
 					await internalSecurityAlerts.createAlertBestEffort({
 						severity: "high",
 						type: "adaptive_challenge",
@@ -1950,7 +2052,13 @@ const monitorThreats = async () => {
 			}
 			for (const ip of challengeRemovals) {
 				try {
-					await internalSecurityChallenge.removeChallenge({ ip });
+					const removedChallenge = await internalSecurityChallenge.removeChallenge({ ip });
+					if (removedChallenge) {
+						await recordResponseAction("challenge", "removed", {
+							...removedChallenge,
+							reason: `Superseded by a stronger HYROVI Sec block: ${removedChallenge.reason}`,
+						});
+					}
 				} catch (err) {
 					logger.error(`HYROVI Sec could not clear challenge state for blocked source ${ip}: ${err.message}`);
 				}
@@ -2763,6 +2871,7 @@ const adminChallengeRecord = (challenge) => ({
 	maxAttempts: challenge.maxAttempts,
 	reason: challenge.reason,
 	source: challenge.source,
+	decision: challenge.decision || null,
 	createdAt: challenge.createdAt,
 	expiresAt: challenge.expiresAt,
 });
@@ -3537,6 +3646,43 @@ const internalSecurity = {
 		};
 	},
 
+	listResponseActions: async (access, limit = 250) => {
+		await access.can("logs:list");
+		const [actions, blocks, rateLimits, challenges] = await Promise.all([
+			loadSecurityActions(limit), purgeExpired(), purgeExpiredRateLimits(), internalSecurityChallenge.listChallenges(),
+		]);
+		const active = new Set([
+			...blocks.map((entry) => `block:${entry.id}`),
+			...rateLimits.map((entry) => `rate_limit:${entry.id}`),
+			...challenges.map((entry) => `challenge:${entry.id}`),
+		]);
+		return actions.reverse().map((entry) => ({
+			...entry,
+			active: entry.action === "started" && active.has(`${entry.type}:${entry.responseId}`),
+			canUndo: entry.action === "started" && active.has(`${entry.type}:${entry.responseId}`),
+		}));
+	},
+
+	undoResponseAction: async (access, actionId) => {
+		await access.can("users:list");
+		const id = String(actionId || "").trim();
+		if (!id) throw new errs.ValidationError("Response action ID is required");
+		const action = (await loadSecurityActions(2000)).find((entry) => entry.id === id);
+		if (!action) throw new errs.ItemNotFoundError(id);
+		if (action.action !== "started") throw new errs.ValidationError("Only started response actions can be undone");
+		if (action.type === "block") await internalSecurity.unblockIp(access, action.responseId);
+		else if (action.type === "rate_limit") await internalSecurity.unrateLimitIp(access, action.responseId);
+		else if (action.type === "challenge") await internalSecurity.removeChallenge(access, action.responseId);
+		else throw new errs.ValidationError(`Unsupported response action type: ${action.type}`);
+		await appendSecurityAction({
+			id: randomUUID(), at: new Date().toISOString(), type: action.type, action: "undo",
+			responseId: action.responseId, ip: action.ip, source: "operator-undo",
+			reason: `Undid response action ${action.id}`, createdAt: null, expiresAt: null,
+			decision: action.decision || null,
+		});
+		return { success: true, actionId: id, responseId: action.responseId, type: action.type };
+	},
+
 	getPolicy: async (access) => {
 		await access.can("logs:list");
 		return readPolicyUnsafe();
@@ -3545,6 +3691,12 @@ const internalSecurity = {
 	updatePolicy: async (access, data) => {
 		await access.can("users:list");
 		const current = await readPolicyUnsafe();
+		if (typeof data.autopilotProfile !== "undefined" && !AUTOPILOT_PROFILES.has(data.autopilotProfile)) {
+			throw new errs.ValidationError("Autopilot profile must be conservative, balanced or aggressive");
+		}
+		if (typeof data.archiveAllRequests !== "undefined" && typeof data.archiveAllRequests !== "boolean") {
+			throw new errs.ValidationError("archiveAllRequests must be a boolean");
+		}
 		if (typeof data.protectionRules !== "undefined") validateProtectionRulesInput(data.protectionRules, false);
 		if (typeof data.trustedSources !== "undefined") {
 			if (!Array.isArray(data.trustedSources)) throw new errs.ValidationError("Trusted sources must be an array");
@@ -3557,6 +3709,8 @@ const internalSecurity = {
 		const updated = await writePolicyUnsafe({
 			...current,
 			...(typeof data.autoBlockEnabled === "boolean" ? { autoBlockEnabled: data.autoBlockEnabled } : {}),
+			...(typeof data.autopilotProfile !== "undefined" ? { autopilotProfile: data.autopilotProfile } : {}),
+			...(typeof data.archiveAllRequests === "boolean" ? { archiveAllRequests: data.archiveAllRequests } : {}),
 			...(typeof data.autoRateLimitThreshold !== "undefined"
 				? { autoRateLimitThreshold: data.autoRateLimitThreshold }
 				: {}),
@@ -3759,6 +3913,12 @@ const internalSecurity = {
 		if (!challengeId) throw new errs.ValidationError("Challenge ID is required");
 		const removed = await internalSecurityChallenge.removeChallenge({ id: challengeId });
 		if (!removed) throw new errs.ItemNotFoundError(challengeId);
+		await recordResponseAction("challenge", "removed", removed);
+		const escalations = await readEscalationsUnsafe();
+		if (escalations[removed.ip]) {
+			delete escalations[removed.ip];
+			await writeEscalationsBestEffort(escalations);
+		}
 		return { success: true };
 	},
 

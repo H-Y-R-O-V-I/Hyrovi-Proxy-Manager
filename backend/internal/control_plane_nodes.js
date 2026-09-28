@@ -82,6 +82,16 @@ const normalizeSecurityBlocks = (value) => {
 		source: boundedString(entry?.source, 160) || "unknown",
 		createdAt: boundedString(entry?.createdAt, 40),
 		expiresAt: boundedString(entry?.expiresAt, 40),
+		decision: entry?.decision && typeof entry.decision === "object" ? {
+			profile: boundedString(entry.decision.profile, 40),
+			rule: boundedString(entry.decision.rule, 80),
+			action: boundedString(entry.decision.action, 40),
+			confidence: Math.max(0, Math.min(100, Number(entry.decision.confidence) || 0)),
+			risk: Math.max(0, Math.min(100, Number(entry.decision.risk) || 0)),
+			repeatBlocks24h: Math.max(0, Number.parseInt(entry.decision.repeatBlocks24h, 10) || 0),
+			requestId: boundedString(entry.decision.requestId, 160) || null,
+			host: boundedString(entry.decision.host, 253) || null,
+		} : null,
 	})).filter((entry) => entry.id && entry.ip);
 };
 

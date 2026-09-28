@@ -8,8 +8,11 @@ import {
 	deleteSecurityBlock,
 	getControlPlaneNodes,
 	getSecurityBlocks,
+	getSecurityResponseActions,
+	undoSecurityResponseAction,
 	waitForControlPlaneProvisioningJob,
 	type SecurityBlock,
+	type SecurityResponseHistoryEntry,
 } from "src/api/backend";
 import styles from "./Security.module.css";
 
@@ -22,7 +25,7 @@ type BlockRow = SecurityBlock & {
 };
 
 const automaticSource = (source: string) =>
-	/^(auto-|policy-|auto$|crawler|scanner|escalation|adaptive)/i.test(source || "");
+	/^(auto-|autopilot-|policy-|auto$|crawler|scanner|escalation|adaptive)/i.test(source || "");
 
 const formatTime = (value: string | null) => {
 	if (!value) return "—";
@@ -63,6 +66,12 @@ const SecurityBlocks = () => {
 		refetchInterval: POLL_MS,
 	});
 
+	const responseActions = useQuery({
+		queryKey: ["security-response-actions"],
+		queryFn: () => getSecurityResponseActions(200),
+		refetchInterval: POLL_MS,
+	});
+
 	const availableNodes = useMemo(
 		() =>
 			(nodes.data ?? []).filter(
@@ -94,6 +103,7 @@ const SecurityBlocks = () => {
 					source: block.source,
 					createdAt: block.createdAt || "",
 					expiresAt: block.expiresAt || "",
+					decision: block.decision as BlockRow["decision"],
 					nodeId: node.id,
 					nodeName: node.name,
 					remote: true,
@@ -119,6 +129,7 @@ const SecurityBlocks = () => {
 			queryClient.invalidateQueries({ queryKey: ["security-blocks"] }),
 			queryClient.invalidateQueries({ queryKey: ["control-plane-nodes"] }),
 			queryClient.invalidateQueries({ queryKey: ["security-overview"] }),
+			queryClient.invalidateQueries({ queryKey: ["security-response-actions"] }),
 		]);
 	};
 
@@ -164,6 +175,15 @@ const SecurityBlocks = () => {
 			await refresh();
 		},
 		onError: (error) => setMessage(error instanceof Error ? error.message : "Could not remove block."),
+	});
+
+	const undoAction = useMutation({
+		mutationFn: async (action: SecurityResponseHistoryEntry) => await undoSecurityResponseAction(action.id),
+		onSuccess: async () => {
+			setMessage("Automatic response undone and escalation state cleared.");
+			await refresh();
+		},
+		onError: (error) => setMessage(error instanceof Error ? error.message : "Could not undo automatic response."),
 	});
 
 	const automated = rows.filter((block) => automaticSource(block.source)).length;
@@ -291,7 +311,10 @@ const SecurityBlocks = () => {
 								<tr key={`${block.nodeId}:${block.id}`}>
 									<td className="font-monospace fw-semibold">{block.ip}</td>
 									<td><span className={`badge ${block.remote ? "bg-blue-lt" : "bg-lime-lt"}`}>{block.nodeName}</span></td>
-									<td><span className={`badge ${automaticSource(block.source) ? "bg-orange-lt" : "bg-secondary-lt"}`}>{automaticSource(block.source) ? "Automatic" : "Manual"}</span></td>
+									<td>
+										<span className={`badge ${automaticSource(block.source) ? "bg-orange-lt" : "bg-secondary-lt"}`}>{automaticSource(block.source) ? "Automatic" : "Manual"}</span>
+										{block.decision ? <div className="text-secondary small mt-1">{block.decision.confidence}% confidence · {block.decision.rule}</div> : null}
+									</td>
 									<td style={{ minWidth: 220 }}>{block.reason || "—"}</td>
 									<td><code>{block.source || "—"}</code></td>
 									<td>{formatTime(block.createdAt)}</td>
@@ -307,6 +330,41 @@ const SecurityBlocks = () => {
 							{!localBlocks.isLoading && !nodes.isLoading && filtered.length === 0 ? (
 								<tr><td colSpan={9} className="text-secondary py-4 text-center">No active blocks match this filter.</td></tr>
 							) : null}
+						</tbody>
+					</table>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-header">
+					<div>
+						<h3 className="card-title mb-1">Autopilot activity</h3>
+						<div className="text-secondary small">Every automatic rate limit, challenge and block is recorded with its decision context. Active reactions can be undone here.</div>
+					</div>
+				</div>
+				<div className="table-responsive">
+					<table className="table table-vcenter card-table">
+						<thead><tr><th>Time</th><th>Response</th><th>IP</th><th>Decision</th><th>Why</th><th>State</th><th /></tr></thead>
+						<tbody>
+							{(responseActions.data ?? []).filter((entry) => entry.decision || entry.source.startsWith("auto") || entry.source.startsWith("policy-")).slice(0, 100).map((entry) => (
+								<tr key={entry.id}>
+									<td className="text-nowrap">{formatTime(entry.at)}</td>
+									<td><span className={`badge ${entry.type === "block" ? "bg-red-lt" : entry.type === "challenge" ? "bg-orange-lt" : "bg-yellow-lt"}`}>{entry.type.replace("_", " ")}</span></td>
+									<td className="font-monospace">{entry.ip}</td>
+									<td>
+										{entry.decision ? <>
+											<strong>{entry.decision.confidence}%</strong> · {entry.decision.profile}
+											<div className="text-secondary small">{entry.decision.classification} · risk {entry.decision.risk} · previous {entry.decision.previousResponse}</div>
+										</> : <span className="text-secondary">rule-based</span>}
+									</td>
+									<td style={{ minWidth: 280 }}>{entry.reason}</td>
+									<td>{entry.active ? <span className="badge bg-red-lt">Active</span> : <span className="badge bg-secondary-lt">{entry.action}</span>}</td>
+									<td className="text-end">
+										{entry.canUndo ? <button type="button" className="btn btn-sm btn-outline-danger" disabled={undoAction.isPending} onClick={() => undoAction.mutate(entry)}>Undo</button> : null}
+									</td>
+								</tr>
+							))}
+							{!responseActions.isLoading && (responseActions.data ?? []).length === 0 ? <tr><td colSpan={7} className="text-secondary text-center py-4">No automatic response history yet.</td></tr> : null}
 						</tbody>
 					</table>
 				</div>

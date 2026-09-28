@@ -790,6 +790,26 @@ const SecuritySettings = () => {
 							</div>
 						</div>
 						<div className="border-top mt-3 pt-3">
+							<div className="row g-3 align-items-end">
+								<div className="col-12 col-lg-6">
+									<div className="form-label mb-1">Autopilot profile</div>
+									<div className="text-secondary small">HYROVI Sec combines request risk, strong signals, current response state and repeated blocks from the last 24 hours. Higher confidence escalates from rate limit → challenge → temporary block.</div>
+								</div>
+								<div className="col-12 col-md-6 col-lg-3">
+									<label className="form-label" htmlFor="hyrovi-sec-autopilot-profile">Profile</label>
+									<select id="hyrovi-sec-autopilot-profile" className="form-select" value={policy.data?.autopilotProfile ?? "balanced"} disabled={!policy.data || updatePolicy.isPending} onChange={(event) => updatePolicy.mutate({ autopilotProfile: event.target.value as "conservative" | "balanced" | "aggressive" })}>
+										<option value="conservative">Conservative</option>
+										<option value="balanced">Balanced · recommended</option>
+										<option value="aggressive">Aggressive</option>
+									</select>
+								</div>
+								<div className="col-12 col-md-6 col-lg-3 d-grid">
+									<Button className="btn-outline-primary" disabled={!policy.data || updatePolicy.isPending} onClick={() => updatePolicy.mutate({ protectionRules: { crawler: "auto", ddos: "auto", criticalFiles: "auto", exploit: "auto", authAbuse: "auto", recon: "auto", unusualMethods: "auto" } })}>Use Auto for all classes</Button>
+								</div>
+							</div>
+						</div>
+
+						<div className="border-top mt-3 pt-3">
 							<div className="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
 								<div>
 									<strong>Protection behavior</strong>
@@ -812,10 +832,11 @@ const SecuritySettings = () => {
 										<select
 											id={`hyrovi-sec-rule-${String(key)}`}
 											className="form-select"
-											value={(policy.data?.protectionRules as any)?.[String(key)] ?? "observe"}
+											value={(policy.data?.protectionRules as any)?.[String(key)] ?? "auto"}
 											disabled={!policy.data || updatePolicy.isPending}
 											onChange={(event) => updatePolicy.mutate({ protectionRules: { ...(policy.data?.protectionRules ?? {}), [String(key)]: event.target.value } as any })}
 										>
+											<option value="auto">Auto · Autopilot</option>
 											<option value="observe">Observe only</option>
 											{canDeny ? <option value="deny">Deny request</option> : null}
 											<option value="rate_limit">Rate limit IP</option>
@@ -880,8 +901,12 @@ const SecuritySettings = () => {
 							<div className="col-12 col-lg-6">
 								<div className="form-label mb-1">Security event archive</div>
 								<div className="text-secondary small">
-									Keeps security-relevant events after the live nginx log window rolls over. Daily files are bounded and automatically removed after the retention period.
+									Keeps requests after the live nginx log window rolls over. Full analysis mode archives normal, successful and blocked requests too; files remain bounded and expire automatically.
 								</div>
+								<label className="form-check form-switch mt-2 mb-0">
+									<input className="form-check-input" type="checkbox" checked={policy.data?.archiveAllRequests ?? true} disabled={!policy.data || updatePolicy.isPending} onChange={(event) => updatePolicy.mutate({ archiveAllRequests: event.target.checked })} />
+									<span className="form-check-label">Full request analysis archive</span>
+								</label>
 							</div>
 							<div className="col-6 col-lg-3">
 								<label className="form-label" htmlFor="hyrovi-sec-event-retention">Retention days</label>

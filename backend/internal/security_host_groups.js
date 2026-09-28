@@ -18,7 +18,7 @@ const ACCESS_MODES = new Set(["open", "allowlist", "denylist"]);
 const HOST_ACCESS_MODES = new Set(["inherit", "open", "allowlist", "denylist"]);
 const SECURITY_MODES = new Set(["inherit", "off", "observe", "protect", "strict"]);
 const PROTECTION_RULE_KEYS = ["crawler", "ddos", "criticalFiles", "exploit", "authAbuse", "recon", "unusualMethods"];
-const PROTECTION_RULE_ACTIONS = new Set(["inherit", "observe", "deny", "rate_limit", "challenge", "block"]);
+const PROTECTION_RULE_ACTIONS = new Set(["inherit", "auto", "observe", "deny", "rate_limit", "challenge", "block"]);
 const PRE_REQUEST_DENY_RULES = new Set(["criticalFiles", "exploit", "unusualMethods"]);
 
 let mutationQueue = Promise.resolve();

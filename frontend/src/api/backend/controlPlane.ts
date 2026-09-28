@@ -1,6 +1,6 @@
 import * as api from "./base";
 import type { ProxyHost } from "./models";
-import type { SecurityHostAccessPolicy, SecurityHostPolicy } from "./security";
+import type { SecurityAutopilotDecision, SecurityHostAccessPolicy, SecurityHostPolicy } from "./security";
 
 export type ControlPlaneNodeStatus = "online" | "stale" | "pending" | "disabled";
 
@@ -12,6 +12,7 @@ export interface ControlPlaneSecurityBlock {
 	source: string;
 	createdAt: string | null;
 	expiresAt: string | null;
+	decision?: Pick<SecurityAutopilotDecision, "profile" | "rule" | "action" | "confidence" | "risk" | "repeatBlocks24h" | "requestId" | "host"> | null;
 }
 
 export interface ControlPlaneProxyHost {

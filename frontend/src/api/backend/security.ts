@@ -62,17 +62,40 @@ export interface SecurityAttackSessionPattern {
 	statuses: number[];
 }
 
+export interface SecurityAutopilotDecision {
+	mode: "autopilot";
+	profile: "conservative" | "balanced" | "aggressive";
+	rule: string;
+	classification: string;
+	action: "observe" | "rate_limit" | "challenge" | "block";
+	confidence: number;
+	risk: number;
+	strongSignals: number;
+	signals: string[];
+	repeatBlocks24h: number;
+	previousResponse: "none" | "rate_limit" | "challenge";
+	challengeMature: boolean | null;
+	durationMultiplier: number;
+	requestId: string | null;
+	host: string | null;
+	path: string | null;
+	decidedAt: string;
+}
+
 export interface SecurityResponseHistoryEntry {
 	id: string;
 	at: string;
-	type: "block" | "rate_limit";
-	action: "started" | "removed" | "expired";
+	type: "block" | "rate_limit" | "challenge";
+	action: "started" | "removed" | "expired" | "undo";
 	responseId: string;
 	ip: string;
 	source: string;
 	reason: string;
 	createdAt: string | null;
 	expiresAt: string | null;
+	decision: SecurityAutopilotDecision | null;
+	active?: boolean;
+	canUndo?: boolean;
 }
 
 export type SecurityIncidentTimelineKind = "proxy_request" | "app_event" | "response_action" | "challenge";
@@ -142,7 +165,7 @@ export interface SecurityEventDetail extends SecurityEvent {
 }
 
 export type SecurityHostMode = "off" | "observe" | "protect" | "strict";
-export type SecurityProtectionAction = "inherit" | "observe" | "deny" | "rate_limit" | "challenge" | "block";
+export type SecurityProtectionAction = "inherit" | "auto" | "observe" | "deny" | "rate_limit" | "challenge" | "block";
 export interface SecurityProtectionRules {
 	crawler: SecurityProtectionAction;
 	ddos: SecurityProtectionAction;
@@ -247,6 +270,8 @@ export interface SecurityEventFilters {
 }
 export interface SecurityPolicy {
 	autoBlockEnabled: boolean;
+	autopilotProfile: "conservative" | "balanced" | "aggressive";
+	archiveAllRequests: boolean;
 	autoRateLimitThreshold: number;
 	autoRateLimitMinutes: number;
 	autoBlockThreshold: number;
@@ -517,6 +542,7 @@ export interface SecurityRateLimit {
 	ip: string;
 	reason: string;
 	source: string;
+	decision?: SecurityAutopilotDecision | null;
 	createdAt: string;
 	expiresAt: string;
 }
@@ -742,6 +768,7 @@ export interface SecurityChallenge {
 	maxAttempts: number;
 	reason: string;
 	source: string;
+	decision?: SecurityAutopilotDecision | null;
 	createdAt: string;
 	expiresAt: string;
 }
@@ -751,6 +778,7 @@ export interface SecurityBlock {
 	ip: string;
 	reason: string;
 	source: string;
+	decision?: SecurityAutopilotDecision | null;
 	createdAt: string;
 	expiresAt: string;
 }
@@ -1007,6 +1035,14 @@ export async function createSecurityRateLimit(data: {
 export async function deleteSecurityRateLimit(id: string): Promise<{ success: boolean }> {
 	return await api.del({ url: `/security/rate-limits/${encodeURIComponent(id)}` });
 }
+export async function getSecurityResponseActions(limit = 250): Promise<SecurityResponseHistoryEntry[]> {
+	return await api.get({ url: "/security/response-actions", params: { limit } });
+}
+
+export async function undoSecurityResponseAction(id: string): Promise<{ success: boolean; actionId: string; responseId: string; type: string }> {
+	return await api.post({ url: `/security/response-actions/${encodeURIComponent(id)}/undo` });
+}
+
 export async function getSecurityBlocks(): Promise<SecurityBlock[]> {
 	return await api.get({ url: "/security/blocks" });
 }

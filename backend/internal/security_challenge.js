@@ -143,7 +143,7 @@ const purgeExpired = () => withMutation(purgeExpiredUnsafe);
 
 const normalizeReason = (value) => String(value || "HYROVI Sec adaptive challenge").trim().slice(0, 300);
 
-const createChallengeRecord = ({ ip, durationMinutes, difficulty, reason, source }) => {
+const createChallengeRecord = ({ ip, durationMinutes, difficulty, reason, source, decision = null }) => {
 	if (!net.isIP(ip)) throw new errs.ValidationError("A valid IPv4 or IPv6 address is required");
 	const minutes = clamp(Number.parseInt(durationMinutes, 10) || DEFAULT_DURATION_MINUTES, 1, 120);
 	const proofDifficulty = clamp(Number.parseInt(difficulty, 10) || DEFAULT_DIFFICULTY, 10, 22);
@@ -157,6 +157,7 @@ const createChallengeRecord = ({ ip, durationMinutes, difficulty, reason, source
 		maxAttempts: MAX_VERIFY_ATTEMPTS,
 		reason: normalizeReason(reason),
 		source: String(source || "manual").slice(0, 80),
+		decision: decision && typeof decision === "object" ? decision : null,
 		createdAt: now.toISOString(),
 		expiresAt: new Date(now.getTime() + minutes * 60_000).toISOString(),
 	};

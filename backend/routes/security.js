@@ -659,6 +659,7 @@ router
 					accessMode: req.body?.access_mode,
 					sources: req.body?.sources,
 					securityMode: req.body?.security_mode,
+					protectionRules: req.body?.protection_rules,
 				}),
 			);
 		} catch (err) {
@@ -679,6 +680,7 @@ router
 					accessMode: req.body?.access_mode,
 					sources: req.body?.sources,
 					securityMode: req.body?.security_mode,
+					protectionRules: req.body?.protection_rules,
 				}),
 			);
 		} catch (err) {
@@ -694,6 +696,24 @@ router
 			next(err);
 		}
 	});
+
+router.get("/response-actions", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.listResponseActions(res.locals.access, req.query?.limit));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
+
+router.post("/response-actions/:action_id/undo", async (req, res, next) => {
+	try {
+		res.status(200).send(await internalSecurity.undoResponseAction(res.locals.access, req.params.action_id));
+	} catch (err) {
+		debug(logger, `${req.method.toUpperCase()} ${req.path}: ${err}`);
+		next(err);
+	}
+});
 
 router
 	.route("/challenges")

@@ -352,7 +352,7 @@ export default function SecurityGroups() {
 						].map(([key, label, canDeny]) => <div className="col-12 col-md-6" key={String(key)}>
 							<label className="form-label mb-1" htmlFor={`security-group-rule-${String(key)}`}>{String(label)}</label>
 							<select id={`security-group-rule-${String(key)}`} className="form-select" value={(draft.protectionRules as any)[String(key)]} onChange={(event) => setDraft((current) => ({ ...current, protectionRules: { ...current.protectionRules, [String(key)]: event.target.value } as SecurityProtectionRules }))}>
-								<option value="inherit">Inherit global</option><option value="observe">Observe only</option>{canDeny ? <option value="deny">Deny request</option> : null}<option value="rate_limit">Rate limit IP</option><option value="challenge">Challenge client</option><option value="block">Block IP</option>
+								<option value="inherit">Inherit global</option><option value="auto">Auto · Autopilot</option><option value="observe">Observe only</option>{canDeny ? <option value="deny">Deny request</option> : null}<option value="rate_limit">Rate limit IP</option><option value="challenge">Challenge client</option><option value="block">Block IP</option>
 							</select>
 						</div>)}
 					</div>
