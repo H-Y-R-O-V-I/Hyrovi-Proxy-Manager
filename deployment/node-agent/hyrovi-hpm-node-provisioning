@@ -183,11 +183,24 @@ def cloudflare_command_prefix():
     raise RuntimeError("No Cloudflare origin certificate available for DNS provisioning")
 
 
+def valid_domain(value):
+    domain = str(value or "").strip().lower().rstrip(".")
+    if not domain or len(domain) > 253:
+        return None
+    labels = domain.split(".")
+    if not all(0 < len(label) <= 63 and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) for label in labels):
+        return None
+    return domain
+
+
 def provision_cloudflare(config, domains):
+    normalized_domains = [valid_domain(domain) for domain in domains]
+    if not normalized_domains or any(domain is None for domain in normalized_domains):
+        raise RuntimeError("Invalid Cloudflare domain")
     config_path = active_cloudflare_config(config)
     tunnel = parse_tunnel(config_path)
     changed_ingress = []
-    for domain in domains:
+    for domain in normalized_domains:
         changed = ensure_ingress(config_path, domain)
         if changed:
             changed_ingress.append(domain)
@@ -198,7 +211,7 @@ def provision_cloudflare(config, domains):
     return {
         "tunnel": tunnel,
         "config": str(config_path),
-        "domains": domains,
+        "domains": normalized_domains,
         "ingressAdded": changed_ingress,
     }
 
@@ -380,6 +393,12 @@ def main():
         if job_type == "proxy_host.create":
             result = create_proxy_host(config, job)
             message = f'HYROVI provisioner: created proxy host on {node_id}'
+        elif job_type == "domain.route":
+            domain = valid_domain((job.get("input") or {}).get("domain"))
+            if not domain:
+                raise RuntimeError("Invalid domain route job")
+            result = provision_cloudflare(config, [domain])
+            message = f'HYROVI provisioner: routed {domain} on {node_id}'
         elif job_type == "security.block.create":
             result = run_security_job(config, job, SECURITY_BLOCK_CREATE_JS)
             message = f'HYROVI provisioner: created security block on {node_id}'

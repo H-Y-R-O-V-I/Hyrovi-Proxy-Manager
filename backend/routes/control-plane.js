@@ -205,6 +205,29 @@ router.post("/provision/proxy-hosts", async (req, res, next) => {
 	}
 });
 
+router.post("/provision/domain-routes", async (req, res, next) => {
+	try {
+		await res.locals.access.can("proxy_hosts:create");
+		const nodeId = String(req.body?.node_id || "local").trim() || "local";
+		const node = await internalControlPlaneNodes.getNode(nodeId);
+		if (!node.enabled || node.status === "disabled") throw new errs.ValidationError("Selected node is disabled");
+		if (nodeId !== "local" && node.status !== "online") {
+			throw new errs.ValidationError(`Selected node is not online: ${node.status}`);
+		}
+		if (!node.capabilities.includes("provisioning")) {
+			throw new errs.ValidationError("Selected node does not support domain routing");
+		}
+		const job = await internalControlPlaneProvisioning.enqueueDomainRoute({
+			nodeId,
+			domain: req.body?.domain,
+			requestedBy: res.locals.access.token.getUserId(1),
+		});
+		res.status(202).send(await internalControlPlaneProvisioning.getJob(job.id));
+	} catch (err) {
+		next(err);
+	}
+});
+
 router.post("/nodes/:node_id/security/blocks", async (req, res, next) => {
 	try {
 		await res.locals.access.can("users:list");

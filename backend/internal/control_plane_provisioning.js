@@ -26,6 +26,15 @@ const normalizeNodeId = (value) => {
 
 const bounded = (value, max = 240) => String(value || "").trim().slice(0, max);
 const normalizeDomain = (value) => bounded(value, 253).toLowerCase().replace(/\.$/, "");
+const validDomain = (value) => {
+	const domain = normalizeDomain(value);
+	if (!domain || domain.length > 253) return false;
+	return domain.split(".").every((label) =>
+		label.length > 0 &&
+		label.length <= 63 &&
+		/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+	);
+};
 
 const findPendingDomainConflict = async (domains) => {
 	const wanted = new Set((Array.isArray(domains) ? domains : []).map(normalizeDomain).filter(Boolean));
@@ -125,6 +134,22 @@ const enqueueProxyHost = ({ nodeId: nodeIdInput, proxyHost, cloudflareTunnel = t
 			},
 			result: null,
 			error: null,
+		};
+		await atomicWriteJson(jobPath(id), job);
+		return job;
+	});
+
+const enqueueDomainRoute = ({ nodeId: nodeIdInput, domain: domainInput, requestedBy }) =>
+	withMutation(async () => {
+		await prepare();
+		const nodeId = normalizeNodeId(nodeIdInput);
+		const domain = normalizeDomain(domainInput);
+		if (!validDomain(domain)) throw new errs.ValidationError("Invalid domain");
+		const now = new Date().toISOString();
+		const id = randomUUID();
+		const job = {
+			id, type: "domain.route", nodeId, status: "queued", createdAt: now, updatedAt: now, startedAt: null, finishedAt: null, leaseUntil: null, attempts: 0,
+			requestedBy: Number.parseInt(requestedBy, 10) || 0, input: { domain }, result: null, error: null,
 		};
 		await atomicWriteJson(jobPath(id), job);
 		return job;
@@ -249,6 +274,7 @@ export default {
 	prepare,
 	verifyLocalToken,
 	enqueueProxyHost,
+	enqueueDomainRoute,
 	enqueueSecurityBlockCreate,
 	enqueueSecurityBlockDelete,
 	claimNext,
