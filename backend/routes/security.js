@@ -526,19 +526,25 @@ router
 	})
 	.put(async (req, res, next) => {
 		try {
+			const body = req.body || {};
 			res.status(200).send(
 				await internalSecurity.updatePolicy(res.locals.access, {
-					autoBlockEnabled: req.body?.auto_block_enabled,
-					autoRateLimitThreshold: req.body?.auto_rate_limit_threshold,
-					autoRateLimitMinutes: req.body?.auto_rate_limit_minutes,
-					autoBlockThreshold: req.body?.auto_block_threshold,
-					autoBlockMinutes: req.body?.auto_block_minutes,
-					autoEscalationHits: req.body?.auto_escalation_hits,
-					autoEscalationWindowMinutes: req.body?.auto_escalation_window_minutes,
-					autoEscalationCooldownSeconds: req.body?.auto_escalation_cooldown_seconds,
-					eventRetentionDays: req.body?.event_retention_days,
-					eventArchiveMinRisk: req.body?.event_archive_min_risk,
-					trustedSources: req.body?.trusted_sources,
+					autoBlockEnabled: body.auto_block_enabled ?? body.autoBlockEnabled,
+					autopilotProfile: body.autopilot_profile ?? body.autopilotProfile,
+					archiveAllRequests: body.archive_all_requests ?? body.archiveAllRequests,
+					autoRateLimitThreshold: body.auto_rate_limit_threshold ?? body.autoRateLimitThreshold,
+					autoRateLimitMinutes: body.auto_rate_limit_minutes ?? body.autoRateLimitMinutes,
+					autoBlockThreshold: body.auto_block_threshold ?? body.autoBlockThreshold,
+					autoBlockMinutes: body.auto_block_minutes ?? body.autoBlockMinutes,
+					autoEscalationHits: body.auto_escalation_hits ?? body.autoEscalationHits,
+					autoEscalationWindowMinutes:
+						body.auto_escalation_window_minutes ?? body.autoEscalationWindowMinutes,
+					autoEscalationCooldownSeconds:
+						body.auto_escalation_cooldown_seconds ?? body.autoEscalationCooldownSeconds,
+					eventRetentionDays: body.event_retention_days ?? body.eventRetentionDays,
+					eventArchiveMinRisk: body.event_archive_min_risk ?? body.eventArchiveMinRisk,
+					trustedSources: body.trusted_sources ?? body.trustedSources,
+					protectionRules: body.protection_rules ?? body.protectionRules,
 				}),
 			);
 		} catch (err) {
