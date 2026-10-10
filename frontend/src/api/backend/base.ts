@@ -48,7 +48,25 @@ function buildBody(data?: Record<string, any>): string | undefined {
 }
 
 async function processResponse(response: Response) {
-	const payload = await response.json();
+	const raw = await response.text();
+	const contentType = response.headers.get("content-type") || "unknown content type";
+	const path = (() => {
+		try { return new URL(response.url).pathname; }
+		catch { return "API endpoint"; }
+	})();
+	let payload: any = null;
+	if (raw.trim()) {
+		try { payload = JSON.parse(raw); }
+		catch {
+			// Do not report a confusing JSON syntax error for proxy/backend error pages.
+			if (response.status !== 401) {
+				throw new Error(`API ${path}: HTTP ${response.status}, non-JSON response (${contentType})`);
+			}
+			payload = { error: { message: "Session expired" } };
+		}
+	} else if (response.ok && response.status !== 204) {
+		throw new Error(`API ${path}: empty HTTP ${response.status} response (${contentType})`);
+	}
 	if (!response.ok) {
 		if (response.status === 401) {
 			// A migrated or rotated JWT key can invalidate an otherwise unexpired browser token.

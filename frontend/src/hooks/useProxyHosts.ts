@@ -1,11 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getControlPlaneNodes, getProxyHosts, type ProxyHost, type ProxyHostExpansion } from "src/api/backend";
 
-const fetchProxyHosts = async (expand?: ProxyHostExpansion[]) => {
-	const [localHosts, nodes] = await Promise.all([
-		getProxyHosts(expand),
-		getControlPlaneNodes().catch(() => []),
-	]);
+const combineProxyHosts = (localHosts: ProxyHost[], nodes: Awaited<ReturnType<typeof getControlPlaneNodes>>) => {
 	const localNode = nodes.find((node) => node.id === "local");
 	const local = localHosts.map((host) => ({
 		...host,
@@ -47,14 +43,35 @@ const fetchProxyHosts = async (expand?: ProxyHostExpansion[]) => {
 	return [...local, ...remote];
 };
 
+const fetchProxyHosts = async (expand?: ProxyHostExpansion[]) => {
+	const [localHosts, nodes] = await Promise.all([
+		getProxyHosts(expand),
+		getControlPlaneNodes().catch(() => []),
+	]);
+	return combineProxyHosts(localHosts, nodes);
+};
+
 const useProxyHosts = (expand?: ProxyHostExpansion[], options = {}) => {
-	return useQuery<ProxyHost[], Error>({
+	// The local list should render immediately, even if remote node discovery is slow.
+	const nodesQuery = useQuery({
+		queryKey: ["proxy-host-nodes"],
+		queryFn: () => getControlPlaneNodes().catch(() => []),
+		staleTime: 60 * 1000,
+		refetchInterval: 60 * 1000,
+		retry: false,
+	});
+	const localQuery = useQuery<ProxyHost[], Error>({
 		queryKey: ["proxy-hosts", { expand }],
-		queryFn: () => fetchProxyHosts(expand),
+		queryFn: () => getProxyHosts(expand),
 		staleTime: 20 * 1000,
 		refetchInterval: 30 * 1000,
 		...options,
 	});
+	return {
+		...localQuery,
+		data: localQuery.data ? combineProxyHosts(localQuery.data, nodesQuery.data ?? []) : undefined,
+		isFetching: localQuery.isFetching || nodesQuery.isFetching,
+	};
 };
 
 export { fetchProxyHosts, useProxyHosts };
