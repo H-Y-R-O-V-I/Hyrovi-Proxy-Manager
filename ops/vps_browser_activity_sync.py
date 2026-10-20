@@ -90,6 +90,7 @@ sites = {}
 requests = 0
 browser_events = 0
 consented = []
+anonymous_browser_events = []
 for row in file_tail(VPS_LOGS / "hyrovi-sec.log", 2 * 1024 * 1024):
     try:
         e = json.loads(row)
@@ -149,6 +150,20 @@ for row in file_tail(VPS_LOGS / "hyrovi-analytics-events.log", 4 * 1024 * 1024):
     if not w["browserLastSeen"] or coarse > w["browserLastSeen"]:
         w["browserLastSeen"] = coarse
 
+    # Independent browser-observed security events: NO device/session IDs,
+    # and no attempt to join them into people or long-lived browser profiles.
+    # Time is rounded to minutes, URL is reduced to the first safe path segment.
+    if e.get("consent") is not True:
+        anonymous_browser_events.append({
+            "source": "VPS",
+            "host": host,
+            "type": kind,
+            "time": timestamp.replace(second=0, microsecond=0).isoformat(),
+            "section": safe_section(e.get("path")),
+            "visibleSeconds": max(0, min(3600, int(e.get("visibleSeconds") or 0))),
+            "scrollDepth": max(0, min(100, int(e.get("scrollDepth") or 0))),
+        })
+
     # Individual browser records exist ONLY after explicit consent; remote
     # HMAC deviceKey is node-scoped and is NOT joined with Pi identity.
     if e.get("consent") is True and HEX64.fullmatch(str(e.get("deviceKey") or "")):
@@ -187,6 +202,7 @@ payload = {
     "browserEvents": browser_events,
     "websites": all_sites[:100],
     "consentedEvents": consented[-1000:],
+    "anonymousBrowserEvents": anonymous_browser_events[-240:],
 }
 data = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 if len(data) > 1_500_000:

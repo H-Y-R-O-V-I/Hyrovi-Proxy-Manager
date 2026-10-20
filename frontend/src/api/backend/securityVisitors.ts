@@ -45,7 +45,13 @@ export interface SecuritySiteActivity {
   latest: string | null;
   sections: Array<{ section: string; count: number }>;
 }
+export interface AnonymousBrowserEvent {
+  id: string; source: "VPS" | "Pi"; host: string;
+  type: "page_view" | "route_change" | "scroll" | "engagement" | "action";
+  time: string; section: string; scrollDepth: number; visibleSeconds: number;
+}
 export interface AutomaticSiteActivity {
+  anonymousBrowserEvents: AnonymousBrowserEvent[];
   remoteGeneratedAt: string | null;
   browserViews: number;
   browserEvents: number;

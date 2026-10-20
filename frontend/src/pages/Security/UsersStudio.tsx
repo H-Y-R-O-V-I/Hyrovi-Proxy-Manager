@@ -12,6 +12,7 @@ export default function UsersStudio() {
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
   const [activeOnly, setActiveOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedAnonEventId, setSelectedAnonEventId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const list = useQuery({
@@ -142,7 +143,7 @@ export default function UsersStudio() {
       </button></div>
     </div>
     <div className="alert alert-info py-2" role="status">
-      Hier erscheinen Browser, die das HYROVI-Skript ausgeführt und der individuellen Analyse zugestimmt haben.
+      Oben erscheinen anklickbare technische Browser-Ereignisse. Echte, wiedererkennbare Besucherprofile darunter benötigen eine separate Rechtsgrundlage und zuverlässige Zuordnung.
       Ein Browserereignis beweist keine menschliche Identität. Seitenbesuche, Sichtbarkeitszeit und
       allgemeine Link-/Button-Klicks werden erfasst, aber keine Formulare, Passwörter, Klickkoordinaten oder Eingaben.
     </div>
@@ -161,25 +162,37 @@ export default function UsersStudio() {
       </div></div></div>
     </div>
     <div className="card mb-3">
-      <div className="card-header"><h3 className="card-title">Anonyme Browser-Besuche nach Website</h3></div>
+      <div className="card-header"><h3 className="card-title">Browser-Sicherheitsereignisse · anklickbar</h3></div>
       <div className="card-body text-secondary small">
-        Diese Zähler beruhen auf tatsächlich ausgeführtem Browser-JavaScript. Sie sind nicht einzelnen
-        Personen zugeordnet. Wähle einen Browser-Besucher weiter unten aus, sobald dieser der individuellen
-        Analyse zugestimmt hat.
+        Tatsächlich vom Browser gemeldete Ereignisse, auch ohne individuelle Analytics-Einwilligung.
+        Wähle ein Ereignis, um Zeitpunkt, Website und den unkritischen URL-Bereich zu sehen.
+        Verschiedene Ereignisse werden nicht ohne zuverlässige Zuordnung derselben Person zugeschrieben.
       </div>
-      <div className="table-responsive">
-        <table className="table table-vcenter card-table">
-          <thead><tr><th>Website</th><th>Browser-Aufrufe</th><th>Letzter Aufruf</th></tr></thead>
-          <tbody>
-            {(list.data?.automaticActivity?.websites || []).filter(site => site.browserViews > 0).slice(0, 30)
-              .map(site => <tr key={site.source + site.host}>
-                <td>{site.host} <span className="badge bg-secondary-lt">{site.source}</span></td>
-                <td>{site.browserViews}</td><td>{stamp(site.browserLastSeen)}</td>
-              </tr>)}
-            {list.isSuccess && !(list.data?.automaticActivity?.websites || []).some(site => site.browserViews > 0) &&
-              <tr><td colSpan={3} className="text-secondary">Bisher keine Browser-Aufrufe im verfügbaren Ausschnitt.</td></tr>}
-          </tbody>
-        </table>
+      <div className="list-group list-group-flush" style={{maxHeight: 520, overflowY: "auto"}}>
+        {(list.data?.automaticActivity?.anonymousBrowserEvents || []).slice(0, 80).map(event =>
+          <button type="button" key={event.id}
+            className={"list-group-item list-group-item-action text-start " + (selectedAnonEventId === event.id ? "active" : "")}
+            onClick={() => setSelectedAnonEventId(selectedAnonEventId === event.id ? null : event.id)}>
+            <div className="d-flex flex-wrap align-items-center justify-content-between gap-2">
+              <strong>{event.host}</strong><span className="small">{stamp(event.time)}</span>
+            </div>
+            <div className="small opacity-75">{
+              event.type === "page_view" ? "Seite geöffnet" :
+              event.type === "route_change" ? "Seite gewechselt" :
+              event.type === "scroll" ? "Gescrollt" :
+              event.type === "engagement" ? "Seite sichtbar" : "Browseraktion"
+            } · {event.section}</div>
+            {selectedAnonEventId === event.id && <div className="mt-2 small">
+              <strong>Ereignisdetails</strong>
+              <div>Quelle: {event.source} · Zeitpunkt: {stamp(event.time)}</div>
+              <div>Website: {event.host} · URL-Bereich: {event.section}</div>
+              {event.type === "scroll" && <div>Scrolltiefe: {event.scrollDepth}%</div>}
+              {event.type === "engagement" && <div>Sichtbar: {event.visibleSeconds} Sekunden</div>}
+              <div className="mt-2">Einzelnes Ereignis; keine bestätigte Identität oder verbundene Sitzung.</div>
+            </div>}
+          </button>)}
+        {list.isSuccess && !(list.data?.automaticActivity?.anonymousBrowserEvents || []).length &&
+          <div className="p-3 text-secondary">Keine Browser-Ereignisse im jüngsten VPS-Ausschnitt.</div>}
       </div>
     </div>
     <div className="row g-3">

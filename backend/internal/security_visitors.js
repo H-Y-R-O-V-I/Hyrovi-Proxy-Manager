@@ -131,6 +131,17 @@ async function readVpsActivity() {
     generatedAt: data.generatedAt,
     requests: Number(data.requests) || 0,
     websites: Array.isArray(data.websites) ? data.websites.slice(0, 100) : [],
+    anonymousBrowserEvents: (Array.isArray(data.anonymousBrowserEvents) ? data.anonymousBrowserEvents : [])
+      .filter(e => e && e.source === "VPS" && HOST.test(String(e.host || "")) &&
+        ["page_view","route_change","scroll","engagement","action"].includes(e.type) &&
+        Number.isFinite(Date.parse(e.time)))
+      .slice(-240).map((e, index) => ({
+        id: "vps-event-" + index, source: "VPS",
+        host: safeString(e.host, 253), type: e.type,
+        time: e.time, section: safeString(e.section, 56),
+        visibleSeconds: Math.max(0, Math.min(3600, Number(e.visibleSeconds) || 0)),
+        scrollDepth: Math.max(0, Math.min(100, Number(e.scrollDepth) || 0))
+      })).reverse(),
     consentedEvents: (Array.isArray(data.consentedEvents) ? data.consentedEvents : [])
       .filter((e) => e && e.consent === true && safeId(e.deviceKey) && Number.isFinite(Date.parse(e.timestamp))),
     browserEvents: Number(data.browserEvents) || 0,
@@ -179,6 +190,7 @@ function mergeTraffic(local, remote, piEvents) {
     browserEvents: (remote?.browserEvents || 0) + piEvents.length,
     window: "Pi recent log tail; VPS last 24 hours",
     remoteGeneratedAt: remote?.generatedAt || null,
+    anonymousBrowserEvents: remote?.anonymousBrowserEvents || [],
     websites: websites.slice(0, 200),
   };
 }
