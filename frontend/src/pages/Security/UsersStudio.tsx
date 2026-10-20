@@ -16,12 +16,13 @@ export default function UsersStudio() {
   const [notes, setNotes] = useState("");
   const list = useQuery({
     queryKey: ["security-visitors"], queryFn: getSecurityVisitors,
-    refetchInterval: mode === "visitors" ? 15_000 : 60_000, staleTime: 10_000
+    refetchInterval: mode === "visitors" ? 15_000 : 60_000, staleTime: 10_000, retry: false
   });
   const detail = useQuery({
     queryKey: ["security-visitor", selectedId],
     queryFn: () => getSecurityVisitor(selectedId || ""),
-    enabled: mode === "visitors" && Boolean(selectedId), staleTime: 10_000, refetchInterval: mode === "visitors" && selectedId ? 20_000 : false
+    enabled: mode === "visitors" && Boolean(selectedId), staleTime: 10_000, retry: false,
+    refetchInterval: mode === "visitors" && selectedId ? 20_000 : false
   });
   const selected = detail.data?.visitor;
   useEffect(() => {
@@ -52,7 +53,7 @@ export default function UsersStudio() {
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
         <div><h2 className="mb-1">Users <span className="text-secondary">/ Übersicht</span></h2>
           <p className="text-secondary mb-0">Server-side activity for proxied websites, with no visitor cookies or identity matching</p></div>
-        <div className="d-flex gap-2">
+        <div className="d-flex flex-wrap gap-2">
           <button className="btn btn-outline-primary" type="button" onClick={() => {setMode("visitors");setSearch("");}}>
             Liste · Browser-Besucher
           </button>
@@ -71,21 +72,29 @@ export default function UsersStudio() {
           <div className="text-secondary small">Requests (recent log)</div><h2 className="mb-0">{traffic?.requests ?? "—"}</h2>
         </div></div></div>
         <div className="col-md-4"><div className="card"><div className="card-body">
-          <div className="text-secondary small">HTTP writes (POST / PUT / PATCH / DELETE)</div><h2 className="mb-0">{totalWrites}</h2>
+          <div className="text-secondary small">HTTP writes (POST / PUT / PATCH / DELETE)</div><h2 className="mb-0">{traffic ? totalWrites : "—"}</h2>
         </div></div></div>
         <div className="col-md-4"><div className="card"><div className="card-body">
-          <div className="text-secondary small">HTTP 4xx / 5xx</div><h2 className="mb-0">{totalFailures}</h2>
+          <div className="text-secondary small">HTTP 4xx / 5xx</div><h2 className="mb-0">{traffic ? totalFailures : "—"}</h2>
         </div></div></div>
       </div>
       <div className="card">
-        <div className="card-header d-flex align-items-center justify-content-between gap-2">
+        <div className="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
           <h3 className="card-title">Websites with recent activity ({websites.length})</h3>
           <input aria-label="Filter websites" className="form-control" style={{maxWidth:300}} placeholder="Filter domain…"
             value={search} onChange={(e) => setSearch(e.target.value)}/>
         </div>
-        {list.isLoading && <p className="p-3 text-secondary">Loading server activity…</p>}
-        {list.error && <p className="p-3 text-danger">{String(list.error)}</p>}
-        {!list.isLoading && websites.length===0 && <p className="p-3 text-secondary">No website traffic in the latest log window.</p>}
+        {list.isLoading && <div className="p-3 text-secondary" role="status">
+          Lade Proxy-Aktivität… (maximal 12 Sekunden)
+        </div>}
+        {list.isError && <div className="alert alert-danger m-3" role="alert">
+          <strong>Die Website-Aktivität konnte nicht geladen werden.</strong>
+          <div className="mt-2">{String((list.error as Error)?.message || list.error)}</div>
+          <button className="btn btn-outline-danger mt-2" type="button" onClick={() => list.refetch()}>Erneut versuchen</button>
+        </div>}
+        {list.isSuccess && websites.length===0 && <p className="p-3 text-secondary">
+          Im letzten Log-Ausschnitt ist kein Website-Traffic vorhanden.
+        </p>}
         <div className="table-responsive">
           <table className="table table-vcenter card-table">
             <thead><tr><th>Host</th><th>Requests</th><th>Page requests (approx.)</th><th>Writes</th><th>Errors</th><th>Last activity</th></tr></thead>
@@ -122,7 +131,7 @@ export default function UsersStudio() {
         <h2 className="mb-1">Users <span className="text-secondary">/ Liste · Fingerprint Studio</span></h2>
         <p className="text-secondary mb-0">Browserbesuche, aktive Sitzungen, Seiten und Aktionen</p>
       </div>
-      <div className="d-flex gap-2">
+      <div className="d-flex flex-wrap gap-2">
       <button type="button" className="btn btn-outline-primary" onClick={() => {setMode("activity");setSearch("");}}>
         Übersicht
       </button>
@@ -165,8 +174,11 @@ export default function UsersStudio() {
           </div>
           <div className="list-group list-group-flush" style={{ maxHeight: 580, overflowY: "auto" }}>
             {list.isLoading && <div className="p-3 text-secondary">Loading visitors…</div>}
-            {list.error && <div className="p-3 text-danger">Visitor API unavailable: {String(list.error)}</div>}
-            {!list.isLoading && filtered.length === 0 && <div className="p-3 text-secondary">
+            {list.isError && <div className="p-3 text-danger" role="alert">
+              Browser-Liste nicht geladen: {String((list.error as Error)?.message || list.error)}
+              <button type="button" className="btn btn-outline-danger ms-2" onClick={() => list.refetch()}>Erneut versuchen</button>
+            </div>}
+            {list.isSuccess && filtered.length === 0 && <div className="p-3 text-secondary">
               Noch keine passenden Browserbesuche mit Einwilligung. Anonyme HTTP-Anfragen findest du unter Übersicht.
               Browser-Zuordnung wird nicht aus IP-Adressen oder Browser-Fingerprints geraten.
             </div>}

@@ -32,18 +32,18 @@ const INSTRUMENTATION_MARKER = `${SECURITY_DIR}/instrumentation-v10`;
 const POLICY_FILE = `${SECURITY_DIR}/policy.json`;
 const HOST_PROTECTION_DIR = `${SECURITY_DIR}/host-protection`;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
-const MAX_ANALYSIS_SCAN_BYTES = 32 * 1024 * 1024;
+const MAX_ANALYSIS_SCAN_BYTES = 8 * 1024 * 1024;
 const MAX_ACTION_LOG_BYTES = 2 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT = 250;
 const MAX_EVENT_LIST_LIMIT = 2000;
-const MAX_ANALYSIS_EVENT_LIMIT = 100_000;
+const MAX_ANALYSIS_EVENT_LIMIT = 15_000;
 const SESSION_WINDOW_MS = 5 * 60 * 1000;
 const REQUEST_CONTEXT_WINDOW_MS = 60_000;
 const MONITOR_INTERVAL_MS = 5_000;
 const CHALLENGE_GRACE_MS = 30_000;
 const PROCESSED_EVENT_LIMIT = 5_000;
-const ARCHIVED_EVENT_ID_LIMIT = 100_000;
-const MAX_ARCHIVE_SCAN_BYTES_PER_DAY = 32 * 1024 * 1024;
+const ARCHIVED_EVENT_ID_LIMIT = 15_000;
+const MAX_ARCHIVE_SCAN_BYTES_PER_DAY = 4 * 1024 * 1024;
 const MAX_ARCHIVE_FILE_BYTES = 128 * 1024 * 1024;
 const PROTECTION_RULE_KEYS = ["crawler", "ddos", "criticalFiles", "exploit", "authAbuse", "recon", "unusualMethods"];
 const PROTECTION_RULE_ACTIONS = new Set(["inherit", "auto", "observe", "deny", "rate_limit", "challenge", "block"]);
@@ -3212,8 +3212,15 @@ const internalSecurity = {
 			purgeEscalations().catch((err) => logger.error("HYROVI Sec escalation cleanup failed:", err.message));
 		const purgeChallenges = () =>
 			internalSecurityChallenge.purgeExpired().catch((err) => logger.error("HYROVI Sec challenge cleanup failed:", err.message));
-		const monitor = () =>
-			monitorThreats().catch((err) => logger.error("HYROVI Sec monitor failed:", err.message));
+		let monitorInFlight = false;
+        const monitor = () => {
+            // Never launch a second archive scan while the previous one is still running.
+            if (monitorInFlight) return;
+            monitorInFlight = true;
+            monitorThreats()
+                .catch((err) => logger.error("HYROVI Sec monitor failed:", err.message))
+                .finally(() => { monitorInFlight = false; });
+        };
 		const purgeArchive = () =>
 			readPolicyUnsafe()
 				.then((policy) => purgeArchivedEvents(policy.eventRetentionDays))
