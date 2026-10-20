@@ -3,6 +3,7 @@ import internalSecurity from "../internal/security.js";
 import internalSecurityAppEvents from "../internal/security_app_events.js";
 import internalSecurityAlerts from "../internal/security_alerts.js";
 import internalSecurityAnalyticsTracker from "../internal/security_analytics_tracker.js";
+import internalSecurityVisitors from "../internal/security_visitors.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
 import internalSecurityDetectionRules from "../internal/security_detection_rules.js";
@@ -178,6 +179,33 @@ router.post("/analytics/collect", async (req, res, next) => {
 });
 
 router.use(jwtdecode());
+
+router.get("/visitors", async (req, res, next) => {
+    try {
+        await res.locals.access.can("logs:list");
+        res.set("Cache-Control", "no-store");
+        res.status(200).send(await internalSecurityVisitors.list());
+    } catch (err) { next(err); }
+});
+
+router.get("/visitors/:id", async (req, res, next) => {
+    try {
+        await res.locals.access.can("logs:list");
+        const data = await internalSecurityVisitors.detail(req.params.id);
+        res.set("Cache-Control", "no-store");
+        res.status(data ? 200 : 404).send(data || { error: { message: "Visitor not found" } });
+    } catch (err) { next(err); }
+});
+
+router.put("/visitors/:id", async (req, res, next) => {
+    try {
+        await res.locals.access.can("users:list");
+        const data = await internalSecurityVisitors.update(req.params.id, req.body);
+        res.set("Cache-Control", "no-store");
+        res.status(data ? 200 : 404).send(data || { error: { message: "Visitor not found" } });
+    } catch (err) { next(err); }
+});
+
 
 const detectionRuleInput = (body = {}) => ({
 	name: body?.name,

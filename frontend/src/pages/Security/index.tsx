@@ -51,9 +51,10 @@ import { ADMIN, VIEW } from "src/modules/Permissions";
 import SecurityDashboard from "./Dashboard";
 import SecurityBlocks from "./Blocks";
 import SecurityGroups from "./Groups";
+import UsersStudio from "./UsersStudio";
 import styles from "./Security.module.css";
 
-const POLL_MS = 5000;
+const POLL_MS = 20_000;
 
 const DETECTION_RULE_TEMPLATES = [
 	{
@@ -259,7 +260,7 @@ const SecuritySettings = () => {
 
 	const events = useQuery({
 		queryKey: ["security-events", minRisk],
-		queryFn: () => getSecurityEvents(300, minRisk),
+		queryFn: () => getSecurityEvents(150, minRisk),
 		refetchInterval: POLL_MS,
 	});
 
@@ -275,7 +276,7 @@ const SecuritySettings = () => {
 	});
 	const detectionRuleAnalytics = useQuery({
 		queryKey: ["security-detection-rule-analytics"],
-		queryFn: () => getSecurityDetectionRuleAnalytics(1000),
+		queryFn: () => getSecurityDetectionRuleAnalytics(300),
 		refetchInterval: 30_000,
 	});
 	const appEvents = useQuery({
@@ -2771,7 +2772,7 @@ const SecuritySettings = () => {
 	);
 };
 
-type SecurityTab = "dashboard" | "blocks" | "groups" | "settings";
+type SecurityTab = "dashboard" | "users" | "blocks" | "groups" | "settings";
 
 const Security = () => {
 	const [tab, setTab] = useState<SecurityTab>("dashboard");
@@ -2787,6 +2788,9 @@ const Security = () => {
 					>
 						Dashboard
 					</button>
+					<button type="button"
+						className={styles.tab + (tab === "users" ? " " + styles.tabActive : "")}
+						onClick={() => setTab("users")}>Users · Fingerprint Studio</button>
 					<button
 						type="button"
 						className={`${styles.tab} ${tab === "blocks" ? styles.tabActive : ""}`}
@@ -2812,6 +2816,7 @@ const Security = () => {
 
 				<div className="mt-3">
 					{tab === "dashboard" ? <SecurityDashboard /> : null}
+					{tab === "users" ? <UsersStudio /> : null}
 					{tab === "blocks" ? <SecurityBlocks /> : null}
 					{tab === "groups" ? <SecurityGroups /> : null}
 					{tab === "settings" ? <SecuritySettings /> : null}

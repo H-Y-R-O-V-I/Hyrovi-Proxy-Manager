@@ -1,0 +1,41 @@
+/* First-party, consent-controlled, low-entropy site analytics.
+   No passive high-entropy fingerprinting, no form values or raw click coordinates. */
+export default function script() {
+  return [
+    '(function() { "use strict";',
+    'const endpoint="/.well-known/hyrovi-analytics/collect";',
+    'const consentName="hyrovi_analytics_consent", idName="hyrovi_visitor_id", sessionName="hyrovi_sid";',
+    'const shared=location.hostname==="hyrovi.com"||location.hostname.endsWith(".hyrovi.com");',
+    'const cookieScope=shared?"; Domain=.hyrovi.com":"";',
+    'const randomId=()=>crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,"0")).join("");',
+    'const getCookie=n=>{try{const item=document.cookie.split(";").map(s=>s.trim()).find(s=>s.startsWith(n+"="));return item?decodeURIComponent(item.slice(n.length+1)):""}catch{return ""}};',
+    'const granted=()=>getCookie(consentName)==="1"&&navigator.doNotTrack!=="1"&&navigator.globalPrivacyControl!==true;',
+    'const put=(n,v,age)=>{document.cookie=n+"="+encodeURIComponent(v)+"; Max-Age="+age+"; Path=/; SameSite=Lax; Secure"+cookieScope};',
+    'const getSession=()=>{try{let value=sessionStorage.getItem(sessionName);if(!value){value=randomId();sessionStorage.setItem(sessionName,value)}return value}catch{return randomId()}};',
+    'const sid=getSession();',
+    'const device=()=>{if(!granted())return null;let value=getCookie(idName);if(!value){value=randomId();put(idName,value,7776000)}return /^[a-f0-9-]{16,64}$/.test(value)?value:null};',
+    'const coarseBrowser=()=>{const u=navigator.userAgent||"";return /Edg\\//.test(u)?"Edge":/Firefox\\//.test(u)?"Firefox":/Chrome\\//.test(u)?"Chrome":/Safari\\//.test(u)?"Safari":"Other"};',
+    'const platform=()=>{const u=navigator.userAgent||"";return /iPhone|iPad|iPod/.test(u)?"iOS/iPadOS":/Android/.test(u)?"Android":/Windows/.test(u)?"Windows":/Macintosh/.test(u)?"macOS":/Linux/.test(u)?"Linux":"Other"};',
+    'const bucket=n=>Math.max(200,Math.round(Number(n||0)/200)*200);',
+    'const context=()=>({path:location.pathname||"/",referrerHost:(()=>{try{return document.referrer?new URL(document.referrer).hostname:""}catch{return""}})(),sessionId:sid,deviceId:device(),consent:true,language:(navigator.language||"").slice(0,32),timezone:(Intl.DateTimeFormat().resolvedOptions().timeZone||"").slice(0,80),viewport:bucket(innerWidth)+"x"+bucket(innerHeight),browser:coarseBrowser(),platform:platform()});',
+    'const send=(type,extra={})=>{if(!granted())return;const body=JSON.stringify(Object.assign(context(),{type},extra));try{if(navigator.sendBeacon&&navigator.sendBeacon(endpoint,new Blob([body],{type:"application/json"})))return}catch{}fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body,keepalive:true,credentials:"same-origin"}).catch(()=>{})};',
+    'let visible=0,last=Date.now(),marks=new Set();',
+    'const tick=()=>{const now=Date.now();if(document.visibilityState==="visible")visible+=Math.max(0,Math.min(30,Math.round((now-last)/1000)));last=now};',
+    'setInterval(()=>{tick();if(visible>0){send("engagement",{visibleSeconds:visible});visible=0}},30000);',
+    'document.addEventListener("visibilitychange",tick,{passive:true});',
+    'addEventListener("pagehide",()=>{tick();if(visible>0)send("engagement",{visibleSeconds:visible})},{passive:true});',
+    'addEventListener("scroll",()=>{const max=Math.max(1,document.documentElement.scrollHeight-innerHeight);const depth=Math.min(100,Math.round(scrollY/max*100));for(const m of [25,50,75,100])if(depth>=m&&!marks.has(m)){marks.add(m);send("scroll",{scrollDepth:m})}},{passive:true});',
+    'const route=()=>{marks=new Set();send("route_change")};',
+    'for(const key of ["pushState","replaceState"]){const fn=history[key];history[key]=function(){const result=fn.apply(this,arguments);queueMicrotask(route);return result}}',
+    'addEventListener("popstate",route);',
+    'window.hyroviAnalytics={',
+    ' grantConsent(){put(consentName,"1",7776000);device();send("page_view")},',
+    ' revokeConsent(){put(consentName,"",0);put(idName,"",0);document.cookie=consentName+"=; Max-Age=0; Path=/; SameSite=Lax; Secure";document.cookie=idName+"=; Max-Age=0; Path=/; SameSite=Lax; Secure"},',
+    ' track(){send("page_view")},',
+    ' trackAction(action){if(typeof action!=="string"||!/^[a-zA-Z0-9:_-]{1,64}$/.test(action))return;send("action",{action})},',
+    ' hasConsent:granted',
+    '};',
+    'send("page_view");',
+    '})();'
+  ].join("\n");
+}

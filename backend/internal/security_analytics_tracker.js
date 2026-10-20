@@ -2,6 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import errs from "../lib/error.js";
+import visitorConsentScript from "./visitor_consent_script.js";
 
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const SECRET_FILE = `${SECURITY_DIR}/analytics-secret`;
@@ -9,7 +10,7 @@ const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
 const MAX_EVENT_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const INTERNAL_HEADER = "analytics-v1";
-const ALLOWED_TYPES = new Set(["page_view", "engagement", "scroll", "route_change"]);
+const ALLOWED_TYPES = new Set(["page_view", "engagement", "scroll", "route_change", "action"]);
 const ID_RE = /^[A-Za-z0-9._:-]{1,96}$/;
 
 let secret = null;
@@ -120,6 +121,9 @@ const normalizeBody = (body = {}) => {
 		language: bounded(body.language, 32),
 		timezone: bounded(body.timezone, 80),
 		viewport: bounded(body.viewport, 32),
+		browser: bounded(body.browser, 30),
+		platform: bounded(body.platform, 40),
+		action: /^[a-zA-Z0-9:_-]{1,64}$/.test(String(body.action || "")) ? body.action : null,
 	};
 };
 
@@ -146,6 +150,9 @@ const collect = async ({ headers, body }) => {
 		language: payload.language || null,
 		timezone: payload.timezone || null,
 		viewport: payload.viewport || null,
+		browser: payload.browser || null,
+		platform: payload.platform || null,
+		action: payload.type === "action" ? payload.action : null,
 	};
 	await appendEvent(event);
 	return { accepted: true, id: event.id, timestamp: event.timestamp };
@@ -212,7 +219,7 @@ const getSummary = async ({ host = "", sinceMinutes = 60 } = {}) => {
 	};
 };
 
-const script = () => `(()=>{"use strict";const E="/.well-known/hyrovi-analytics/collect",D="__hyrovi_vid",C="hyrovi_analytics_consent",S="hyrovi_sid";const uuid=()=>crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,"0")).join("");const getCookie=n=>document.cookie.split(";").map(v=>v.trim()).find(v=>v.startsWith(n+"="))?.slice(n.length+1)||"";const consent=()=>getCookie(C)==="1";const sid=(()=>{let v=sessionStorage.getItem(S);if(!v){v=uuid();sessionStorage.setItem(S,v)}return v})();const device=()=>{if(!consent())return null;let v=localStorage.getItem(D)||getCookie(D);if(!v){v=uuid();localStorage.setItem(D,v)}document.cookie=D+"="+encodeURIComponent(v)+"; Max-Age=31536000; Path=/; SameSite=Lax; Secure";return v};const bucket=n=>Math.max(200,Math.round(Number(n||0)/200)*200);const base=()=>({path:location.pathname||"/",referrerHost:(()=>{try{return document.referrer?new URL(document.referrer).hostname:""}catch{return""}})(),deviceId:device(),sessionId:sid,consent:consent(),language:(navigator.language||"").slice(0,32),timezone:(Intl.DateTimeFormat().resolvedOptions().timeZone||"").slice(0,80),viewport:bucket(innerWidth)+"x"+bucket(innerHeight)});const send=(type,extra={})=>{if(navigator.doNotTrack==="1")return;const body=JSON.stringify(Object.assign(base(),{type},extra));try{if(navigator.sendBeacon){navigator.sendBeacon(E,new Blob([body],{type:"application/json"}));return}}catch{}fetch(E,{method:"POST",headers:{"Content-Type":"application/json"},body,keepalive:true,credentials:"same-origin"}).catch(()=>{})};let visible=0,last=Date.now(),marks=new Set;const tick=()=>{const now=Date.now();if(document.visibilityState==="visible")visible+=Math.max(0,Math.min(30,Math.round((now-last)/1000)));last=now};setInterval(()=>{tick();if(visible>0){send("engagement",{visibleSeconds:visible});visible=0}},30000);document.addEventListener("visibilitychange",tick,{passive:true});addEventListener("pagehide",()=>{tick();if(visible>0)send("engagement",{visibleSeconds:visible})},{passive:true});const scroll=()=>{const max=Math.max(1,document.documentElement.scrollHeight-innerHeight),d=Math.min(100,Math.round(scrollY/max*100));for(const m of [25,50,75,100])if(d>=m&&!marks.has(m)){marks.add(m);send("scroll",{scrollDepth:m})}};addEventListener("scroll",scroll,{passive:true});const route=()=>{marks=new Set;send("route_change")};for(const k of ["pushState","replaceState"]){const f=history[k];history[k]=function(){const r=f.apply(this,arguments);queueMicrotask(route);return r}}addEventListener("popstate",route);window.hyroviAnalytics={grantConsent(){document.cookie=C+"=1; Max-Age=31536000; Path=/; SameSite=Lax; Secure";device();send("page_view")},revokeConsent(){document.cookie=C+"=; Max-Age=0; Path=/; SameSite=Lax; Secure";document.cookie=D+"=; Max-Age=0; Path=/; SameSite=Lax; Secure";localStorage.removeItem(D)},track(){send("page_view")}};send("page_view")})();`;
+const script = () => visitorConsentScript();
 
 export default {
 	prepare,

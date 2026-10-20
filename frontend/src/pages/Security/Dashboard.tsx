@@ -234,38 +234,38 @@ export default function SecurityDashboard() {
 	const overview = useQuery({
 		queryKey: ["security-overview", search, ip, host, method, status, minRisk, groupId, nodeId, sinceMinutes],
 		queryFn: () => getSecurityOverview({ search, ip, host, method, status: status || undefined, minRisk, groupId, nodeId, sinceMinutes }),
-		refetchInterval: 5000,
+		refetchInterval: 20_000,
 	});
-	const groups = useQuery({ queryKey: ["security-host-groups"], queryFn: getSecurityHostGroups, refetchInterval: 15000 });
-	const nodes = useQuery({ queryKey: ["control-plane-nodes"], queryFn: getControlPlaneNodes, refetchInterval: 15_000 });
+	const groups = useQuery({ queryKey: ["security-host-groups"], queryFn: getSecurityHostGroups, refetchInterval: 45_000 });
+	const nodes = useQuery({ queryKey: ["control-plane-nodes"], queryFn: getControlPlaneNodes, refetchInterval: 45_000 });
 	const events = useQuery({
 		queryKey: ["security-dashboard-events", search, ip, host, method, status, minRisk, groupId, nodeId, sinceMinutes],
-		queryFn: () => getSecurityEvents({ limit: 2000, search, ip, host, method, status: status || undefined, minRisk, groupId, nodeId, sinceMinutes }),
-		refetchInterval: 5000,
+		queryFn: () => getSecurityEvents({ limit: 400, search, ip, host, method, status: status || undefined, minRisk, groupId, nodeId, sinceMinutes }),
+		refetchInterval: 20_000,
 	});
 	const requestDetail = useQuery({
 		queryKey: ["security-dashboard-event-detail", selectedRequestId],
 		queryFn: () => getSecurityEventDetail(selectedRequestId as string),
 		enabled: Boolean(selectedRequestId),
-		refetchInterval: selectedRequestId ? 5000 : false,
+		refetchInterval: selectedRequestId ? 20_000 : false,
 	});
 	const attackSessionDetail = useQuery({
 		queryKey: ["security-dashboard-attack-session", selectedSessionId],
 		queryFn: () => getSecurityAttackSession(selectedSessionId as string),
 		enabled: Boolean(selectedSessionId),
-		refetchInterval: selectedSessionId ? 5000 : false,
+		refetchInterval: selectedSessionId ? 20_000 : false,
 	});
 	const sourceDetail = useQuery({
 		queryKey: ["security-source-detail", selectedSourceIp, nodeId],
-		queryFn: () => getSecurityEvents({ limit: 2000, ip: selectedSourceIp || undefined, nodeId, sinceMinutes: 60 }),
+		queryFn: () => getSecurityEvents({ limit: 400, ip: selectedSourceIp || undefined, nodeId, sinceMinutes: 60 }),
 		enabled: Boolean(selectedSourceIp),
-		refetchInterval: selectedSourceIp ? 5000 : false,
+		refetchInterval: selectedSourceIp ? 20_000 : false,
 	});
 	const sourceOverview = useQuery({
 		queryKey: ["security-source-overview", selectedSourceIp, nodeId],
 		queryFn: () => getSecurityOverview({ ip: selectedSourceIp || undefined, nodeId, sinceMinutes: 60 }),
 		enabled: Boolean(selectedSourceIp),
-		refetchInterval: selectedSourceIp ? 5000 : false,
+		refetchInterval: selectedSourceIp ? 20_000 : false,
 	});
 	const sourceAppEvents = useQuery({
 		queryKey: ["security-source-app-events", selectedSourceIp, nodeId],
