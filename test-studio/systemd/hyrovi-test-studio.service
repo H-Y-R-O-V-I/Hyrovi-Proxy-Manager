@@ -1,0 +1,27 @@
+[Unit]
+Description=HYROVI first-party test-only session lab
+After=network.target
+
+[Service]
+Type=simple
+User=hpm-test
+Group=hpm-test
+WorkingDirectory=/opt/hyrovi-test-studio
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HYROVI_TEST_BIND=172.18.0.1
+Environment=HYROVI_TEST_PORT=7346
+Environment=HYROVI_TEST_DB=/var/lib/hyrovi-test-studio/events.sqlite3
+ExecStart=/usr/bin/python3 -u /opt/hyrovi-test-studio/server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hyrovi-test-studio
+ProtectHome=true
+UMask=0077
+MemoryMax=100M
+TasksMax=30
+
+[Install]
+WantedBy=multi-user.target

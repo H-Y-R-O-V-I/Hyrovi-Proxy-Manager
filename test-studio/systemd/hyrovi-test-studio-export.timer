@@ -1,0 +1,11 @@
+[Unit]
+Description=Near-live test session snapshot for HYROVI Sec
+
+[Timer]
+OnBootSec=20s
+OnUnitInactiveSec=7s
+AccuracySec=1s
+Unit=hyrovi-test-studio-export.service
+
+[Install]
+WantedBy=timers.target

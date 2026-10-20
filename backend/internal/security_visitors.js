@@ -339,4 +339,65 @@ function update(id, values) {
   return op;
 }
 
-export default { list, detail, update };
+// Isolated first-party tests.hyrovi.com lab — only user-started sessions.
+const TEST_SNAPSHOT = "/data/vps-hpm-sync/tests-studio.json";
+const TEST_ID = /^[a-f0-9]{64}$/;
+const TEST_KIND = new Set(["page","button","scroll","heartbeat","section","visible"]);
+const TEST_DETAIL = new Set(["home","features","activity","about","tap","toggle","counter","reset",
+  "scroll25","scroll50","scroll75","scroll100","focus","hidden","visible","open"]);
+async function readTestStudio() {
+  let snapshot;
+  try {
+    const stat = await fs.promises.stat(TEST_SNAPSHOT);
+    if (stat.size > 750_000) return {generatedAt:null, online:false, sessions:[]};
+    snapshot = JSON.parse(await fs.promises.readFile(TEST_SNAPSHOT,"utf8"));
+  } catch (e) {
+    if (e.code === "ENOENT") return {generatedAt:null, online:false, sessions:[]};
+    throw e;
+  }
+  const created = Date.parse(snapshot.generatedAt || "");
+  if (snapshot.schema !== 1 || snapshot.scope !== "tests.hyrovi.com" ||
+      !Number.isFinite(created) || Date.now()-created > 30_000 ||
+      created > Date.now()+60_000) {
+    return {generatedAt:null, online:false, sessions:[]};
+  }
+  return {generatedAt:snapshot.generatedAt, online:true,
+    sessions:(Array.isArray(snapshot.sessions) ? snapshot.sessions : []).slice(0,100)
+      .filter(s => s && TEST_ID.test(String(s.id || "")) && Number.isFinite(Date.parse(s.last)))
+      .map(s => ({
+        id:s.id, name:safeString(s.name,32),
+        browser:safeString(s.browser,32), platform:safeString(s.platform,32),
+        language:safeString(s.language,32),
+        signature:/^[a-f0-9]{20}$/.test(String(s.signature||"")) ? s.signature : "",
+        started:s.started, last:s.last,
+        active:Boolean(s.active) && Date.now()-Date.parse(s.last)<40_000,
+        buttonActions:Math.max(0,Number(s.buttonActions)||0),
+        pageViews:Math.max(0,Number(s.pageViews)||0),
+        sectionChanges:Math.max(0,Number(s.sectionChanges)||0),
+        scrollActions:Math.max(0,Number(s.scrollActions)||0),
+        heartbeats:Math.max(0,Number(s.heartbeats)||0),
+        eventsCount:Math.max(0,Number(s.eventsCount)||0),
+        activityScore:Math.max(0,Number(s.activityScore)||0),
+        durationSeconds:Math.max(0,Number(s.durationSeconds)||0),
+        events:(Array.isArray(s.events) ? s.events:[]).slice(-250)
+         .filter(e=>e && TEST_KIND.has(e.kind) && TEST_DETAIL.has(e.detail) && Number.isFinite(Date.parse(e.at)))
+         .map(e=>({at:e.at,kind:e.kind,detail:e.detail}))
+      }))
+  };
+}
+async function testStudioList() {
+  const snapshot = await readTestStudio();
+  return {online:snapshot.online,generatedAt:snapshot.generatedAt,
+    scope:"tests.hyrovi.com",
+    sessions:snapshot.sessions.map(({events,...summary})=>summary),
+    total:snapshot.sessions.length,
+    active:snapshot.sessions.filter(s=>s.active).length};
+}
+async function testStudioDetail(id) {
+  if (!TEST_ID.test(String(id || ""))) return null;
+  const snapshot = await readTestStudio();
+  const selected = snapshot.sessions.find(s=>s.id===id);
+  return selected ? {session:selected,generatedAt:snapshot.generatedAt} : null;
+}
+
+export default { list, detail, update, testStudioList, testStudioDetail };

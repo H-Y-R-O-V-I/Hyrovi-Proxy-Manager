@@ -180,6 +180,24 @@ router.post("/analytics/collect", async (req, res, next) => {
 
 router.use(jwtdecode());
 
+// Only HPM operators with the security logs permission can see test-session details.
+router.get("/test-studio", async (req, res, next) => {
+    try {
+        await res.locals.access.can("logs:list");
+        res.set("Cache-Control", "no-store");
+        res.status(200).send(await internalSecurityVisitors.testStudioList());
+    } catch (err) { next(err); }
+});
+
+router.get("/test-studio/:id", async (req, res, next) => {
+    try {
+        await res.locals.access.can("logs:list");
+        const data = await internalSecurityVisitors.testStudioDetail(req.params.id);
+        res.set("Cache-Control", "no-store");
+        res.status(data ? 200 : 404).send(data || {error:{message:"Test session not found"}});
+    } catch (err) { next(err); }
+});
+
 router.get("/visitors", async (req, res, next) => {
     try {
         await res.locals.access.can("logs:list");

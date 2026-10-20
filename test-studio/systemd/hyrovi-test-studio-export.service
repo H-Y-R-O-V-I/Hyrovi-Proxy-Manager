@@ -1,0 +1,11 @@
+[Unit]
+Description=Export private opt-in HYROVI test session metrics to Pi
+After=network-online.target hyrovi-test-studio.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+NoNewPrivileges=true
+ExecStart=/usr/bin/python3 /usr/local/libexec/hyrovi-test-studio-export.py
+TimeoutStartSec=20

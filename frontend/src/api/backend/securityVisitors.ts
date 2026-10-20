@@ -84,3 +84,41 @@ export const getSecurityVisitor = (id: string): Promise<{visitor: SecurityVisito
   boundedRequest((controller) => api.get({ url: "/security/visitors/" + encodeURIComponent(id) }, controller));
 export const saveSecurityVisitor = (id: string, data: {name: string; notes: string}): Promise<{id: string; name: string; notes: string}> =>
   api.put({ url: "/security/visitors/" + encodeURIComponent(id), data });
+
+export interface TestStudioEvent {
+  at: string;
+  kind: "page" | "button" | "scroll" | "heartbeat" | "section" | "visible";
+  detail: string;
+}
+export interface TestStudioSession {
+  id: string;
+  name: string;
+  browser: string;
+  platform: string;
+  language: string;
+  signature: string;
+  started: string;
+  last: string;
+  active: boolean;
+  buttonActions: number;
+  pageViews: number;
+  sectionChanges: number;
+  scrollActions: number;
+  heartbeats: number;
+  eventsCount: number;
+  activityScore: number;
+  durationSeconds: number;
+  events?: TestStudioEvent[];
+}
+export interface TestStudioOverview {
+  scope: string;
+  online: boolean;
+  generatedAt: string | null;
+  sessions: TestStudioSession[];
+  total: number;
+  active: number;
+}
+export const getTestStudioOverview = (): Promise<TestStudioOverview> =>
+  boundedRequest((controller) => api.get({url:"/security/test-studio"}, controller), 8);
+export const getTestStudioDetail = (id: string): Promise<{session:TestStudioSession; generatedAt:string}> =>
+  boundedRequest((controller) => api.get({url:"/security/test-studio/"+encodeURIComponent(id)}, controller), 8);
