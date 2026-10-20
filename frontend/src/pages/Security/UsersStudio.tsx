@@ -8,6 +8,8 @@ const stamp = (value: string | null) => value ? new Date(value).toLocaleString()
 export default function UsersStudio() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
+  const [mode, setMode] = useState<"activity" | "visitors">("activity");
+  const [expandedSite, setExpandedSite] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
@@ -38,16 +40,95 @@ export default function UsersStudio() {
       .join(" ").toLowerCase().includes(q);
   }), [list.data, search]);
 
+  if (mode === "activity") {
+    const traffic = list.data?.automaticActivity;
+    const websites = (traffic?.websites || []).filter((website) =>
+      !search.trim() || website.host.toLowerCase().includes(search.trim().toLowerCase())
+    );
+    const totalFailures = (traffic?.websites || []).reduce((sum, site) => sum + site.failures, 0);
+    const totalWrites = (traffic?.websites || []).reduce((sum, site) => sum + site.writes, 0);
+    return <div>
+      <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
+        <div><h2 className="mb-1">Users <span className="text-secondary">/ Automatic Site Activity</span></h2>
+          <p className="text-secondary mb-0">Server-side activity for proxied websites, with no visitor cookies or identity matching</p></div>
+        <div className="d-flex gap-2">
+          <button className="btn btn-outline-primary" type="button" onClick={() => {setMode("visitors");setSearch("");}}>
+            Consented visitors / Fingerprint Studio
+          </button>
+          <button className="btn btn-outline-secondary" type="button" onClick={() => list.refetch()}>
+            <IconRefresh size={16}/> Refresh
+          </button>
+        </div>
+      </div>
+      <div className="alert alert-info py-2">
+        This overview is collected automatically from normal HPM HTTP access logs. It does not
+        correlate requests to identifiable visitors, record form contents or infer button clicks.
+        Counts are from recent Pi HPM traffic only; VPS-only hosts are not included.
+      </div>
+      <div className="row g-3 mb-3">
+        <div className="col-md-4"><div className="card"><div className="card-body">
+          <div className="text-secondary small">Requests (recent log)</div><h2 className="mb-0">{traffic?.requests ?? "—"}</h2>
+        </div></div></div>
+        <div className="col-md-4"><div className="card"><div className="card-body">
+          <div className="text-secondary small">HTTP writes (POST / PUT / PATCH / DELETE)</div><h2 className="mb-0">{totalWrites}</h2>
+        </div></div></div>
+        <div className="col-md-4"><div className="card"><div className="card-body">
+          <div className="text-secondary small">HTTP 4xx / 5xx</div><h2 className="mb-0">{totalFailures}</h2>
+        </div></div></div>
+      </div>
+      <div className="card">
+        <div className="card-header d-flex align-items-center justify-content-between gap-2">
+          <h3 className="card-title">Websites with recent activity ({websites.length})</h3>
+          <input aria-label="Filter websites" className="form-control" style={{maxWidth:300}} placeholder="Filter domain…"
+            value={search} onChange={(e) => setSearch(e.target.value)}/>
+        </div>
+        {list.isLoading && <p className="p-3 text-secondary">Loading server activity…</p>}
+        {list.error && <p className="p-3 text-danger">{String(list.error)}</p>}
+        {!list.isLoading && websites.length===0 && <p className="p-3 text-secondary">No website traffic in the latest log window.</p>}
+        <div className="table-responsive">
+          <table className="table table-vcenter card-table">
+            <thead><tr><th>Host</th><th>Requests</th><th>Page requests (approx.)</th><th>Writes</th><th>Errors</th><th>Last activity</th></tr></thead>
+            <tbody>
+              {websites.map(site => <tr key={site.host}>
+                <td>
+                  <button type="button" className="btn btn-link p-0 text-start"
+                    onClick={() => setExpandedSite(expandedSite===site.host ? null : site.host)}>
+                    {site.host} {expandedSite===site.host?"−":"+"}
+                  </button>
+                  {expandedSite===site.host && <div className="small mt-2 text-secondary">
+                    {site.sections.map(section => <div key={section.section}>
+                      {section.section} · {section.count} requests
+                    </div>)}
+                    <div className="mt-1">Aggregated URL sections only; individual request paths and IPs are not displayed.</div>
+                  </div>}
+                </td>
+                <td>{site.requests}</td><td>{site.pages}</td><td>{site.writes}</td>
+                <td>{site.failures}</td><td className="small text-secondary">{stamp(site.latest)}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p className="small text-secondary mt-3">{traffic?.window || "Recent log tail"}.
+        The server receives and logs HTTP traffic automatically, including API calls that are not page views.
+        On-page UI interactions without a network request cannot be inferred from proxy logs.</p>
+    </div>;
+  }
+
   return <div>
     <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
       <div>
         <h2 className="mb-1">Users <span className="text-secondary">/ Fingerprint Studio</span></h2>
         <p className="text-secondary mb-0">Consented visitor IDs · Websites · Sessions · Actions</p>
       </div>
+      <div className="d-flex gap-2">
+      <button type="button" className="btn btn-outline-primary" onClick={() => {setMode("activity");setSearch("");}}>
+        Automatic Site Activity
+      </button>
       <button type="button" className="btn btn-outline-secondary"
         onClick={() => { list.refetch(); if (selectedId) detail.refetch(); }}>
         <IconRefresh size={16} className="me-1" /> Refresh
-      </button>
+      </button></div>
     </div>
     <div className="alert alert-info py-2" role="status">
       Only visitors who opted into first-party HYROVI analytics appear here. IDs can be shared across participating HYROVI subdomains.

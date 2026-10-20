@@ -3,9 +3,12 @@ import path from "node:path";
 
 const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
 const LABEL_FILE = "/data/nginx/hyrovi-security/visitor-labels.json";
+const PROXY_LOG_FILE = "/data/logs/hyrovi-sec.log";
 const READ_LIMIT = 4 * 1024 * 1024;
 const ID = /^[a-f0-9]{64}$/;
+const HOST = /^[a-z0-9][a-z0-9.-]{0,252}$/;
 let cached = { key: "", events: [], readAt: 0 };
+let trafficCache = { key: "", value: null, readAt: 0 };
 let queue = Promise.resolve();
 
 const safeString = (s, max = 120) => String(s ?? "").trim().slice(0, max);
@@ -39,6 +42,74 @@ async function readEvents() {
   }
   cached = { key, events, readAt: Date.now() };
   return events;
+}
+
+// HTTP request totals come from HPM proxy access logs. Deliberately
+// never read or return IPs, user agents, request IDs or cookies.
+// Aggregate operational traffic is not person tracking.
+async function readTraffic() {
+  let stat;
+  try { stat = await fs.promises.stat(PROXY_LOG_FILE); }
+  catch (err) {
+    if (err.code === "ENOENT") return { requests: 0, websites: [], window: "recent log tail" };
+    throw err;
+  }
+  const key = String(stat.size) + ":" + String(stat.mtimeMs);
+  if (trafficCache.key === key && trafficCache.value && Date.now() - trafficCache.readAt < 60000) return trafficCache.value;
+  const size = Math.min(stat.size, 2 * 1024 * 1024);
+  const f = await fs.promises.open(PROXY_LOG_FILE, "r");
+  let text;
+  try {
+    const b = Buffer.alloc(size);
+    await f.read(b, 0, size, stat.size - size);
+    text = b.toString("utf8");
+  } finally { await f.close(); }
+  if (stat.size > size) text = text.slice(Math.max(0, text.indexOf("\n") + 1));
+  const websites = new Map();
+  let requests = 0;
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    const host = safeString(e.host, 253).toLowerCase();
+    if (!HOST.test(host) || !host.includes(".")) continue;
+    const status = Number.parseInt(e.status, 10);
+    const method = safeString(e.method, 8).toUpperCase();
+    if (!Number.isInteger(status) || status < 100 || status > 599 ||
+        !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(method)) continue;
+    requests++;
+    let w = websites.get(host);
+    if (!w) {
+      w = { host, requests: 0, pages: 0, writes: 0, failures: 0, latest: null, sections: new Map() };
+      websites.set(host, w);
+    }
+    w.requests++;
+    const path = safeString(e.path, 512).split("?")[0].split("#")[0];
+    const accept = safeString(e.accept, 140).toLowerCase();
+    if (method === "GET" && (accept.includes("text/html") || path === "/")) w.pages++;
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) w.writes++;
+    if (status >= 400) w.failures++;
+    const ts = Date.parse(e.ts || "");
+    if (Number.isFinite(ts) && (!w.latest || ts > Date.parse(w.latest))) {
+      w.latest = new Date(Math.floor(ts / 300000) * 300000).toISOString();
+    }
+    // Only FIRST route segment, never any dynamic IDs, queries or sensitive paths.
+    let section = /^\/[a-zA-Z][a-zA-Z0-9_-]{0,35}(?:\/|$)/.exec(path)?.[0] || "/";
+    section = section === "/" ? "/" : "/" + section.split("/")[1];
+    if (/^\/(?:auth|login|identity|oauth|token|session|account|user|admin|private|secret|password|vault|api)$/i.test(section)) section = "/[restricted]";
+    w.sections.set(section, (w.sections.get(section) || 0) + 1);
+  }
+  const value = {
+    requests, window: "recent Pi proxy access log (up to 2 MiB)",
+    websites: [...websites.values()].map(w => ({
+      host: w.host, requests: w.requests, pages: w.pages, writes: w.writes,
+      failures: w.failures, latest: w.latest,
+      sections: [...w.sections].sort((a,b)=>b[1]-a[1]).slice(0, 6)
+        .map(([section, count]) => ({section, count}))
+    })).sort((a,b) => b.requests - a.requests).slice(0, 100)
+  };
+  trafficCache = { key, value, readAt: Date.now() };
+  return value;
 }
 
 async function readLabels() {
@@ -89,8 +160,8 @@ function buildProfiles(events, labels) {
 }
 
 async function list() {
-  const [events, labels] = await Promise.all([readEvents(), readLabels()]);
-  return { visitors: buildProfiles(events, labels).slice(0, 200), totalEvents: events.length,
+  const [events, labels, automaticActivity] = await Promise.all([readEvents(), readLabels(), readTraffic()]);
+  return { automaticActivity, visitors: buildProfiles(events, labels).slice(0, 200), totalEvents: events.length,
     note: "Only opted-in HYROVI visitors. Browser hints are not used to identify people. Recent log window only." };
 }
 

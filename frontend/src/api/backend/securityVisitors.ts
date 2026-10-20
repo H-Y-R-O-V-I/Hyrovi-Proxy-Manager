@@ -22,7 +22,21 @@ export interface SecurityVisitorEvent {
   action: string; referrerHost: string; scrollDepth: number; visibleSeconds: number;
   language: string; viewport: string;
 }
-export const getSecurityVisitors = (): Promise<{visitors: SecurityVisitor[]; totalEvents: number; note: string}> =>
+export interface SecuritySiteActivity {
+  host: string;
+  requests: number;
+  pages: number;
+  writes: number;
+  failures: number;
+  latest: string | null;
+  sections: Array<{ section: string; count: number }>;
+}
+export interface AutomaticSiteActivity {
+  requests: number;
+  window: string;
+  websites: SecuritySiteActivity[];
+}
+export const getSecurityVisitors = (): Promise<{visitors: SecurityVisitor[]; totalEvents: number; note: string; automaticActivity: AutomaticSiteActivity}> =>
   api.get({ url: "/security/visitors" });
 export const getSecurityVisitor = (id: string): Promise<{visitor: SecurityVisitor; timeline: SecurityVisitorEvent[]}> =>
   api.get({ url: "/security/visitors/" + encodeURIComponent(id) });

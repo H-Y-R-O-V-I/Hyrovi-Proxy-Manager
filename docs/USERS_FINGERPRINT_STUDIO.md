@@ -45,3 +45,18 @@ Historical anonymous proxy traffic cannot be assigned retrospectively.
 On Pi restore the saved Compose file to the runtime directory and recreate
 only the hpm container with Docker Compose. Persistent /data and
 /etc/letsencrypt volumes remain untouched.
+
+## 2026-10-20: automatic consent-free site activity
+HYROVI Sec > Users opens "Automatic Site Activity" by default.
+This summary reads the existing Pi HPM HTTP security/access log, without
+setting tracking cookies or assigning events to particular people.
+Every Pi-HPM-proxied site appearing in the recent log can appear automatically.
+Shown: request counts per domain, approximate HTML page requests, HTTP write
+requests, 4xx/5xx errors, coarse five-minute latest activity, aggregated
+first URL segments with auth/token/API segments restricted. URL queries, IPs,
+user agents, request IDs and secrets are NOT in the new API response.
+Two-MiB bounded log window and 60s UI refresh reduce load.
+This cannot detect clicks with no HTTP request or identify individual persons.
+The optional opt-in visitor ID profile remains a separate subview and is NOT
+fed by this anonymous summary. VPS-only HPM logs remain outside this view.
+A privacy notice/lawful basis may still be required for ordinary server logs.
