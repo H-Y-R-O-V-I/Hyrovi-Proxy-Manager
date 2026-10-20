@@ -4,6 +4,7 @@ import path from "node:path";
 const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
 const LABEL_FILE = "/data/nginx/hyrovi-security/visitor-labels.json";
 const PROXY_LOG_FILE = "/data/logs/hyrovi-sec.log";
+const VPS_EXPORT_FILE = "/data/vps-hpm-sync/vps-hpm-activity.json";
 const READ_LIMIT = 4 * 1024 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 const HOST = /^[a-z0-9][a-z0-9.-]{0,252}$/;
@@ -112,6 +113,76 @@ async function readTraffic() {
   return value;
 }
 
+// The VPS sends only aggregates and explicitly-consented browser events.
+// No raw VPS proxy log, IP address or unconsented session identifier is copied.
+async function readVpsActivity() {
+  let data;
+  try {
+    const stat = await fs.promises.stat(VPS_EXPORT_FILE);
+    if (stat.size > 1_500_000) return null;
+    data = JSON.parse(await fs.promises.readFile(VPS_EXPORT_FILE, "utf8"));
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+  const generated = Date.parse(data.generatedAt || "");
+  if (data.schema !== 1 || !Number.isFinite(generated) || Date.now() - generated > 10 * 60 * 1000) return null;
+  return {
+    generatedAt: data.generatedAt,
+    requests: Number(data.requests) || 0,
+    websites: Array.isArray(data.websites) ? data.websites.slice(0, 100) : [],
+    consentedEvents: (Array.isArray(data.consentedEvents) ? data.consentedEvents : [])
+      .filter((e) => e && e.consent === true && safeId(e.deviceKey) && Number.isFinite(Date.parse(e.timestamp))),
+    browserEvents: Number(data.browserEvents) || 0,
+    window: String(data.window || "VPS 24h")
+  };
+}
+
+function mergeTraffic(local, remote, piEvents) {
+  const localSites = (local.websites || []).map(site => ({
+    ...site, source: "Pi", browserViews: 0, browserActions: 0,
+    browserScroll: 0, browserEngagementSeconds: 0, browserLastSeen: null
+  }));
+  const piByHost = new Map(localSites.map(s => [s.host, s]));
+  for (const event of piEvents) {
+    let site = piByHost.get(event.host);
+    if (!site) {
+      site = { host: event.host, requests: 0, pages: 0, writes: 0, failures: 0,
+        latest: null, sections: [], source: "Pi", browserViews: 0,
+        browserActions: 0, browserScroll: 0, browserEngagementSeconds: 0, browserLastSeen: null };
+      localSites.push(site);
+      piByHost.set(event.host, site);
+    }
+    if (["page_view", "route_change"].includes(event.type)) site.browserViews++;
+    if (event.type === "action") site.browserActions++;
+    if (event.type === "scroll") site.browserScroll++;
+    if (event.type === "engagement") site.browserEngagementSeconds += Number(event.visibleSeconds) || 0;
+    if (!site.browserLastSeen || Date.parse(event.timestamp) > Date.parse(site.browserLastSeen)) {
+      site.browserLastSeen = event.timestamp;
+    }
+  }
+  const remoteSites = (remote?.websites || []).filter(site => site.source === "VPS" &&
+    HOST.test(String(site.host || "")) &&
+    typeof site.requests === "number").map(site => ({
+      host: site.host, source: "VPS", requests: site.requests, pages: site.pages || 0,
+      writes: site.writes || 0, failures: site.failures || 0, latest: site.latest || null,
+      sections: site.sections || [], browserViews: site.browserViews || 0,
+      browserActions: site.browserActions || 0, browserScroll: site.browserScroll || 0,
+      browserEngagementSeconds: site.browserEngagementSeconds || 0,
+      browserLastSeen: site.browserLastSeen || null
+    }));
+  const websites = [...localSites, ...remoteSites].sort((a,b) =>
+    (b.browserViews - a.browserViews) || (b.requests - a.requests));
+  return {
+    requests: local.requests + (remote?.requests || 0),
+    browserViews: websites.reduce((sum, s) => sum + s.browserViews, 0),
+    browserEvents: (remote?.browserEvents || 0) + piEvents.length,
+    window: "Pi recent log tail; VPS last 24 hours",
+    remoteGeneratedAt: remote?.generatedAt || null,
+    websites: websites.slice(0, 200),
+  };
+}
+
 async function readLabels() {
   try {
     const data = JSON.parse(await fs.promises.readFile(LABEL_FILE, "utf8"));
@@ -199,7 +270,11 @@ function buildProfiles(events, labels) {
 }
 
 async function list() {
-  const [events, labels, automaticActivity] = await Promise.all([readEvents(), readLabels(), readTraffic()]);
+  const [piEvents, labels, localTraffic, remote] = await Promise.all([
+    readEvents(), readLabels(), readTraffic(), readVpsActivity()
+  ]);
+  const events = [...piEvents, ...(remote?.consentedEvents || [])];
+  const automaticActivity = mergeTraffic(localTraffic, remote, piEvents);
   return { automaticActivity, visitors: buildProfiles(events, labels).slice(0, 200), totalEvents: events.length,
     note: "Only opted-in HYROVI visitors. Browser hints are not used to identify people. Recent log window only." };
 }
@@ -207,8 +282,8 @@ async function list() {
 async function detail(id) {
   const visitorId = safeId(id);
   if (!visitorId) return null;
-  const [events, labels] = await Promise.all([readEvents(), readLabels()]);
-  const selected = events.filter((e) => e.deviceKey === visitorId);
+  const [piEvents, labels, remote] = await Promise.all([readEvents(), readLabels(), readVpsActivity()]);
+  const selected = [...piEvents, ...(remote?.consentedEvents || [])].filter((e) => e.deviceKey === visitorId);
   if (!selected.length) return null;
   const visitor = buildProfiles(selected, labels)[0];
   return { visitor, timeline: selected.slice(-300).reverse().map((e) => ({
@@ -225,8 +300,8 @@ function update(id, values) {
   if (!visitorId || !values || typeof values !== "object") throw new Error("invalid_visitor");
   const name = safeString(values.name, 120), notes = safeString(values.notes, 500);
   const op = queue.then(async () => {
-    const events = await readEvents();
-    if (!events.some((e) => e.deviceKey === visitorId)) return null;
+    const [events, remote] = await Promise.all([readEvents(), readVpsActivity()]);
+    if (![...events, ...(remote?.consentedEvents || [])].some((e) => e.deviceKey === visitorId)) return null;
     const labels = await readLabels();
     if (name || notes) labels[visitorId] = { name, notes };
     else delete labels[visitorId];

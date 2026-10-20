@@ -32,6 +32,12 @@ export interface SecurityVisitorEvent {
 }
 export interface SecuritySiteActivity {
   host: string;
+  source: "Pi" | "VPS";
+  browserViews: number;
+  browserActions: number;
+  browserScroll: number;
+  browserEngagementSeconds: number;
+  browserLastSeen: string | null;
   requests: number;
   pages: number;
   writes: number;
@@ -40,6 +46,9 @@ export interface SecuritySiteActivity {
   sections: Array<{ section: string; count: number }>;
 }
 export interface AutomaticSiteActivity {
+  remoteGeneratedAt: string | null;
+  browserViews: number;
+  browserEvents: number;
   requests: number;
   window: string;
   websites: SecuritySiteActivity[];

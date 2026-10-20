@@ -48,11 +48,10 @@ export default function UsersStudio() {
       !search.trim() || website.host.toLowerCase().includes(search.trim().toLowerCase())
     );
     const totalFailures = (traffic?.websites || []).reduce((sum, site) => sum + site.failures, 0);
-    const totalWrites = (traffic?.websites || []).reduce((sum, site) => sum + site.writes, 0);
     return <div>
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
         <div><h2 className="mb-1">Users <span className="text-secondary">/ Übersicht</span></h2>
-          <p className="text-secondary mb-0">Server-side activity for proxied websites, with no visitor cookies or identity matching</p></div>
+          <p className="text-secondary mb-0">Besuche über Pi und VPS, ohne individuelle Browser-Zuordnung</p></div>
         <div className="d-flex flex-wrap gap-2">
           <button className="btn btn-outline-primary" type="button" onClick={() => {setMode("visitors");setSearch("");}}>
             Liste · Browser-Besucher
@@ -63,16 +62,16 @@ export default function UsersStudio() {
         </div>
       </div>
       <div className="alert alert-info py-2">
-        This overview is collected automatically from normal HPM HTTP access logs. It does not
-        correlate requests to identifiable visitors, record form contents or infer button clicks.
-        Counts are from recent Pi HPM traffic only; VPS-only hosts are not included.
+        HTTP-Anfragen kommen aus den Proxy-Logs. Browser-Seitenaufrufe stammen zusätzlich vom eingebundenen
+        Website-Skript, auch auf dem VPS. Sie zeigen ausgeführtes JavaScript, aber keine verifizierten Menschen.
+        Einzelne Besucher und ihre Aktionen erscheinen erst bei Zustimmung zur individuellen Analyse.
       </div>
       <div className="row g-3 mb-3">
         <div className="col-md-4"><div className="card"><div className="card-body">
-          <div className="text-secondary small">Requests (recent log)</div><h2 className="mb-0">{traffic?.requests ?? "—"}</h2>
+          <div className="text-secondary small">HTTP-Anfragen (Pi + VPS)</div><h2 className="mb-0">{traffic?.requests ?? "—"}</h2>
         </div></div></div>
         <div className="col-md-4"><div className="card"><div className="card-body">
-          <div className="text-secondary small">HTTP writes (POST / PUT / PATCH / DELETE)</div><h2 className="mb-0">{traffic ? totalWrites : "—"}</h2>
+          <div className="text-secondary small">Browser-Seitenaufrufe (Pi + VPS)</div><h2 className="mb-0">{traffic?.browserViews ?? "—"}</h2>
         </div></div></div>
         <div className="col-md-4"><div className="card"><div className="card-body">
           <div className="text-secondary small">HTTP 4xx / 5xx</div><h2 className="mb-0">{traffic ? totalFailures : "—"}</h2>
@@ -80,8 +79,8 @@ export default function UsersStudio() {
       </div>
       <div className="card">
         <div className="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
-          <h3 className="card-title">Websites with recent activity ({websites.length})</h3>
-          <input aria-label="Filter websites" className="form-control" style={{maxWidth:300}} placeholder="Filter domain…"
+          <h3 className="card-title">Websites mit Aktivität ({websites.length})</h3>
+          <input aria-label="Filter websites" className="form-control" style={{maxWidth:300}} placeholder="Domain filtern…"
             value={search} onChange={(e) => setSearch(e.target.value)}/>
         </div>
         {list.isLoading && <div className="p-3 text-secondary" role="status">
@@ -97,31 +96,33 @@ export default function UsersStudio() {
         </p>}
         <div className="table-responsive">
           <table className="table table-vcenter card-table">
-            <thead><tr><th>Host</th><th>Requests</th><th>Page requests (approx.)</th><th>Writes</th><th>Errors</th><th>Last activity</th></tr></thead>
+            <thead><tr><th>Website / Node</th><th>Browser-Aufrufe</th><th>HTTP-Anfragen</th><th>Schreibzugriffe</th><th>Fehler</th><th>Zuletzt</th></tr></thead>
             <tbody>
-              {websites.map(site => <tr key={site.host}>
+              {websites.map(site => <tr key={site.source + site.host}>
                 <td>
                   <button type="button" className="btn btn-link p-0 text-start"
-                    onClick={() => setExpandedSite(expandedSite===site.host ? null : site.host)}>
-                    {site.host} {expandedSite===site.host?"−":"+"}
+                    onClick={() => setExpandedSite(expandedSite===site.source+site.host ? null : site.source+site.host)}>
+                    {site.host} {expandedSite===site.source+site.host?"−":"+"}
                   </button>
-                  {expandedSite===site.host && <div className="small mt-2 text-secondary">
+                  <span className="badge bg-secondary-lt ms-2">{site.source}</span>
+                  {expandedSite===site.source+site.host && <div className="small mt-2 text-secondary">
+                    {site.browserViews} Browser-Seitenaufrufe · {site.browserScroll} Scroll-Ereignisse · {site.browserEngagementSeconds} sichtbare Sekunden
                     {site.sections.map(section => <div key={section.section}>
                       {section.section} · {section.count} requests
                     </div>)}
-                    <div className="mt-1">Aggregated URL sections only; individual request paths and IPs are not displayed.</div>
+                    <div className="mt-1">Nur aggregierte URL-Bereiche aus HTTP-Logs; keine individuellen IPs oder Browser-Sitzungen.</div>
                   </div>}
                 </td>
-                <td>{site.requests}</td><td>{site.pages}</td><td>{site.writes}</td>
-                <td>{site.failures}</td><td className="small text-secondary">{stamp(site.latest)}</td>
+                <td><strong>{site.browserViews}</strong></td><td>{site.requests}</td><td>{site.writes}</td>
+                <td>{site.failures}</td><td className="small text-secondary">{stamp(site.browserLastSeen || site.latest)}</td>
               </tr>)}
             </tbody>
           </table>
         </div>
       </div>
-      <p className="small text-secondary mt-3">{traffic?.window || "Recent log tail"}.
-        The server receives and logs HTTP traffic automatically, including API calls that are not page views.
-        On-page UI interactions without a network request cannot be inferred from proxy logs.</p>
+      <p className="small text-secondary mt-3">{traffic?.window || "Jüngster Log-Ausschnitt"}.
+        Browser-Aufrufe werden ohne individuelle Besucher-ID gezählt. VPS-Daten zuletzt synchronisiert:
+        {traffic?.remoteGeneratedAt ? " " + stamp(traffic.remoteGeneratedAt) : " nicht verfügbar"}.</p>
     </div>;
   }
 
@@ -158,6 +159,28 @@ export default function UsersStudio() {
         <IconDeviceDesktop size={26} /><div><div className="text-secondary small">Besuchte Websites</div>
           <h3 className="mb-0">{new Set((list.data?.visitors ?? []).flatMap(v => v.sites.map(s => s.host))).size}</h3></div>
       </div></div></div>
+    </div>
+    <div className="card mb-3">
+      <div className="card-header"><h3 className="card-title">Anonyme Browser-Besuche nach Website</h3></div>
+      <div className="card-body text-secondary small">
+        Diese Zähler beruhen auf tatsächlich ausgeführtem Browser-JavaScript. Sie sind nicht einzelnen
+        Personen zugeordnet. Wähle einen Browser-Besucher weiter unten aus, sobald dieser der individuellen
+        Analyse zugestimmt hat.
+      </div>
+      <div className="table-responsive">
+        <table className="table table-vcenter card-table">
+          <thead><tr><th>Website</th><th>Browser-Aufrufe</th><th>Letzter Aufruf</th></tr></thead>
+          <tbody>
+            {(list.data?.automaticActivity?.websites || []).filter(site => site.browserViews > 0).slice(0, 30)
+              .map(site => <tr key={site.source + site.host}>
+                <td>{site.host} <span className="badge bg-secondary-lt">{site.source}</span></td>
+                <td>{site.browserViews}</td><td>{stamp(site.browserLastSeen)}</td>
+              </tr>)}
+            {list.isSuccess && !(list.data?.automaticActivity?.websites || []).some(site => site.browserViews > 0) &&
+              <tr><td colSpan={3} className="text-secondary">Bisher keine Browser-Aufrufe im verfügbaren Ausschnitt.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </div>
     <div className="row g-3">
       <div className="col-lg-5">
