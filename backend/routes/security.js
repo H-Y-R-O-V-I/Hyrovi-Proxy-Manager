@@ -189,6 +189,15 @@ router.get("/test-studio", async (req, res, next) => {
     } catch (err) { next(err); }
 });
 
+router.get("/test-studio/browser/:id", async (req, res, next) => {
+    try {
+        await res.locals.access.can("logs:list");
+        const data = await internalSecurityVisitors.testStudioBrowserDetail(req.params.id);
+        res.set("Cache-Control", "no-store");
+        res.status(data ? 200 : 404).send(data || {error:{message:"Test browser not found"}});
+    } catch(err) { next(err); }
+});
+
 router.get("/test-studio/:id", async (req, res, next) => {
     try {
         await res.locals.access.can("logs:list");

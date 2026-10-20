@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { IconActivity, IconRefresh, IconUsers, IconWorld, IconArrowUpRight, IconClock } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
-import { getTestStudioDetail, getTestStudioOverview, type TestStudioEvent } from "src/api/backend/securityVisitors";
+import { getTestStudioBrowserDetail, getTestStudioOverview, type TestStudioEvent } from "src/api/backend/securityVisitors";
 
 const time = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleString("de-DE") : "—";
 const when = (iso: string) => {
@@ -10,7 +10,6 @@ const when = (iso: string) => {
   if (elapsed < 3600) return "vor " + Math.floor(elapsed / 60) + " Min.";
   return time(iso);
 };
-const seconds = (s: number) => s > 60 ? Math.floor(s / 60) + "m " + s % 60 + "s" : s + "s";
 const eventLabel:Record<string,string> = {
   page:"Seite besucht",section:"Bereich gewechselt",button:"Testaktion",scroll:"Gescrollt",
   heartbeat:"Aktivitätsmeldung",visible:"Sichtbarkeit"
@@ -36,30 +35,31 @@ export default function TestsStudio({onOverview,onVisitors}:{onOverview:()=>void
     retry:1
   });
   const details = useQuery({
-    queryKey:["security-tests-session",selectedId],
-    queryFn:()=>getTestStudioDetail(selectedId || ""),
+    queryKey:["security-tests-browser",selectedId],
+    queryFn:()=>getTestStudioBrowserDetail(selectedId || ""),
     enabled:!!selectedId,
     staleTime:2000,
     refetchInterval:selectedId?5000:false,
     retry:1
   });
   useEffect(()=>{
-    if(selectedId && report.data && !report.data.sessions.some(s=>s.id===selectedId))setSelectedId(null);
+    if(selectedId && report.data && !(report.data.browsers||[]).some(s=>s.id===selectedId))setSelectedId(null);
   },[selectedId,report.data]);
 
-  const rows = useMemo(()=>(report.data?.sessions||[])
-    .filter(s=>(!activeOnly||s.active) && (!query || (s.name+" "+s.id).toLowerCase().includes(query.trim().toLowerCase())))
+  const rows = useMemo(()=>(report.data?.browsers||[])
+    .filter(s=>(!activeOnly||s.active) && (!query || (s.name+" "+s.id+" "+s.aliases.join(" ")).toLowerCase().includes(query.trim().toLowerCase())))
     .sort((a,b)=>b.activityScore-a.activityScore || Date.parse(b.last)-Date.parse(a.last)),
     [report.data,query,activeOnly]);
-  const top = report.data?.sessions[0];
+  const top = rows[0];
   const allActions=(report.data?.sessions||[]).reduce((n,s)=>n+s.buttonActions+s.sectionChanges+s.scrollActions,0);
-  const session=details.data?.session;
+  const session=details.data?.browser;
+  const timeline=details.data?.timeline || [];
   return <div>
     <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
       <div>
         <div className="text-secondary small mb-1">HYROVI SEC / USERS / ISOLATED LAB</div>
         <h2 className="mb-1">Live Test Studio</h2>
-        <p className="text-secondary mb-0">Aktivste Testsitzungen auf <a href="https://tests.hyrovi.com/" target="_blank" rel="noopener noreferrer">tests.hyrovi.com <IconArrowUpRight size={14}/></a></p>
+        <p className="text-secondary mb-0">Browser-Profile mit zusammengefassten Testsitzungen auf <a href="https://tests.hyrovi.com/" target="_blank" rel="noopener noreferrer">tests.hyrovi.com <IconArrowUpRight size={14}/></a></p>
       </div>
       <div className="d-flex flex-wrap gap-2">
         <button type="button" className="btn btn-outline-secondary" onClick={onOverview}>Proxy-Übersicht</button>
@@ -80,19 +80,19 @@ export default function TestsStudio({onOverview,onVisitors}:{onOverview:()=>void
     </div>}
     <div className="row g-3 mb-3">
       <div className="col-6 col-lg-3"><div className="card"><div className="card-body">
-        <div className="text-secondary small"><IconUsers size={16} className="me-1"/>Sitzungen (24h)</div>
-        <h2 className="mb-0">{report.data?.total ?? "—"}</h2>
+        <div className="text-secondary small"><IconUsers size={16} className="me-1"/>Browser-Profile (24h)</div>
+        <h2 className="mb-0">{report.data ? (report.data.browsers||[]).length : "—"}</h2>
       </div></div></div>
       <div className="col-6 col-lg-3"><div className="card"><div className="card-body">
         <div className="text-secondary small"><IconActivity size={16} className="me-1"/>Jetzt aktiv</div>
-        <h2 className="mb-0">{report.data?.active ?? "—"}</h2>
+        <h2 className="mb-0">{report.data ? (report.data.browsers||[]).filter(s=>s.active).length : "—"}</h2>
       </div></div></div>
       <div className="col-6 col-lg-3"><div className="card"><div className="card-body">
         <div className="text-secondary small"><IconWorld size={16} className="me-1"/>Testaktionen insgesamt</div>
         <h2 className="mb-0">{report.data ? allActions : "—"}</h2>
       </div></div></div>
       <div className="col-6 col-lg-3"><div className="card"><div className="card-body">
-        <div className="text-secondary small"><IconClock size={16} className="me-1"/>Aktivste Sitzung</div>
+        <div className="text-secondary small"><IconClock size={16} className="me-1"/>Aktivster Browser</div>
         <h2 className="mb-0 text-truncate" style={{fontSize:20}}>{top?.name || "—"}</h2>
       </div></div></div>
     </div>
@@ -100,16 +100,16 @@ export default function TestsStudio({onOverview,onVisitors}:{onOverview:()=>void
       <div className="col-lg-5">
         <div className="card">
           <div className="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
-            <h3 className="card-title">Aktivste Test-Besucher</h3>
+            <h3 className="card-title">Aktivste Browser-Profile</h3>
             <span className="badge bg-blue-lt">Rangliste</span>
           </div>
           <div className="card-body d-flex flex-column gap-2">
-            <input className="form-control" aria-label="Testsitzungen suchen" placeholder="Testnamen suchen…"
+            <input className="form-control" aria-label="Browser-Profile suchen" placeholder="Browser oder Testnamen suchen…"
               value={query} onChange={e=>setQuery(e.target.value)}/>
             <label className="form-check">
               <input className="form-check-input" type="checkbox" checked={activeOnly}
                 onChange={e=>setActiveOnly(e.target.checked)}/>
-              <span className="form-check-label">Nur aktive Sitzungen</span>
+              <span className="form-check-label">Nur aktive Browser</span>
             </label>
           </div>
           <div className="list-group list-group-flush" style={{maxHeight:650,overflowY:"auto"}}>
@@ -127,22 +127,23 @@ export default function TestsStudio({onOverview,onVisitors}:{onOverview:()=>void
                   {s.active?"Live":"Zuletzt aktiv"}
                 </span>
               </div>
-              <div className="small opacity-75 mt-1">{s.buttonActions} Buttons · {s.pageViews} Seiten · {s.sectionChanges} Wechsel · {s.scrollActions} Scrolls</div>
-              <div className="small opacity-75">{s.activityScore} Aktivitätspunkte · {when(s.last)}</div>
+              <div className="small opacity-75 mt-1"><strong>{s.sessionsCount} Testsitzung{s.sessionsCount===1?"":"en"}</strong> · {s.buttonActions} Buttons · {s.pageViews} Seiten · {s.sectionChanges} Wechsel · {s.scrollActions} Scrolls</div>
+              <div className="small opacity-75">{s.browser} · {s.platform} · {s.activityScore} Punkte · {when(s.last)}</div>
             </button>)}
           </div>
         </div>
         <p className="text-secondary small mt-2">
           Aktivitätspunkte: Testbutton ×4, Bereichswechsel ×2, Seitenaufruf ×1, Scrollereignis ×1.
-          Heartbeats erhöhen den Rang nicht. Ein Eintrag steht für eine gestartete Testsitzung,
-          nicht zwingend für eine eindeutig identifizierte Person.
+          Heartbeats erhöhen den Rang nicht. Sitzungen mit identischen, auf tests.hyrovi.com
+          begrenzten Header-Signaturen werden zu einem wahrscheinlichen Browser-Profil zusammengefasst.
+          Gleiche Merkmale beweisen keine gemeinsame Person oder dasselbe physische Gerät.
         </p>
       </div>
       <div className="col-lg-7">
         {!selectedId ? <div className="card"><div className="card-body text-secondary">
-          Wähle links eine Testsitzung aus. Hier erscheint dann die Ereignisfolge mit Zeitpunkten, Seitenbereichen und Aktionen.
+          Wähle links ein Browser-Profil. Hier erscheinen alle zugehörigen Testsitzungen und ihre gemeinsame Ereignisfolge.
         </div></div> : <div className="card">
-          <div className="card-header"><h3 className="card-title">Sitzungsdetails</h3></div>
+          <div className="card-header"><h3 className="card-title">Browser-Profil und Testsitzungen</h3></div>
           {details.isLoading && <div className="p-3 text-secondary">Details werden geladen…</div>}
           {details.isError && <div className="p-3 text-danger">Die Sitzung konnte nicht geladen werden.</div>}
           {session && <>
@@ -151,33 +152,47 @@ export default function TestsStudio({onOverview,onVisitors}:{onOverview:()=>void
                 <h3 className="mb-0">{session.name}</h3>
                 <span className={"badge "+(session.active?"bg-success-lt text-success":"bg-secondary-lt")}>{session.active?"Aktiv":"Nicht aktiv"}</span>
               </div>
-              <div className="small text-secondary text-break">Pseudonyme Test-ID: {session.id.slice(0,16)}…</div>
+              <div className="small text-secondary text-break">Browser-Gruppen-ID: {session.id.slice(0,16)}…</div>
               <div className="small text-secondary mt-2">
                 Browser-Fingerprint (nur tests.hyrovi.com): <strong>{session.signature || "—"}</strong>
                 <div>{session.browser || "Unbekannt"} · {session.platform || "Unbekannt"} · Sprache {session.language || "—"}</div>
                 <div>Abgeleitet aus beim Teststart gesendeten HTTP-Headern. Mehrere Geräte können dieselbe Signatur haben.</div>
+                <div className="mt-1">Weitere Testsitzungsnamen: {session.aliases.join(", ") || "—"}</div>
               </div>
               <dl className="row mt-3 mb-0">
-                <dt className="col-5">Gestartet</dt><dd className="col-7">{time(session.started)}</dd>
+                <dt className="col-5">Erstmals getestet</dt><dd className="col-7">{time(session.firstSeen)}</dd>
                 <dt className="col-5">Zuletzt aktiv</dt><dd className="col-7">{when(session.last)}</dd>
-                <dt className="col-5">Sitzungsdauer</dt><dd className="col-7">{seconds(session.durationSeconds)}</dd>
+                <dt className="col-5">Testsitzungen</dt><dd className="col-7">{session.sessionsCount}</dd>
                 <dt className="col-5">Buttons</dt><dd className="col-7">{session.buttonActions}</dd>
                 <dt className="col-5">Seitenwechsel</dt><dd className="col-7">{session.sectionChanges}</dd>
                 <dt className="col-5">Ereignisse</dt><dd className="col-7">{session.eventsCount}</dd>
               </dl>
+              <div className="small text-secondary mt-3"><strong>Weitere Testdiagnostik</strong></div>
+              <div className="row g-1 small mt-1">
+                {Object.entries(session.diagnostics||{}).map(([key,value])=><div className="col-6" key={key}>
+                  <span className="text-secondary">{({timezone:"Zeitzone",screen:"Bildschirmklasse",viewport:"Viewport",touch:"Touch",cpu:"CPU-Klasse",memory:"RAM-Klasse",theme:"Farbschema",motion:"Bewegungen",pixelRatio:"Pixel-Dichte"} as Record<string,string>)[key]||key}: </span>{value}
+                </div>)}
+              </div>
+              <div className="small text-secondary mt-3"><strong>Testsitzungen in diesem Browser-Profil</strong></div>
+              <div className="mt-2 d-flex flex-column gap-1">
+                {(details.data?.sessions||[]).map((test,index)=><div className="border rounded p-2 small" key={test.id}>
+                  <strong>{index+1}. {test.name}</strong> · {time(test.started)} · {test.eventsCount} Ereignisse · {test.activityScore} Punkte
+                </div>)}
+              </div>
             </div>
-            <div className="card-header"><h3 className="card-title">Aktivitätsverlauf · neueste zuerst</h3></div>
+            <div className="card-header"><h3 className="card-title">Gemeinsamer Aktivitätsverlauf · neueste zuerst</h3></div>
             <div className="table-responsive" style={{maxHeight:560,overflowY:"auto"}}>
               <table className="table table-vcenter card-table">
                 <thead><tr><th>Uhrzeit</th><th>Aktion</th></tr></thead>
-                <tbody>{[...(session.events||[])].reverse().map((e,i)=><tr key={i}>
+                <tbody>{timeline.map((e,i)=><tr key={i}>
                   <td className="text-secondary small" style={{whiteSpace:"nowrap"}}>{time(e.at)}</td>
-                  <td className="text-break">{formatEvent(e)}</td>
+                  <td className="text-break">{formatEvent(e)}<div className="text-secondary small">Testsitzung: {e.name}</div></td>
                 </tr>)}
-                  {!session.events?.length && <tr><td colSpan={2} className="text-secondary">Noch keine Testereignisse.</td></tr>}
+                  {!timeline.length && <tr><td colSpan={2} className="text-secondary">Noch keine Testereignisse.</td></tr>}
                 </tbody>
               </table>
             </div>
+            {details.data?.timelineTruncated && <p className="text-secondary small p-2">Nur die jüngsten 250 Ereignisse werden im Gesamtverlauf angezeigt.</p>}
           </>}
         </div>}
       </div>

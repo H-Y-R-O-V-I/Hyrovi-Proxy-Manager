@@ -20,8 +20,8 @@ now = time.time()
 sessions = []
 if DB.exists():
     con = sqlite3.connect("file:" + str(DB) + "?mode=ro", uri=True, timeout=4)
-    for sid, name, started, last, browser, platform, language, signature in con.execute(
-        "SELECT id,alias,started,last,browser,platform,language,signature FROM sessions WHERE last>? ORDER BY last DESC LIMIT 100", (now-86400,)
+    for sid, name, started, last, browser, platform, language, signature, diagnostics in con.execute(
+        "SELECT id,alias,started,last,browser,platform,language,signature,diagnostics FROM sessions WHERE last>? ORDER BY last DESC LIMIT 100", (now-86400,)
     ):
         if not SAFE_HEX.fullmatch(sid):
             continue
@@ -47,6 +47,7 @@ if DB.exists():
             "platform":str(platform)[:32],
             "language":str(language)[:32],
             "signature":str(signature)[:20],
+            "diagnostics": json.loads(diagnostics or "{}") if diagnostics else {},
             "started": dt.datetime.fromtimestamp(started, dt.timezone.utc).isoformat(),
             "last": dt.datetime.fromtimestamp(last, dt.timezone.utc).isoformat(),
             "active": now-last < 32,

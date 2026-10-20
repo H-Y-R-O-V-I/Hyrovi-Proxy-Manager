@@ -49,7 +49,7 @@ with conn() as c:
     c.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, at REAL NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_test_events_session ON events(session,at)")
     columns = {row[1] for row in c.execute("PRAGMA table_info(sessions)")}
-    for col in ("browser", "platform", "language", "signature"):
+    for col in ("browser", "platform", "language", "signature", "diagnostics"):
         if col not in columns:
             c.execute("ALTER TABLE sessions ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''")
 os.chmod(DB_PATH, 0o600)
@@ -82,6 +82,26 @@ def browser_diagnostics(headers):
     signature = hmac.new(SIGNATURE_KEY, ("tests.hyrovi.com\0"+"\0".join(components)).encode(),
                          hashlib.sha256).hexdigest()[:20]
     return browser,platform,lang,signature
+
+
+def sanitized_diagnostics(value):
+    # Test-start only. Coarse capability properties are for diagnostics,
+    # never included in fingerprint grouping or used across origins.
+    if not isinstance(value, dict):
+        return {}
+    allowed = {
+        "timezone": r"[A-Za-z0-9/_+:-]{1,70}",
+        "screen": r"(?:small|medium|large|xlarge)",
+        "viewport": r"(?:small|medium|large|xlarge)",
+        "touch": r"(?:none|single|multi)",
+        "cpu": r"(?:unknown|1-2|3-4|5-8|9+)",
+        "memory": r"(?:unknown|<=2|3-4|5-8|9+)",
+        "theme": r"(?:dark|light)",
+        "motion": r"(?:reduced|normal)",
+        "pixelRatio": r"(?:1|2|3+)",
+    }
+    return {k: v for k, rule in allowed.items()
+            if isinstance((v := value.get(k)), str) and re.fullmatch(rule, v)}
 
 
 def session_hash(token):
@@ -143,13 +163,14 @@ class Handler(BaseHTTPRequestHandler):
             token = secrets.token_urlsafe(24)
             sid = session_hash(token)
             browser,platform,language,signature = browser_diagnostics(self.headers)
+            diagnostics = json.dumps(sanitized_diagnostics(raw.get("diagnostics")), separators=(",", ":"))
             with LOCK, conn() as c:
                 # Small, bounded public lab: avoid unbounded session creation.
                 recent = c.execute("SELECT count(*) FROM sessions WHERE started>?", (now - 3600,)).fetchone()[0]
                 if recent >= 100:
                     return self.answer(429, {"error": "test_capacity_reached"})
-                c.execute("INSERT INTO sessions (id, alias, started, last, browser, platform, language, signature) VALUES (?,?,?,?,?,?,?,?)",
-                          (sid, alias, now, now, browser, platform, language, signature))
+                c.execute("INSERT INTO sessions (id, alias, started, last, browser, platform, language, signature, diagnostics) VALUES (?,?,?,?,?,?,?,?,?)",
+                          (sid, alias, now, now, browser, platform, language, signature, diagnostics))
                 c.execute("DELETE FROM events WHERE at < ?", (now - 86400,))
                 c.execute("DELETE FROM sessions WHERE last < ?", (now - 86400,))
             return self.answer(201, {"session": token, "alias": alias})

@@ -32,6 +32,7 @@ export interface SecurityVisitorEvent {
 }
 export interface SecuritySiteActivity {
   host: string;
+  configured?: boolean;
   source: "Pi" | "VPS";
   browserViews: number;
   browserActions: number;
@@ -97,6 +98,7 @@ export interface TestStudioSession {
   platform: string;
   language: string;
   signature: string;
+  diagnostics: Record<string,string>;
   started: string;
   last: string;
   active: boolean;
@@ -115,6 +117,7 @@ export interface TestStudioOverview {
   online: boolean;
   generatedAt: string | null;
   sessions: TestStudioSession[];
+  browsers: TestStudioBrowser[];
   total: number;
   active: number;
 }
@@ -122,3 +125,35 @@ export const getTestStudioOverview = (): Promise<TestStudioOverview> =>
   boundedRequest((controller) => api.get({url:"/security/test-studio"}, controller), 8);
 export const getTestStudioDetail = (id: string): Promise<{session:TestStudioSession; generatedAt:string}> =>
   boundedRequest((controller) => api.get({url:"/security/test-studio/"+encodeURIComponent(id)}, controller), 8);
+
+export interface TestStudioBrowser {
+  id: string;
+  signature: string;
+  name: string;
+  browser: string;
+  platform: string;
+  language: string;
+  diagnostics: Record<string,string>;
+  firstSeen: string;
+  last: string;
+  active: boolean;
+  sessionsCount: number;
+  aliases: string[];
+  sessionIds: string[];
+  buttonActions: number;
+  pageViews: number;
+  sectionChanges: number;
+  scrollActions: number;
+  heartbeats: number;
+  eventsCount: number;
+  activityScore: number;
+}
+export interface TestStudioBrowserDetail {
+  browser: TestStudioBrowser;
+  sessions: TestStudioSession[];
+  timeline: Array<TestStudioEvent & {sessionId: string; name: string}>;
+  timelineTruncated: boolean;
+  generatedAt: string;
+}
+export const getTestStudioBrowserDetail = (id: string): Promise<TestStudioBrowserDetail> =>
+  boundedRequest((controller) => api.get({url:"/security/test-studio/browser/"+encodeURIComponent(id)},controller), 8);

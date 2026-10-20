@@ -3,13 +3,14 @@ import { IconActivity, IconDeviceDesktop, IconRefresh, IconUser } from "@tabler/
 import { useEffect, useMemo, useState } from "react";
 import { getSecurityVisitor, getSecurityVisitors, saveSecurityVisitor } from "src/api/backend/securityVisitors";
 import TestsStudio from "./TestsStudio";
+import AllHostsStudio from "./AllHostsStudio";
 
 const stamp = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
 
 export default function UsersStudio() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
-  const [mode, setMode] = useState<"activity" | "visitors" | "tests">("tests");
+  const [mode, setMode] = useState<"activity" | "visitors" | "tests" | "hosts">("hosts");
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
   const [activeOnly, setActiveOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -18,7 +19,8 @@ export default function UsersStudio() {
   const [notes, setNotes] = useState("");
   const list = useQuery({
     queryKey: ["security-visitors"], queryFn: getSecurityVisitors,
-    refetchInterval: mode === "visitors" ? 15_000 : 60_000, staleTime: 10_000,
+    refetchInterval: mode === "hosts" ? 12000 : mode === "visitors" ? 15_000 : 60_000,
+    staleTime: 7000,
     enabled: mode !== "tests", retry: false
   });
   const detail = useQuery({
@@ -45,8 +47,14 @@ export default function UsersStudio() {
       .join(" ").toLowerCase().includes(q));
   }), [list.data, search, activeOnly]);
 
+  if (mode === "hosts") {
+    return <AllHostsStudio data={list.data?.automaticActivity} loading={list.isLoading}
+      error={list.error} onRefresh={() => void list.refetch()}
+      onTests={() => setMode("tests")} onVisitors={() => {setMode("visitors");setSearch("");}} />;
+  }
+
   if (mode === "tests") {
-    return <TestsStudio onOverview={() => {setMode("activity"); setSearch("");}}
+    return <TestsStudio onOverview={() => {setMode("hosts"); setSearch("");}}
       onVisitors={() => {setMode("visitors");setSearch("");}}/>;
   }
 
@@ -61,7 +69,8 @@ export default function UsersStudio() {
         <div><h2 className="mb-1">Users <span className="text-secondary">/ Übersicht</span></h2>
           <p className="text-secondary mb-0">Besuche über Pi und VPS, ohne individuelle Browser-Zuordnung</p></div>
         <div className="d-flex flex-wrap gap-2">
-          <button className="btn btn-primary" type="button" onClick={() => setMode("tests")}>Live Test Studio</button>
+          <button className="btn btn-primary" type="button" onClick={() => setMode("hosts")}>Alle Hosts</button>
+          <button className="btn btn-outline-primary" type="button" onClick={() => setMode("tests")}>Live Test Studio</button>
           <button className="btn btn-outline-primary" type="button" onClick={() => {setMode("visitors");setSearch("");}}>
             Liste · Browser-Besucher
           </button>
@@ -144,7 +153,8 @@ export default function UsersStudio() {
         <p className="text-secondary mb-0">Browserbesuche, aktive Sitzungen, Seiten und Aktionen</p>
       </div>
       <div className="d-flex flex-wrap gap-2">
-      <button type="button" className="btn btn-primary" onClick={() => setMode("tests")}>Live Test Studio</button>
+      <button type="button" className="btn btn-primary" onClick={() => setMode("hosts")}>Alle Hosts</button>
+      <button type="button" className="btn btn-outline-primary" onClick={() => setMode("tests")}>Live Test Studio</button>
       <button type="button" className="btn btn-outline-primary" onClick={() => {setMode("activity");setSearch("");}}>
         Übersicht
       </button>

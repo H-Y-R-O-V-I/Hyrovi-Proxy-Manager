@@ -88,6 +88,40 @@ def grouped_site(host: str):
     return sites[host]
 
 
+# The HPM proxy-host template already contains security access logs and
+# first-party script injection. Include idle configured hosts in the overview
+# too; their zero counts mean "nothing in this bounded log window".
+def configured_sites():
+    configured = set()
+    for file in sorted((Path("/opt/nginx-proxy-manager/data/nginx/proxy_host")).glob("*.conf"))[:250]:
+        try:
+            content = file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if "hyrovi-sec.log hyrovi_sec" not in content:
+            continue
+        if "hyrovi-analytics.js" not in content:
+            continue
+        for match in re.findall(r"(?m)^\s*server_name\s+([^;]+);", content):
+            for name in match.split():
+                host = safe_host(name)
+                if host:
+                    configured.add(host)
+    # tests.hyrovi.com is a separately managed custom VPS HPM vhost.
+    extra = Path("/opt/nginx-proxy-manager/data/nginx/hyrovi-test-site/tests.conf")
+    if extra.exists():
+        try:
+            content = extra.read_text(encoding="utf-8")
+            for match in re.findall(r"(?m)^\s*server_name\s+([^;]+);", content):
+                for name in match.split():
+                    host = safe_host(name)
+                    if host and "hyrovi-sec.log" in content:
+                        configured.add(host)
+        except (OSError, UnicodeError):
+            pass
+    return configured
+
+
 sites = {}
 requests = 0
 browser_events = 0
@@ -196,9 +230,14 @@ for row in file_tail(VPS_LOGS / "hyrovi-analytics-events.log", 4 * 1024 * 1024):
             "action": str(e.get("action") or "")[:64] if kind == "action" else None,
         })
 
+configured = configured_sites()
+for host in configured:
+    grouped_site(host)
+
 all_sites = []
 for site in sites.values():
     site["clientSignatures"] = len(site["clientSignatures"])
+    site["configured"] = site["host"] in configured
     site["sections"] = [
         {"section": name, "count": count}
         for name, count in site["sections"].most_common(6)

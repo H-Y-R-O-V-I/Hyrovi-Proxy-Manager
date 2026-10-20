@@ -11,6 +11,7 @@ const ID = /^[a-f0-9]{64}$/;
 const HOST = /^[a-z0-9][a-z0-9.-]{0,252}$/;
 let cached = { key: "", events: [], readAt: 0 };
 let trafficCache = { key: "", value: null, readAt: 0 };
+let configuredPiCache = { at: 0, hosts: [] };
 let queue = Promise.resolve();
 
 const safeString = (s, max = 120) => String(s ?? "").trim().slice(0, max);
@@ -44,6 +45,34 @@ async function readEvents() {
   }
   cached = { key, events, readAt: Date.now() };
   return events;
+}
+
+async function configuredPiHosts() {
+  if (Date.now() - configuredPiCache.at < 60000) return configuredPiCache.hosts;
+  const dir = "/data/nginx/proxy_host";
+  let names;
+  try { names = await fs.promises.readdir(dir); }
+  catch (e) {
+    if (e.code === "ENOENT") return [];
+    throw e;
+  }
+  const hosts = new Set();
+  for (const filename of names.filter(n => /^\d+\.conf$/.test(n)).slice(0, 250)) {
+    let content;
+    try { content = await fs.promises.readFile(path.join(dir, filename), "utf8"); }
+    catch (e) { if (e.code === "ENOENT") continue; throw e; }
+    if (!content.includes("hyrovi-sec.log hyrovi_sec") ||
+        !content.includes("hyrovi-analytics.js")) continue;
+    for (const group of content.matchAll(/^\s*server_name\s+([^;]+);/gm)) {
+      for (const name of group[1].split(/\s+/)) {
+        const host = name.toLowerCase();
+        if (HOST.test(host) && host.includes(".")) hosts.add(host);
+      }
+    }
+  }
+  const value = [...hosts].sort();
+  configuredPiCache = { at: Date.now(), hosts: value };
+  return value;
 }
 
 // HTTP request totals come from HPM proxy access logs. Deliberately
@@ -109,10 +138,18 @@ async function readTraffic() {
     if (/^\/(?:auth|login|identity|oauth|token|session|account|user|admin|private|secret|password|vault|api)$/i.test(section)) section = "/[restricted]";
     w.sections.set(section, (w.sections.get(section) || 0) + 1);
   }
+  const configured = new Set(await configuredPiHosts());
+  for (const host of configured) {
+    if (!websites.has(host)) {
+      websites.set(host, {host,requests:0,pages:0,writes:0,failures:0,
+        latest:null,sections:new Map(),signatureTypes:new Set(),automationSignals:0});
+    }
+  }
   const value = {
     requests, window: "recent Pi proxy access log (up to 2 MiB)",
     websites: [...websites.values()].map(w => ({
-      host: w.host, requests: w.requests, pages: w.pages, writes: w.writes,
+      host: w.host, configured: configured.has(w.host),
+      requests: w.requests, pages: w.pages, writes: w.writes,
       failures: w.failures, latest: w.latest,
       clientSignatures: w.signatureTypes.size, automationSignals: w.automationSignals,
       sections: [...w.sections].sort((a,b)=>b[1]-a[1]).slice(0, 6)
@@ -185,7 +222,8 @@ function mergeTraffic(local, remote, piEvents) {
   const remoteSites = (remote?.websites || []).filter(site => site.source === "VPS" &&
     HOST.test(String(site.host || "")) &&
     typeof site.requests === "number").map(site => ({
-      host: site.host, source: "VPS", requests: site.requests, pages: site.pages || 0,
+      host: site.host, source: "VPS", configured: Boolean(site.configured),
+      requests: site.requests, pages: site.pages || 0,
       writes: site.writes || 0, failures: site.failures || 0, latest: site.latest || null,
       clientSignatures: Math.max(0, Number(site.clientSignatures) || 0),
       automationSignals: Math.max(0, Number(site.automationSignals) || 0),
@@ -369,6 +407,10 @@ async function readTestStudio() {
         browser:safeString(s.browser,32), platform:safeString(s.platform,32),
         language:safeString(s.language,32),
         signature:/^[a-f0-9]{20}$/.test(String(s.signature||"")) ? s.signature : "",
+        diagnostics:Object.fromEntries(Object.entries(s.diagnostics && typeof s.diagnostics === "object" &&
+          !Array.isArray(s.diagnostics) ? s.diagnostics : {}).filter(([k,v]) =>
+          ["timezone","screen","viewport","touch","cpu","memory","theme","motion","pixelRatio"].includes(k) &&
+          typeof v==="string" && v.length<=70)),
         started:s.started, last:s.last,
         active:Boolean(s.active) && Date.now()-Date.parse(s.last)<40_000,
         buttonActions:Math.max(0,Number(s.buttonActions)||0),
@@ -385,11 +427,50 @@ async function readTestStudio() {
       }))
   };
 }
+// Group only the scoped test-lab sessions sharing the exact same signature.
+// Matching header combinations are NOT definitive evidence of same person/device.
+function groupTestBrowsers(sessions) {
+  const groups = new Map();
+  for (const s of sessions) {
+    const signature = /^[a-f0-9]{20}$/.test(s.signature) ? s.signature : "";
+    // Never join sessions with missing/invalid diagnostics.
+    const id = signature || s.id;
+    let g = groups.get(id);
+    if (!g) {
+      g = { id, signature, name: s.name, browser: s.browser,
+        platform: s.platform, language: s.language,
+        active: false, firstSeen:s.started, last:s.last,
+        buttonActions:0, pageViews:0, sectionChanges:0,
+        scrollActions:0, heartbeats:0, eventsCount:0, activityScore:0,
+        sessionsCount:0, aliases:[], sessionIds:[], diagnostics:s.diagnostics || {} };
+      groups.set(id,g);
+    }
+    g.sessionsCount++;
+    g.sessionIds.push(s.id);
+    if (s.name && !g.aliases.includes(s.name)) g.aliases.push(s.name);
+    if (Date.parse(s.last) > Date.parse(g.last)) {
+      g.last = s.last;
+      g.name = s.name;
+      g.browser = s.browser;
+      g.platform = s.platform;
+      g.language = s.language;
+      g.diagnostics = s.diagnostics || {};
+    }
+    if (Date.parse(s.started) < Date.parse(g.firstSeen)) g.firstSeen=s.started;
+    g.active = g.active || s.active;
+    for (const k of ["buttonActions","pageViews","sectionChanges","scrollActions",
+                     "heartbeats","eventsCount","activityScore"]) g[k] += s[k];
+  }
+  return [...groups.values()].sort((a,b)=>
+    b.activityScore-a.activityScore || Date.parse(b.last)-Date.parse(a.last));
+}
+
 async function testStudioList() {
   const snapshot = await readTestStudio();
   return {online:snapshot.online,generatedAt:snapshot.generatedAt,
     scope:"tests.hyrovi.com",
     sessions:snapshot.sessions.map(({events,...summary})=>summary),
+    browsers:groupTestBrowsers(snapshot.sessions),
     total:snapshot.sessions.length,
     active:snapshot.sessions.filter(s=>s.active).length};
 }
@@ -400,4 +481,20 @@ async function testStudioDetail(id) {
   return selected ? {session:selected,generatedAt:snapshot.generatedAt} : null;
 }
 
-export default { list, detail, update, testStudioList, testStudioDetail };
+async function testStudioBrowserDetail(id) {
+  const candidate = String(id || "");
+  if (!/^(?:[a-f0-9]{20}|[a-f0-9]{64})$/.test(candidate)) return null;
+  const snap = await readTestStudio();
+  const browser = groupTestBrowsers(snap.sessions).find(b=>b.id===candidate);
+  if (!browser) return null;
+  const sessions = snap.sessions.filter(s=>browser.sessionIds.includes(s.id))
+    .sort((a,b)=>Date.parse(b.last)-Date.parse(a.last));
+  const timeline = sessions.flatMap(s=>s.events.map(e=>({
+    at:e.at,kind:e.kind,detail:e.detail,sessionId:s.id,name:s.name
+  }))).sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)).slice(0,250);
+  return {browser, sessions:sessions.map(({events,...summary})=>summary),
+    timeline, generatedAt:snap.generatedAt,
+    timelineTruncated:browser.eventsCount>timeline.length};
+}
+
+export default { list, detail, update, testStudioList, testStudioDetail, testStudioBrowserDetail };
