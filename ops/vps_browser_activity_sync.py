@@ -7,6 +7,7 @@ unconsented session IDs, raw access-log lines or query parameters.
 from __future__ import annotations
 
 import collections
+import hashlib
 import datetime as dt
 import json
 import os
@@ -82,7 +83,8 @@ def grouped_site(host: str):
         sites[host] = dict(host=host, source="VPS", requests=0, pages=0, writes=0,
                            failures=0, latest=None, sections=collections.Counter(),
                            browserViews=0, browserActions=0, browserScroll=0,
-                           browserEngagementSeconds=0, browserLastSeen=None)
+                           browserEngagementSeconds=0, browserLastSeen=None,
+                           clientSignatures=set(), automationSignals=0)
     return sites[host]
 
 
@@ -109,6 +111,14 @@ for row in file_tail(VPS_LOGS / "hyrovi-sec.log", 2 * 1024 * 1024):
     if method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}:
         continue
     w = grouped_site(host)
+    # Per-host security signature TYPES from headers already sent to the proxy.
+    # Never export a stable per-client signature or correlate across sites.
+    header_tuple = [str(e.get(k) or "").strip().lower()[:320] for k in
+                    ("user_agent", "accept_language", "sec_ch_ua", "sec_ch_ua_mobile", "sec_ch_ua_platform")]
+    if any(header_tuple):
+        w["clientSignatures"].add(hashlib.sha256("\x00".join(header_tuple).encode()).digest()[:12])
+    if re.search(r"bot|crawler|spider|curl/|wget/|python-requests|scrapy", header_tuple[0]):
+        w["automationSignals"] += 1
     requests += 1
     w["requests"] += 1
     if method == "GET" and (str(e.get("accept") or "").lower().find("text/html") >= 0 or e.get("path") == "/"):
@@ -188,6 +198,7 @@ for row in file_tail(VPS_LOGS / "hyrovi-analytics-events.log", 4 * 1024 * 1024):
 
 all_sites = []
 for site in sites.values():
+    site["clientSignatures"] = len(site["clientSignatures"])
     site["sections"] = [
         {"section": name, "count": count}
         for name, count in site["sections"].most_common(6)

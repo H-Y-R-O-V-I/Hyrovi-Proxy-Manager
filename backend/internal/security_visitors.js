@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
@@ -81,10 +82,18 @@ async function readTraffic() {
     requests++;
     let w = websites.get(host);
     if (!w) {
-      w = { host, requests: 0, pages: 0, writes: 0, failures: 0, latest: null, sections: new Map() };
+      w = { host, requests: 0, pages: 0, writes: 0, failures: 0,
+        latest: null, sections: new Map(), signatureTypes: new Set(), automationSignals: 0 };
       websites.set(host, w);
     }
     w.requests++;
+    const headerTuple = ["user_agent", "accept_language", "sec_ch_ua", "sec_ch_ua_mobile", "sec_ch_ua_platform"]
+      .map(k => safeString(e[k], 320).toLowerCase());
+    if (headerTuple.some(Boolean)) {
+      // Count technical header combination TYPES only, not identifiers.
+      w.signatureTypes.add(createHash("sha256").update(headerTuple.join("\u0000")).digest("hex").slice(0, 24));
+    }
+    if (/bot|crawler|spider|curl\/|wget\/|python-requests|scrapy/i.test(headerTuple[0])) w.automationSignals++;
     const path = safeString(e.path, 512).split("?")[0].split("#")[0];
     const accept = safeString(e.accept, 140).toLowerCase();
     if (method === "GET" && (accept.includes("text/html") || path === "/")) w.pages++;
@@ -105,6 +114,7 @@ async function readTraffic() {
     websites: [...websites.values()].map(w => ({
       host: w.host, requests: w.requests, pages: w.pages, writes: w.writes,
       failures: w.failures, latest: w.latest,
+      clientSignatures: w.signatureTypes.size, automationSignals: w.automationSignals,
       sections: [...w.sections].sort((a,b)=>b[1]-a[1]).slice(0, 6)
         .map(([section, count]) => ({section, count}))
     })).sort((a,b) => b.requests - a.requests).slice(0, 100)
@@ -159,7 +169,7 @@ function mergeTraffic(local, remote, piEvents) {
     let site = piByHost.get(event.host);
     if (!site) {
       site = { host: event.host, requests: 0, pages: 0, writes: 0, failures: 0,
-        latest: null, sections: [], source: "Pi", browserViews: 0,
+        latest: null, sections: [], source: "Pi", clientSignatures: 0, automationSignals: 0, browserViews: 0,
         browserActions: 0, browserScroll: 0, browserEngagementSeconds: 0, browserLastSeen: null };
       localSites.push(site);
       piByHost.set(event.host, site);
@@ -177,6 +187,8 @@ function mergeTraffic(local, remote, piEvents) {
     typeof site.requests === "number").map(site => ({
       host: site.host, source: "VPS", requests: site.requests, pages: site.pages || 0,
       writes: site.writes || 0, failures: site.failures || 0, latest: site.latest || null,
+      clientSignatures: Math.max(0, Number(site.clientSignatures) || 0),
+      automationSignals: Math.max(0, Number(site.automationSignals) || 0),
       sections: site.sections || [], browserViews: site.browserViews || 0,
       browserActions: site.browserActions || 0, browserScroll: site.browserScroll || 0,
       browserEngagementSeconds: site.browserEngagementSeconds || 0,

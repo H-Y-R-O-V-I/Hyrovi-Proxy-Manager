@@ -39,6 +39,8 @@ export interface SecuritySiteActivity {
   browserEngagementSeconds: number;
   browserLastSeen: string | null;
   requests: number;
+  clientSignatures: number;
+  automationSignals: number;
   pages: number;
   writes: number;
   failures: number;

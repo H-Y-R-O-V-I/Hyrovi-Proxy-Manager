@@ -97,7 +97,7 @@ export default function UsersStudio() {
         </p>}
         <div className="table-responsive">
           <table className="table table-vcenter card-table">
-            <thead><tr><th>Website / Node</th><th>Browser-Aufrufe</th><th>HTTP-Anfragen</th><th>Schreibzugriffe</th><th>Fehler</th><th>Zuletzt</th></tr></thead>
+            <thead><tr><th>Website / Node</th><th>Browser-Aufrufe</th><th>Header-Fingerprints*</th><th>HTTP-Anfragen</th><th>Automations-Hinweise</th><th>Fehler</th><th>Zuletzt</th></tr></thead>
             <tbody>
               {websites.map(site => <tr key={site.source + site.host}>
                 <td>
@@ -114,14 +114,16 @@ export default function UsersStudio() {
                     <div className="mt-1">Nur aggregierte URL-Bereiche aus HTTP-Logs; keine individuellen IPs oder Browser-Sitzungen.</div>
                   </div>}
                 </td>
-                <td><strong>{site.browserViews}</strong></td><td>{site.requests}</td><td>{site.writes}</td>
-                <td>{site.failures}</td><td className="small text-secondary">{stamp(site.browserLastSeen || site.latest)}</td>
+                <td><strong>{site.browserViews}</strong></td><td>{site.clientSignatures ?? 0}</td><td>{site.requests}</td>
+                <td>{site.automationSignals ?? 0}</td><td>{site.failures}</td><td className="small text-secondary">{stamp(site.browserLastSeen || site.latest)}</td>
               </tr>)}
             </tbody>
           </table>
         </div>
       </div>
       <p className="small text-secondary mt-3">{traffic?.window || "Jüngster Log-Ausschnitt"}.
+        *Header-Fingerprints zählen unterschiedliche technische Header-Kombinationen pro Website,
+        keine eindeutig erkannten Menschen oder Geräte. Die Signaturen selbst werden hierfür nicht gespeichert.
         Browser-Aufrufe werden ohne individuelle Besucher-ID gezählt. VPS-Daten zuletzt synchronisiert:
         {traffic?.remoteGeneratedAt ? " " + stamp(traffic.remoteGeneratedAt) : " nicht verfügbar"}.</p>
     </div>;
@@ -193,6 +195,24 @@ export default function UsersStudio() {
           </button>)}
         {list.isSuccess && !(list.data?.automaticActivity?.anonymousBrowserEvents || []).length &&
           <div className="p-3 text-secondary">Keine Browser-Ereignisse im jüngsten VPS-Ausschnitt.</div>}
+      </div>
+    </div>
+    <div className="card mb-3">
+      <div className="card-header"><h3 className="card-title">Fingerprint Studio · Sicherheits-Signaturen</h3></div>
+      <div className="card-body text-secondary small">
+        Aus HTTP-Headern berechnete Signaturtypen je Proxy-Website, ohne Cookies, Client-ID oder
+        persistente websiteübergreifende Profilbildung. Eine Signatur kann zu mehreren Geräten gehören
+        und ein Gerät kann unterschiedliche Signaturen senden. Automations-Hinweise beruhen nur auf
+        erkennbaren Bot-/Tool-Kennungen.
+      </div>
+      <div className="table-responsive">
+        <table className="table table-vcenter card-table">
+          <thead><tr><th>Website</th><th>Node</th><th>Signaturtypen</th><th>Bot-/Tool-Anfragen</th></tr></thead>
+          <tbody>{(list.data?.automaticActivity?.websites || []).slice(0, 45).map(site => <tr key={site.source+site.host}>
+            <td className="text-break">{site.host}</td><td>{site.source}</td>
+            <td>{site.clientSignatures ?? 0}</td><td>{site.automationSignals ?? 0}</td>
+          </tr>)}</tbody>
+        </table>
       </div>
     </div>
     <div className="row g-3">
