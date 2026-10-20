@@ -9,9 +9,10 @@ type Order = "requests" | "browserViews" | "failures" | "automationSignals" | "l
 const value = (site: SecuritySiteActivity, sort: Order) =>
   sort === "last" ? Date.parse(site.browserLastSeen || site.latest || "") || 0 : site[sort] || 0;
 
-export default function AllHostsStudio({data, loading, error, onRefresh, onTests, onVisitors}:{
+export default function AllHostsStudio({data, loading, error, onRefresh, onTests, onVisitors, testProfileCount}:{
   data?:AutomaticSiteActivity; loading:boolean; error:Error | null;
-  onRefresh:()=>void; onTests:()=>void; onVisitors:()=>void
+  onRefresh:()=>void; onTests:()=>void; onVisitors:()=>void;
+  testProfileCount?:number
 }) {
   const [search,setSearch]=useState("");
   const [source,setSource]=useState<Source>("all");
@@ -45,7 +46,7 @@ export default function AllHostsStudio({data, loading, error, onRefresh, onTests
       </div>
       <div className="d-flex flex-wrap gap-2">
         <button type="button" className="btn btn-outline-primary" onClick={onTests}>Live Test Studio</button>
-        <button type="button" className="btn btn-outline-secondary" onClick={onVisitors}>Browser-Ereignisse</button>
+        <button type="button" className="btn btn-primary" onClick={onVisitors}>Browser-Besuche & Profile</button>
         <button type="button" className="btn btn-primary" onClick={onRefresh}><IconRefresh size={16} className="me-1"/>Aktualisieren</button>
       </div>
     </div>
@@ -59,6 +60,14 @@ export default function AllHostsStudio({data, loading, error, onRefresh, onTests
       Daten konnten nicht geladen werden: {String(error)}
       <button type="button" className="btn btn-outline-danger ms-2" onClick={onRefresh}>Erneut versuchen</button>
     </div>}
+    <div className="alert alert-secondary py-2">
+      <strong>Browsererkennung:</strong> {data?.browserEvents ?? "—"} Browserereignisse im
+      Auswertungsausschnitt, {data?.browserViews ?? "—"} gemeldete Seitenaufrufe;
+      {" "}{testProfileCount ?? "—"} zusammengefasste Test-Browserprofile.
+      Die Ereignisse anderer Websites werden nicht automatisch als unterschiedliche Personen gezählt.
+      <button type="button" className="btn btn-sm btn-outline-primary ms-2 mt-1 mb-1"
+        onClick={onVisitors}>Besucher und Ereignisse anzeigen</button>
+    </div>
     <div className="row g-3 mb-3">
       {counts.map((item,i)=><div className="col-6 col-lg-3" key={item.label}>
         <div className="card"><div className="card-body">

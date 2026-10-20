@@ -22,8 +22,10 @@ const detailLabel:Record<string,string> = {
 };
 const formatEvent = (e:TestStudioEvent) => (eventLabel[e.kind]||e.kind) + " · " + (detailLabel[e.detail]||e.detail);
 
-export default function TestsStudio({onOverview,onVisitors}:{onOverview:()=>void;onVisitors:()=>void}) {
-  const [selectedId,setSelectedId] = useState<string|null>(null);
+export default function TestsStudio({onOverview,onVisitors,initialBrowserId}:{
+  onOverview:()=>void;onVisitors:()=>void;initialBrowserId?:string|null
+}) {
+  const [selectedId,setSelectedId] = useState<string|null>(initialBrowserId || null);
   const [query,setQuery] = useState("");
   const [activeOnly,setActiveOnly] = useState(false);
   const report = useQuery({

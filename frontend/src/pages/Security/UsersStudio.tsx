@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconActivity, IconDeviceDesktop, IconRefresh, IconUser } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
-import { getSecurityVisitor, getSecurityVisitors, saveSecurityVisitor } from "src/api/backend/securityVisitors";
+import { getSecurityVisitor, getSecurityVisitors, getTestStudioOverview, saveSecurityVisitor } from "src/api/backend/securityVisitors";
 import TestsStudio from "./TestsStudio";
 import AllHostsStudio from "./AllHostsStudio";
 
@@ -15,6 +15,8 @@ export default function UsersStudio() {
   const [activeOnly, setActiveOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedAnonEventId, setSelectedAnonEventId] = useState<string | null>(null);
+  const [selectedAnonSite, setSelectedAnonSite] = useState<string | null>(null);
+  const [openedTestBrowserId, setOpenedTestBrowserId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const list = useQuery({
@@ -23,6 +25,26 @@ export default function UsersStudio() {
     staleTime: 7000,
     enabled: mode !== "tests", retry: false
   });
+  const testBrowserList = useQuery({
+    queryKey: ["security-tests-studio"],
+    queryFn: getTestStudioOverview,
+    enabled: mode === "hosts" || mode === "visitors",
+    staleTime: 4000,
+    refetchInterval: 10000,
+    retry: 1,
+  });
+  const anonymousSites = useMemo(() => (list.data?.automaticActivity?.websites || [])
+    .filter(site => site.browserViews > 0 || site.browserActions > 0)
+    .sort((a,b)=>b.browserViews-a.browserViews || b.browserActions-a.browserActions),
+    [list.data]);
+  const anonymousSiteEvents = useMemo(() => (list.data?.automaticActivity?.anonymousBrowserEvents || [])
+    .filter(event=>selectedAnonSite === event.source + ":" + event.host)
+    .slice(0,120),
+    [list.data,selectedAnonSite]);
+  const showTestBrowser = (id:string) => {
+    setOpenedTestBrowserId(id);
+    setMode("tests");
+  };
   const detail = useQuery({
     queryKey: ["security-visitor", selectedId],
     queryFn: () => getSecurityVisitor(selectedId || ""),
@@ -49,12 +71,15 @@ export default function UsersStudio() {
 
   if (mode === "hosts") {
     return <AllHostsStudio data={list.data?.automaticActivity} loading={list.isLoading}
-      error={list.error} onRefresh={() => void list.refetch()}
-      onTests={() => setMode("tests")} onVisitors={() => {setMode("visitors");setSearch("");}} />;
+      error={list.error} onRefresh={() => {void list.refetch();void testBrowserList.refetch();}}
+      testProfileCount={testBrowserList.data?.browsers.length}
+      onTests={() => {setOpenedTestBrowserId(null);setMode("tests");}}
+      onVisitors={() => {setMode("visitors");setSearch("");}} />;
   }
 
   if (mode === "tests") {
-    return <TestsStudio onOverview={() => {setMode("hosts"); setSearch("");}}
+    return <TestsStudio initialBrowserId={openedTestBrowserId}
+      onOverview={() => {setMode("hosts"); setSearch("");}}
       onVisitors={() => {setMode("visitors");setSearch("");}}/>;
   }
 
@@ -170,17 +195,87 @@ export default function UsersStudio() {
     </div>
     <div className="row g-3 mb-3">
       <div className="col-sm-4"><div className="card"><div className="card-body d-flex align-items-center gap-3">
-        <IconUser size={26} /><div><div className="text-secondary small">Erfasste Browser-Besucher</div>
-          <h3 className="mb-0">{list.data?.visitors.length ?? "—"}</h3></div>
+        <IconUser size={26} /><div><div className="text-secondary small">Zugeordnete Browserprofile (Test + Opt-in)</div>
+          <h3 className="mb-0">{list.data && testBrowserList.data
+            ? list.data.visitors.length + testBrowserList.data.browsers.length : "—"}</h3></div>
       </div></div></div>
       <div className="col-sm-4"><div className="card"><div className="card-body d-flex align-items-center gap-3">
-        <IconActivity size={26} /><div><div className="text-secondary small">Ereignisse im Archiv</div>
-          <h3 className="mb-0">{list.data?.totalEvents ?? "—"}</h3></div>
+        <IconActivity size={26} /><div><div className="text-secondary small">Erkannte Browserereignisse (Pi + VPS)</div>
+          <h3 className="mb-0">{list.data?.automaticActivity.browserEvents ?? "—"}</h3></div>
       </div></div></div>
       <div className="col-sm-4"><div className="card"><div className="card-body d-flex align-items-center gap-3">
-        <IconDeviceDesktop size={26} /><div><div className="text-secondary small">Besuchte Websites</div>
-          <h3 className="mb-0">{new Set((list.data?.visitors ?? []).flatMap(v => v.sites.map(s => s.host))).size}</h3></div>
+        <IconDeviceDesktop size={26} /><div><div className="text-secondary small">Websites mit Browseraktivität</div>
+          <h3 className="mb-0">{list.data ? anonymousSites.length : "—"}</h3></div>
       </div></div></div>
+    </div>
+    <div className="card mb-3">
+      <div className="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <h3 className="card-title">Erkannte Browserprofile · Test Studio</h3>
+        <button className="btn btn-outline-primary btn-sm" type="button"
+          onClick={() => {setOpenedTestBrowserId(null);setMode("tests");}}>Gesamte Rangliste öffnen</button>
+      </div>
+      <div className="card-body text-secondary small">
+        Die gestarteten Testsitzungen auf tests.hyrovi.com werden nach ihrer
+        testseitigen Header-Signatur gruppiert. Ein Profil kann mehrere Sitzungen enthalten.
+        Gleiche Signaturen beweisen keine eindeutige Person.
+      </div>
+      <div className="list-group list-group-flush">
+        {(testBrowserList.data?.browsers || []).map(browser =>
+          <button type="button" key={browser.id}
+            className="list-group-item list-group-item-action text-start"
+            onClick={() => showTestBrowser(browser.id)}>
+            <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+              <strong>{browser.name || "Testbrowser"}</strong>
+              <span className={"badge "+(browser.active?"bg-success-lt text-success":"bg-secondary-lt")}>
+                {browser.active ? "Test gerade aktiv" : "Zuletzt "+stamp(browser.last)}
+              </span>
+            </div>
+            <div className="small text-secondary">
+              {browser.browser} · {browser.platform} · {browser.sessionsCount} Sitzung(en) ·
+              {" "+browser.eventsCount} Ereignisse · {browser.activityScore} Punkte
+            </div>
+          </button>)}
+        {testBrowserList.isLoading && <div className="p-3 text-secondary">Lade Test-Browserprofile…</div>}
+        {testBrowserList.isError && <div className="p-3 text-danger">
+          Testprofile nicht erreichbar: {String(testBrowserList.error)}
+        </div>}
+        {testBrowserList.isSuccess && !testBrowserList.data.browsers.length &&
+          <div className="p-3 text-secondary">Keine gestarteten Test-Browserprofile im aktuellen Ausschnitt.</div>}
+      </div>
+    </div>
+    <div className="card mb-3">
+      <div className="card-header"><h3 className="card-title">Browser-Besuche anderer HPM-Hosts</h3></div>
+      <div className="card-body text-secondary small">
+        Diese Seiten haben Browseraktivität gemeldet. Ohne eine zuverlässige Sitzungskennung
+        lassen sich die Ereignisse nicht einer bestimmten Person zuordnen. Wähle eine Website
+        aus, um die erfassten Aktionen anzusehen.
+      </div>
+      <div className="list-group list-group-flush" style={{maxHeight:480,overflowY:"auto"}}>
+        {anonymousSites.map(site => {
+          const id=site.source+":"+site.host;
+          return <button type="button" key={id}
+            className={"list-group-item list-group-item-action text-start "+(selectedAnonSite===id?"active":"")}
+            onClick={() => setSelectedAnonSite(selectedAnonSite===id?null:id)}>
+            <div className="d-flex justify-content-between gap-2 flex-wrap">
+              <strong>{site.host}</strong><span className="small">{site.source}</span>
+            </div>
+            <div className="small opacity-75">{site.browserViews} Seitenaufrufe ·
+              {" "+site.browserScroll} Scroll-Ereignisse · {site.browserActions} Aktionen</div>
+            {selectedAnonSite===id && <div className="small mt-2">
+              <strong>Jüngste Browserereignisse</strong>
+              {anonymousSiteEvents.length ? anonymousSiteEvents.slice(0,50).map(event=>
+                <div className="mt-2 border-top pt-1" key={event.id}>
+                  {stamp(event.time)} · {event.type==="page_view"?"Seite geöffnet":
+                    event.type==="route_change"?"Seitenwechsel":
+                    event.type==="scroll"?"Gescrollt":event.type==="engagement"?"Seite sichtbar":"Aktion"}
+                  {" · "}{event.section}
+                </div>) : <div>Keine Einzeldetails mehr im begrenzten VPS-Log-Ausschnitt.</div>}
+            </div>}
+          </button>;
+        })}
+        {list.isSuccess && !anonymousSites.length &&
+          <div className="p-3 text-secondary">Keine Browser-Meldungen im verfügbaren Log-Ausschnitt.</div>}
+      </div>
     </div>
     <div className="card mb-3">
       <div className="card-header"><h3 className="card-title">Browser-Sicherheitsereignisse · anklickbar</h3></div>
@@ -237,7 +332,7 @@ export default function UsersStudio() {
     <div className="row g-3">
       <div className="col-lg-5">
         <div className="card">
-          <div className="card-header"><h3 className="card-title">Liste der Besucher</h3></div>
+          <div className="card-header"><h3 className="card-title">Individuell zugeordnete Besucher (Opt-in)</h3></div>
           <div className="card-body d-flex flex-column gap-2">
             <input className="form-control" value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Name, Browser oder Website suchen…" aria-label="Besucher suchen"/>
@@ -254,8 +349,9 @@ export default function UsersStudio() {
               <button type="button" className="btn btn-outline-danger ms-2" onClick={() => list.refetch()}>Erneut versuchen</button>
             </div>}
             {list.isSuccess && filtered.length === 0 && <div className="p-3 text-secondary">
-              Noch keine passenden Browserbesuche mit Einwilligung. Anonyme HTTP-Anfragen findest du unter Übersicht.
-              Browser-Zuordnung wird nicht aus IP-Adressen oder Browser-Fingerprints geraten.
+              Aktuell keine individuell zugeordneten Browserbesuche. Oben findest du erkannte
+              Browser-Aktivität und deine Test-Browserprofile. Für andere Hosts werden
+              Anfragen nicht allein wegen einer ähnlichen IP oder Header-Signatur derselben Person zugeschrieben.
             </div>}
             {filtered.map(visitor => <button type="button" key={visitor.id}
               onClick={() => setSelectedId(visitor.id)}
