@@ -1,11 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { lazy, Suspense } from "react";
 import EasyModal from "ez-modal-react";
 import { RawIntlProvider } from "react-intl";
 import { ToastContainer } from "react-toastify";
 import { AuthProvider, LocaleProvider, ThemeProvider } from "src/context";
 import { getLocale, intl, isRTLLocale } from "src/locale";
 import Router from "src/Router.tsx";
+
+// Never load query debugging tools in the publicly served production bundle.
+// Loading devtools unconditionally made their pane cover mobile HPM screens.
+const DevelopmentQueryTools = import.meta.env.DEV
+	? lazy(() => import("./DevelopmentQueryTools"))
+	: null;
 
 // Create a client
 const queryClient = new QueryClient();
@@ -30,7 +36,11 @@ function App() {
 								closeButton={false}
 							/>
 						</AuthProvider>
-						<ReactQueryDevtools buttonPosition="bottom-right" position="right" />
+						{DevelopmentQueryTools ? (
+							<Suspense fallback={null}>
+								<DevelopmentQueryTools />
+							</Suspense>
+						) : null}
 					</QueryClientProvider>
 				</ThemeProvider>
 			</LocaleProvider>
