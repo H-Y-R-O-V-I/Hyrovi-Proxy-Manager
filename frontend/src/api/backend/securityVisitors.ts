@@ -9,6 +9,14 @@ export interface SecurityVisitor {
   count: number;
   pageViews: number;
   actions: number;
+  active: boolean;
+  interactive: boolean;
+  engagementSeconds: number;
+  lastVisibleAt: string | null;
+  lastInteractiveAt: string | null;
+  lastHost: string | null;
+  lastPage: {host: string; path: string; at: string} | null;
+  sessionDetails: Array<{id: string; host: string; firstSeen: string; lastSeen: string; pageViews: number; actions: number; visibleSeconds: number}>;
   sessions: number;
   sites: Array<{host: string; count: number}>;
   browsers: string[];

@@ -60,3 +60,25 @@ This cannot detect clicks with no HTTP request or identify individual persons.
 The optional opt-in visitor ID profile remains a separate subview and is NOT
 fed by this anonymous summary. VPS-only HPM logs remain outside this view.
 A privacy notice/lawful basis may still be required for ordinary server logs.
+
+## 2026-10-20: Browser-Besucher-Liste und Seiten-Timeline
+Unter HYROVI Sec > Users > Liste kann man auf einen der **einwilligungsbasiert**
+erfassten Browser-Besucher klicken. Angezeigt werden letzter Seitenaufruf,
+zeitlich sortierte Seitenwechsel und Interaktionen, Sitzungen getrennt nach
+Website, Erster/Letzter Besuch und ungefähre Sichtbarkeitszeit.
+Mit "Nur kürzlich sichtbare Browser" lassen sich Besucher filtern, die
+innerhalb von zwei Minuten ein positives Visibility/Engagement-Signal
+übermittelt haben. Das bedeutet nicht, dass eine menschliche Identität
+verifiziert wurde; automatisierbare Browser können die Signale ebenfalls
+senden. Das Erkennungsmerkmal ist eine zufällige Consent-ID, keine
+IP-/User-Agent-Fingerprint-Zuordnung.
+Das bestehende automatisch injizierte Skript erfasst nach Einwilligung
+allgemeine Klickkategorien (Link bzw. Button) automatisch und unterdrückt
+Formulare, editierbare Inhalte und sensible Pfade. Es speichert dabei
+keine Feldinhalte, Texte von Buttons, Klickpositionen, Linkziele oder
+Passwörter. Konkrete benannte Aktionen können die Betreiber-Apps bei
+Bedarf über `window.hyroviAnalytics.trackAction("safe_event_name")`
+eintragen. Seite-Sichtbarkeit wird nur in diskreten Zeitintervallen
+abgebildet. Die Liste bleibt leer, wenn noch kein Benutzer auf einer
+Website tatsächlich zugestimmt hat. Nicht alle Browser/Websites lassen
+Skripteinjektion zu, z. B. wegen CSP. Pi only, VPS noch nicht integriert.

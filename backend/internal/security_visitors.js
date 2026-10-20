@@ -122,6 +122,8 @@ async function readLabels() {
   }
 }
 
+// Display only browser-executed, consented telemetry. HTTP-only clients,
+// crawlers and backend requests cannot appear as individuals in this list.
 function buildProfiles(events, labels) {
   const grouped = new Map();
   for (const event of events) {
@@ -129,27 +131,64 @@ function buildProfiles(events, labels) {
     if (!grouped.has(id)) grouped.set(id, {
       id, name: safeString(labels[id]?.name), notes: safeString(labels[id]?.notes, 500),
       firstSeen: event.timestamp, lastSeen: event.timestamp, count: 0, pageViews: 0,
-      actions: 0, sessions: new Set(), sites: new Map(), browsers: new Set(),
-      platforms: new Set(), languages: new Set(), timezones: new Set(), viewports: new Set()
+      actions: 0, engagementSeconds: 0, lastVisibleAt: null, lastInteractiveAt: null,
+      lastPage: null, lastHost: null, sessions: new Map(), sites: new Map(),
+      browsers: new Set(), platforms: new Set(), languages: new Set(),
+      timezones: new Set(), viewports: new Set()
     });
     const p = grouped.get(id);
     p.count++;
-    if (event.type === "page_view") p.pageViews++;
+    if (event.type === "page_view" || event.type === "route_change") p.pageViews++;
     if (event.type === "action") p.actions++;
-    if (event.sessionKey) p.sessions.add(event.sessionKey);
+    if (event.type === "engagement") p.engagementSeconds += Math.max(0, Number(event.visibleSeconds) || 0);
+    if (event.sessionKey) {
+      const key = event.sessionKey;
+      if (!p.sessions.has(key)) p.sessions.set(key, {
+        id: key, host: event.host, firstSeen: event.timestamp,
+        lastSeen: event.timestamp, pageViews: 0, actions: 0, visibleSeconds: 0
+      });
+      const session = p.sessions.get(key);
+      if (Date.parse(event.timestamp) > Date.parse(session.lastSeen)) session.lastSeen = event.timestamp;
+      if (Date.parse(event.timestamp) < Date.parse(session.firstSeen)) session.firstSeen = event.timestamp;
+      if (event.type === "page_view" || event.type === "route_change") session.pageViews++;
+      if (event.type === "action") session.actions++;
+      if (event.type === "engagement") session.visibleSeconds += Math.max(0, Number(event.visibleSeconds) || 0);
+    }
     if (event.host) p.sites.set(event.host, (p.sites.get(event.host) || 0) + 1);
     if (event.browser) p.browsers.add(safeString(event.browser, 30));
     if (event.platform) p.platforms.add(safeString(event.platform, 40));
     if (event.language) p.languages.add(safeString(event.language, 32));
     if (event.timezone) p.timezones.add(safeString(event.timezone, 80));
     if (event.viewport) p.viewports.add(safeString(event.viewport, 32));
+    if (event.type === "engagement" && Number(event.visibleSeconds) > 0 &&
+        (!p.lastVisibleAt || Date.parse(event.timestamp) >= Date.parse(p.lastVisibleAt))) {
+      p.lastVisibleAt = event.timestamp;
+    }
+    if (["action", "scroll"].includes(event.type) &&
+        (!p.lastInteractiveAt || Date.parse(event.timestamp) >= Date.parse(p.lastInteractiveAt))) {
+      p.lastInteractiveAt = event.timestamp;
+    }
+    if (["page_view", "route_change"].includes(event.type) &&
+        (!p.lastPage || Date.parse(event.timestamp) >= Date.parse(p.lastPage.at))) {
+      p.lastPage = { host: event.host, path: safeString(event.path, 512), at: event.timestamp };
+    }
     if (Date.parse(event.timestamp) > Date.parse(p.lastSeen)) p.lastSeen = event.timestamp;
     if (Date.parse(event.timestamp) < Date.parse(p.firstSeen)) p.firstSeen = event.timestamp;
+    if (!p.lastHost || Date.parse(event.timestamp) >= Date.parse(p.lastHost.at)) {
+      p.lastHost = { host: event.host, at: event.timestamp };
+    }
   }
+  const now = Date.now();
   return [...grouped.values()].map((p) => ({
     id: p.id, name: p.name, notes: p.notes, firstSeen: p.firstSeen, lastSeen: p.lastSeen,
     count: p.count, pageViews: p.pageViews, actions: p.actions,
+    engagementSeconds: Math.round(p.engagementSeconds),
+    lastVisibleAt: p.lastVisibleAt, lastInteractiveAt: p.lastInteractiveAt,
+    active: Boolean(p.lastVisibleAt && now - Date.parse(p.lastVisibleAt) < 120000),
+    interactive: p.actions > 0 || Boolean(p.lastInteractiveAt),
+    lastPage: p.lastPage, lastHost: p.lastHost?.host || null,
     sessions: p.sessions.size,
+    sessionDetails: [...p.sessions.values()].sort((a, b) => Date.parse(b.lastSeen) - Date.parse(a.lastSeen)).slice(0, 40),
     sites: [...p.sites].map(([host, count]) => ({host, count})).sort((a,b) => b.count-a.count),
     browsers: [...p.browsers].slice(0, 5),
     platforms: [...p.platforms].slice(0, 5),

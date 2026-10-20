@@ -10,17 +10,18 @@ export default function UsersStudio() {
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<"activity" | "visitors">("activity");
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
+  const [activeOnly, setActiveOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const list = useQuery({
     queryKey: ["security-visitors"], queryFn: getSecurityVisitors,
-    refetchInterval: 60_000, staleTime: 20_000
+    refetchInterval: mode === "visitors" ? 15_000 : 60_000, staleTime: 10_000
   });
   const detail = useQuery({
     queryKey: ["security-visitor", selectedId],
     queryFn: () => getSecurityVisitor(selectedId || ""),
-    enabled: Boolean(selectedId), staleTime: 20_000
+    enabled: mode === "visitors" && Boolean(selectedId), staleTime: 10_000, refetchInterval: mode === "visitors" && selectedId ? 20_000 : false
   });
   const selected = detail.data?.visitor;
   useEffect(() => {
@@ -35,10 +36,10 @@ export default function UsersStudio() {
   });
   const filtered = useMemo(() => (list.data?.visitors || []).filter((visitor) => {
     const q = search.trim().toLowerCase();
-    return !q || [visitor.name, visitor.id, visitor.browsers.join(" "),
+    return (!activeOnly || visitor.active) && (!q || [visitor.name, visitor.id, visitor.browsers.join(" "),
       visitor.platforms.join(" "), ...visitor.sites.map((site) => site.host)]
-      .join(" ").toLowerCase().includes(q);
-  }), [list.data, search]);
+      .join(" ").toLowerCase().includes(q));
+  }), [list.data, search, activeOnly]);
 
   if (mode === "activity") {
     const traffic = list.data?.automaticActivity;
@@ -49,11 +50,11 @@ export default function UsersStudio() {
     const totalWrites = (traffic?.websites || []).reduce((sum, site) => sum + site.writes, 0);
     return <div>
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
-        <div><h2 className="mb-1">Users <span className="text-secondary">/ Automatic Site Activity</span></h2>
+        <div><h2 className="mb-1">Users <span className="text-secondary">/ Übersicht</span></h2>
           <p className="text-secondary mb-0">Server-side activity for proxied websites, with no visitor cookies or identity matching</p></div>
         <div className="d-flex gap-2">
           <button className="btn btn-outline-primary" type="button" onClick={() => {setMode("visitors");setSearch("");}}>
-            Consented visitors / Fingerprint Studio
+            Liste · Browser-Besucher
           </button>
           <button className="btn btn-outline-secondary" type="button" onClick={() => list.refetch()}>
             <IconRefresh size={16}/> Refresh
@@ -118,12 +119,12 @@ export default function UsersStudio() {
   return <div>
     <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
       <div>
-        <h2 className="mb-1">Users <span className="text-secondary">/ Fingerprint Studio</span></h2>
-        <p className="text-secondary mb-0">Consented visitor IDs · Websites · Sessions · Actions</p>
+        <h2 className="mb-1">Users <span className="text-secondary">/ Liste · Fingerprint Studio</span></h2>
+        <p className="text-secondary mb-0">Browserbesuche, aktive Sitzungen, Seiten und Aktionen</p>
       </div>
       <div className="d-flex gap-2">
       <button type="button" className="btn btn-outline-primary" onClick={() => {setMode("activity");setSearch("");}}>
-        Automatic Site Activity
+        Übersicht
       </button>
       <button type="button" className="btn btn-outline-secondary"
         onClick={() => { list.refetch(); if (selectedId) detail.refetch(); }}>
@@ -131,59 +132,70 @@ export default function UsersStudio() {
       </button></div>
     </div>
     <div className="alert alert-info py-2" role="status">
-      Only visitors who opted into first-party HYROVI analytics appear here. IDs can be shared across participating HYROVI subdomains.
-      Browser properties are coarse diagnostics, not proof of a person's identity.
-      Only app-declared action names are recorded; form contents, passwords and raw clicks are not.
+      Hier erscheinen Browser, die das HYROVI-Skript ausgeführt und der individuellen Analyse zugestimmt haben.
+      Ein Browserereignis beweist keine menschliche Identität. Seitenbesuche, Sichtbarkeitszeit und
+      allgemeine Link-/Button-Klicks werden erfasst, aber keine Formulare, Passwörter, Klickkoordinaten oder Eingaben.
     </div>
     <div className="row g-3 mb-3">
       <div className="col-sm-4"><div className="card"><div className="card-body d-flex align-items-center gap-3">
-        <IconUser size={26} /><div><div className="text-secondary small">Opted-in visitors</div>
+        <IconUser size={26} /><div><div className="text-secondary small">Erfasste Browser-Besucher</div>
           <h3 className="mb-0">{list.data?.visitors.length ?? "—"}</h3></div>
       </div></div></div>
       <div className="col-sm-4"><div className="card"><div className="card-body d-flex align-items-center gap-3">
-        <IconActivity size={26} /><div><div className="text-secondary small">Recorded events (recent)</div>
+        <IconActivity size={26} /><div><div className="text-secondary small">Ereignisse im Archiv</div>
           <h3 className="mb-0">{list.data?.totalEvents ?? "—"}</h3></div>
       </div></div></div>
       <div className="col-sm-4"><div className="card"><div className="card-body d-flex align-items-center gap-3">
-        <IconDeviceDesktop size={26} /><div><div className="text-secondary small">Covered websites</div>
+        <IconDeviceDesktop size={26} /><div><div className="text-secondary small">Besuchte Websites</div>
           <h3 className="mb-0">{new Set((list.data?.visitors ?? []).flatMap(v => v.sites.map(s => s.host))).size}</h3></div>
       </div></div></div>
     </div>
     <div className="row g-3">
       <div className="col-lg-5">
         <div className="card">
-          <div className="card-header"><h3 className="card-title">Visitors</h3></div>
-          <div className="card-body">
+          <div className="card-header"><h3 className="card-title">Liste der Besucher</h3></div>
+          <div className="card-body d-flex flex-column gap-2">
             <input className="form-control" value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search visitor name, platform, website…" aria-label="Search visitors"/>
+              placeholder="Name, Browser oder Website suchen…" aria-label="Besucher suchen"/>
+            <label className="form-check">
+              <input type="checkbox" className="form-check-input" checked={activeOnly}
+                onChange={(e) => setActiveOnly(e.target.checked)}/>
+              <span className="form-check-label">Nur kürzlich sichtbare Browser (letzte 2 Minuten)</span>
+            </label>
           </div>
           <div className="list-group list-group-flush" style={{ maxHeight: 580, overflowY: "auto" }}>
             {list.isLoading && <div className="p-3 text-secondary">Loading visitors…</div>}
             {list.error && <div className="p-3 text-danger">Visitor API unavailable: {String(list.error)}</div>}
             {!list.isLoading && filtered.length === 0 && <div className="p-3 text-secondary">
-              No matching consented visitors. Existing anonymous proxy requests cannot be assigned to a person.
+              Noch keine passenden Browserbesuche mit Einwilligung. Anonyme HTTP-Anfragen findest du unter Übersicht.
+              Browser-Zuordnung wird nicht aus IP-Adressen oder Browser-Fingerprints geraten.
             </div>}
             {filtered.map(visitor => <button type="button" key={visitor.id}
               onClick={() => setSelectedId(visitor.id)}
               className={"list-group-item list-group-item-action " + (selectedId === visitor.id ? "active" : "")}>
                 <div className="d-flex justify-content-between align-items-center gap-2">
                   <strong>{visitor.name || "Visitor " + visitor.id.slice(0, 9)}</strong>
-                  <small>{visitor.pageViews} views</small>
+                  <span className={"badge " + (visitor.active ? "bg-success-lt text-success" : visitor.interactive ? "bg-blue-lt text-blue" : "bg-secondary-lt")}>
+                    {visitor.active ? "Kürzlich sichtbar" : visitor.interactive ? "Interaktion erfasst" : "Seitenbesuch"}
+                  </span>
                 </div>
                 <div className="small opacity-75">{visitor.platforms.join(", ") || "Unknown platform"}
                   {" · "}{visitor.browsers.join(", ") || "Unknown browser"}</div>
-                <div className="small opacity-75">{visitor.sites.length} sites · Last {stamp(visitor.lastSeen)}</div>
+                <div className="small opacity-75">{visitor.sites.length} Websites · {visitor.pageViews} Seiten · {visitor.actions} Aktionen</div>
+                <div className="small opacity-75">Zuletzt {stamp(visitor.lastSeen)}</div>
+                {visitor.lastPage && <div className="small text-break opacity-75">Letzte Seite: {visitor.lastPage.host}{visitor.lastPage.path}</div>}
               </button>)}
           </div>
         </div>
       </div>
       <div className="col-lg-7">
         {!selectedId ? <div className="card"><div className="card-body text-secondary">
-          Select a visitor to see their website and action timeline and assign a name.
+          Wähle links einen Browser-Besucher aus, um die besuchten Websites, einzelne Sitzungen und
+          die chronologische Ereignisliste zu sehen. Du kannst dem Profil einen Namen geben.
         </div></div> :
           <div className="d-flex flex-column gap-3">
             <div className="card">
-              <div className="card-header"><h3 className="card-title">Visitor profile</h3></div>
+              <div className="card-header"><h3 className="card-title">Browser-Profil</h3></div>
               <div className="card-body">
                 {detail.isLoading && <p>Loading profile…</p>}
                 {detail.error && <p className="text-danger">{String(detail.error)}</p>}
@@ -207,7 +219,11 @@ export default function UsersStudio() {
                   <dl className="row mb-0">
                     <dt className="col-sm-4">First seen</dt><dd className="col-sm-8">{stamp(selected.firstSeen)}</dd>
                     <dt className="col-sm-4">Last seen</dt><dd className="col-sm-8">{stamp(selected.lastSeen)}</dd>
-                    <dt className="col-sm-4">Sessions</dt><dd className="col-sm-8">{selected.sessions}</dd>
+                    <dt className="col-sm-4">Aktivität</dt><dd className="col-sm-8">{selected.active ? "Kürzlich sichtbar" : "Nicht aktuell sichtbar (oder kein frisches Signal)"}</dd>
+                    <dt className="col-sm-4">Letzte Interaktion</dt><dd className="col-sm-8">{stamp(selected.lastInteractiveAt)}</dd>
+                    <dt className="col-sm-4">Letzte Seite</dt><dd className="col-sm-8 text-break">{selected.lastPage ? selected.lastPage.host + selected.lastPage.path : "—"}</dd>
+                    <dt className="col-sm-4">Sichtbarkeitszeit</dt><dd className="col-sm-8">{selected.engagementSeconds} Sekunden</dd>
+                    <dt className="col-sm-4">Sitzungen</dt><dd className="col-sm-8">{selected.sessions}</dd>
                     <dt className="col-sm-4">Events / actions</dt><dd className="col-sm-8">{selected.count} / {selected.actions}</dd>
                     <dt className="col-sm-4">Browser</dt><dd className="col-sm-8">{selected.browsers.join(", ") || "Not reported"}</dd>
                     <dt className="col-sm-4">Platform</dt><dd className="col-sm-8">{selected.platforms.join(", ") || "Not reported"}</dd>
@@ -219,18 +235,43 @@ export default function UsersStudio() {
                 </>}
               </div>
             </div>
+            {selected && selected.sessionDetails.length > 0 && <div className="card">
+              <div className="card-header"><h3 className="card-title">Sitzungen nach Website</h3></div>
+              <div className="table-responsive">
+                <table className="table table-vcenter card-table">
+                  <thead><tr><th>Website</th><th>Erster / letzter Besuch</th><th>Seiten</th><th>Aktionen</th></tr></thead>
+                  <tbody>{selected.sessionDetails.map((session) => <tr key={session.id}>
+                    <td className="text-break">{session.host}</td>
+                    <td className="small">{stamp(session.firstSeen)} → {stamp(session.lastSeen)}</td>
+                    <td>{session.pageViews}</td><td>{session.actions}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </div>}
             <div className="card">
-              <div className="card-header"><h3 className="card-title">Activity timeline</h3></div>
+              <div className="card-header"><h3 className="card-title">Besuchte Seiten und Aktionen</h3></div>
               <div className="table-responsive" style={{maxHeight: 540, overflowY: "auto"}}>
                 <table className="table table-vcenter card-table">
-                  <thead><tr><th>When</th><th>Website</th><th>Activity</th></tr></thead>
+                  <thead><tr><th>Zeitpunkt</th><th>Website</th><th>Ereignis</th></tr></thead>
                   <tbody>{(detail.data?.timeline || []).map(event =>
                     <tr key={event.id}><td className="text-secondary small">{stamp(event.timestamp)}</td>
                       <td className="small text-break">{event.host}</td>
-                      <td><span className="badge bg-blue-lt">{event.type.replace(/_/g, " ")}</span>
-                        <div className="small text-break mt-1">{event.action || event.path}</div>
+                      <td><span className="badge bg-blue-lt">{
+                        event.type === "page_view" ? "Seite geöffnet" :
+                        event.type === "route_change" ? "Seitenwechsel" :
+                        event.type === "action" ? "Aktion" :
+                        event.type === "engagement" ? "Seite sichtbar" :
+                        event.type === "scroll" ? "Gescrollt" : event.type
+                      }</span>
+                        <div className="small text-break mt-1">{
+                          event.type === "action" ?
+                            (event.action === "link_click" ? "Link angeklickt" :
+                              event.action === "button_click" ? "Button angeklickt" : event.action) :
+                          event.type === "engagement" ? event.visibleSeconds + " Sekunden · " + event.path :
+                          event.type === "scroll" ? event.scrollDepth + "% · " + event.path : event.path
+                        }</div>
                       </td></tr>)}
-                    {detail.data?.timeline.length === 0 && <tr><td colSpan={3}>No retained events.</td></tr>}
+                    {detail.data?.timeline.length === 0 && <tr><td colSpan={3}>Noch keine gespeicherten Ereignisse.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -238,7 +279,8 @@ export default function UsersStudio() {
           </div>}
       </div>
     </div>
-    <p className="text-secondary small mt-3">Profiles cover only the retained recent analytics log, not complete lifetime history.
-      Cross-site IDs are shared only among participating HYROVI subdomains after consent. This view currently lists analytics received by the Raspberry Pi HPM node.</p>
+    <p className="text-secondary small mt-3">Die Liste beruht ausschließlich auf zugestimmter Browser-Telemetrie und dem jüngsten Pi-HPM-Protokoll.
+      „Kürzlich sichtbar“ bedeutet ein frisches Sichtbarkeitssignal, keine garantierte Anwesenheit einer Person.
+      Websites am getrennten VPS-HPM erscheinen hier noch nicht.</p>
   </div>;
 }
