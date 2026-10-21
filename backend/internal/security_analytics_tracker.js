@@ -6,6 +6,7 @@ import visitorConsentScript from "./visitor_consent_script.js";
 
 const SECURITY_DIR = "/data/nginx/hyrovi-security";
 const SECRET_FILE = `${SECURITY_DIR}/analytics-secret`;
+const SHARED_DEVICE_SECRET_FILE = `${SECURITY_DIR}/shared-visitor-secret`;
 const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
 const MAX_EVENT_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
@@ -14,6 +15,7 @@ const ALLOWED_TYPES = new Set(["page_view", "engagement", "scroll", "route_chang
 const ID_RE = /^[A-Za-z0-9._:-]{1,96}$/;
 
 let secret = null;
+let sharedDeviceSecret = null;
 let writeQueue = Promise.resolve();
 
 const bounded = (value, max = 240) => String(value || "").trim().slice(0, max);
@@ -47,8 +49,22 @@ const prepare = async () => {
 		secret = await writeSecret();
 	}
 	if (!secret || secret.length < 32) throw new errs.ConfigurationError("HYROVI analytics secret is invalid");
-	return { ready: true };
+	try {
+		const common = (await fs.promises.readFile(SHARED_DEVICE_SECRET_FILE,"utf8")).trim();
+		if (!/^[a-f0-9]{64}$/.test(common)) throw new errs.ConfigurationError("Invalid shared visitor key");
+		sharedDeviceSecret = common;
+	} catch (err) {
+		if (err.code !== "ENOENT") throw err;
+		// Fail closed: never generate an inconsistent cross-node visitor key.
+		sharedDeviceSecret = null;
+	}
+	return { ready: true, sharedIdentityReady: Boolean(sharedDeviceSecret) };
 };
+
+const sharedDeviceKey = (deviceId) =>
+	sharedDeviceSecret && deviceId
+		? createHmac("sha256", sharedDeviceSecret).update("hyrovi-device-v2\u0000" + deviceId).digest("hex")
+		: null;
 
 const hmac = (...parts) => {
 	if (!secret) return null;
@@ -141,7 +157,7 @@ const collect = async ({ headers, body }) => {
 		path: payload.path,
 		referrerHost: payload.referrerHost || null,
 		sessionKey: payload.sessionId ? hmac("session-v1", context.host, payload.sessionId) : null,
-		deviceKey: payload.deviceId ? hmac("device-v1", payload.deviceId) : null,
+		deviceKey: payload.consent ? sharedDeviceKey(payload.deviceId) : null,
 		clientFingerprint: fingerprint,
 		ipHash: hmac("ip-day-v1", now.toISOString().slice(0, 10), context.ip),
 		consent: payload.consent,
