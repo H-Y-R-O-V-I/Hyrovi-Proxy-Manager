@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { getSecurityVisitor, getSecurityVisitors, getTestStudioOverview, saveSecurityVisitor } from "src/api/backend/securityVisitors";
 import TestsStudio from "./TestsStudio";
 import AllHostsStudio from "./AllHostsStudio";
+import SmartStudio from "./SmartStudio";
 
 const stamp = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
 
 export default function UsersStudio() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
-  const [mode, setMode] = useState<"activity" | "visitors" | "tests" | "hosts">("hosts");
+  const [mode, setMode] = useState<"activity" | "visitors" | "tests" | "hosts" | "smart">("hosts");
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
   const [activeOnly, setActiveOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -74,7 +75,15 @@ export default function UsersStudio() {
       error={list.error} onRefresh={() => {void list.refetch();void testBrowserList.refetch();}}
       testProfileCount={testBrowserList.data?.browsers.length}
       onTests={() => {setOpenedTestBrowserId(null);setMode("tests");}}
+      onSmart={() => setMode("smart")}
       onVisitors={() => {setMode("visitors");setSearch("");}} />;
+  }
+
+  if (mode === "smart") {
+    return <SmartStudio report={list.data?.automaticActivity?.smart}
+      loading={list.isLoading} error={list.error}
+      onRefresh={() => void list.refetch()}
+      onBack={() => setMode("hosts")}/>;
   }
 
   if (mode === "tests") {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { analyzeAutomaticActivity } from "./security_smart.js";
 
 const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
 const LABEL_FILE = "/data/nginx/hyrovi-security/visitor-labels.json";
@@ -337,6 +338,7 @@ async function list() {
   ]);
   const events = [...piEvents, ...(remote?.consentedEvents || [])];
   const automaticActivity = mergeTraffic(localTraffic, remote, piEvents);
+  automaticActivity.smart = analyzeAutomaticActivity(automaticActivity);
   return { automaticActivity, visitors: buildProfiles(events, labels).slice(0, 200), totalEvents: events.length,
     note: "Only opted-in HYROVI visitors. Browser hints are not used to identify people. Recent log window only." };
 }

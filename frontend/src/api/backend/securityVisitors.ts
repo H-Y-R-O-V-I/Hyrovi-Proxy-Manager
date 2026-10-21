@@ -53,7 +53,29 @@ export interface AnonymousBrowserEvent {
   type: "page_view" | "route_change" | "scroll" | "engagement" | "action";
   time: string; section: string; scrollDepth: number; visibleSeconds: number;
 }
+export interface SmartSecuritySite {
+  host: string;
+  source: "Pi" | "VPS";
+  configured: boolean;
+  requests: number;
+  failures: number;
+  automationSignals: number;
+  writes: number;
+  clientSignatures: number;
+  failurePercent: number;
+  automationPercent: number;
+  score: number | null;
+  confidence: "sample-large" | "sample-limited" | "insufficient";
+  assessment: "investigate" | "review" | "no-specific-signal" | "too-little-data";
+  evidence: Array<{code: string; points: number; label: string; detail: string}>;
+}
+export interface SmartSecurityReport {
+  schema: number; generatedAt: string; mode: "aggregate-security-only";
+  coverage: string; totalHosts: number; analyzedHosts: number; hostsToReview: number;
+  sites: SmartSecuritySite[];
+}
 export interface AutomaticSiteActivity {
+  smart?: SmartSecurityReport;
   anonymousBrowserEvents: AnonymousBrowserEvent[];
   remoteGeneratedAt: string | null;
   browserViews: number;

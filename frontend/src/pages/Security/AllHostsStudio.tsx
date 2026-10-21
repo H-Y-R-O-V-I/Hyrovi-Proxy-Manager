@@ -9,9 +9,9 @@ type Order = "requests" | "browserViews" | "failures" | "automationSignals" | "l
 const value = (site: SecuritySiteActivity, sort: Order) =>
   sort === "last" ? Date.parse(site.browserLastSeen || site.latest || "") || 0 : site[sort] || 0;
 
-export default function AllHostsStudio({data, loading, error, onRefresh, onTests, onVisitors, testProfileCount}:{
+export default function AllHostsStudio({data, loading, error, onRefresh, onTests, onVisitors, onSmart, testProfileCount}:{
   data?:AutomaticSiteActivity; loading:boolean; error:Error | null;
-  onRefresh:()=>void; onTests:()=>void; onVisitors:()=>void;
+  onRefresh:()=>void; onTests:()=>void; onVisitors:()=>void; onSmart:()=>void;
   testProfileCount?:number
 }) {
   const [search,setSearch]=useState("");
@@ -45,6 +45,7 @@ export default function AllHostsStudio({data, loading, error, onRefresh, onTests
         <p className="text-secondary mb-0">Zentrale Sicherheitsaktivität und Signaturtypen der HPM-Proxy-Hosts auf Pi und VPS.</p>
       </div>
       <div className="d-flex flex-wrap gap-2">
+        <button type="button" className="btn btn-primary" onClick={onSmart}>HYROVI Smart</button>
         <button type="button" className="btn btn-outline-primary" onClick={onTests}>Live Test Studio</button>
         <button type="button" className="btn btn-primary" onClick={onVisitors}>Browser-Besuche & Profile</button>
         <button type="button" className="btn btn-primary" onClick={onRefresh}><IconRefresh size={16} className="me-1"/>Aktualisieren</button>
