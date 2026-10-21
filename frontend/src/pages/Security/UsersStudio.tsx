@@ -5,13 +5,14 @@ import { getSecurityVisitor, getSecurityVisitors, getTestStudioOverview, saveSec
 import TestsStudio from "./TestsStudio";
 import AllHostsStudio from "./AllHostsStudio";
 import SmartStudio from "./SmartStudio";
+import SmartAnalyticsStudio from "./SmartAnalyticsStudio";
 
 const stamp = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
 
 export default function UsersStudio() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
-  const [mode, setMode] = useState<"activity" | "visitors" | "tests" | "hosts" | "smart">("hosts");
+  const [mode, setMode] = useState<"activity" | "visitors" | "tests" | "hosts" | "smart" | "smart_security">("hosts");
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
   const [activeOnly, setActiveOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -80,10 +81,15 @@ export default function UsersStudio() {
   }
 
   if (mode === "smart") {
+    return <SmartAnalyticsStudio onBack={() => setMode("hosts")}
+      onSecurity={() => setMode("smart_security")} />;
+  }
+
+  if (mode === "smart_security") {
     return <SmartStudio report={list.data?.automaticActivity?.smart}
       loading={list.isLoading} error={list.error}
       onRefresh={() => void list.refetch()}
-      onBack={() => setMode("hosts")}/>;
+      onBack={() => setMode("smart")}/>;
   }
 
   if (mode === "tests") {

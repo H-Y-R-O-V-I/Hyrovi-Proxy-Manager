@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Isolated, explicitly started HYROVI test-site sessions. No cookies or identity fingerprints."""
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -24,18 +23,6 @@ DETAILS = {"home", "features", "activity", "about", "tap", "toggle", "counter", 
            "scroll25", "scroll50", "scroll75", "scroll100", "focus", "hidden", "visible", "open"}
 MAX_EVENTS_PER_SESSION = 1200
 LOCK = threading.RLock()
-KEY_FILE = DB_PATH.parent / "test-signature.key"
-try:
-    SIGNATURE_KEY = KEY_FILE.read_bytes()
-except FileNotFoundError:
-    SIGNATURE_KEY = secrets.token_bytes(32)
-    fd = os.open(KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "wb") as stream:
-        stream.write(SIGNATURE_KEY)
-if len(SIGNATURE_KEY) != 32:
-    raise RuntimeError("Invalid test-only signature key")
-
-
 
 def conn():
     c = sqlite3.connect(DB_PATH, timeout=3)
@@ -75,13 +62,9 @@ def browser_diagnostics(headers):
     elif "Windows" in ua: platform = "Windows"
     elif "Linux" in ua: platform = "Linux"
     else: platform = "Unbekannt"
-    # Only after deliberate test start. Distinguishes observed header TYPES;
-    # collisions and changes are expected; do not correlate to other domains.
-    components = [ua,lang]+[str(headers.get(k,""))[:150] for k in
-                           ("Sec-CH-UA","Sec-CH-UA-Mobile","Sec-CH-UA-Platform")]
-    signature = hmac.new(SIGNATURE_KEY, ("tests.hyrovi.com\0"+"\0".join(components)).encode(),
-                         hashlib.sha256).hexdigest()[:20]
-    return browser,platform,lang,signature
+    # No hardware or HTTP fingerprint is calculated. Each test session is
+    # an independent, user-started unit with a random session token.
+    return browser, platform, lang, ""
 
 
 def sanitized_diagnostics(value):
@@ -98,7 +81,14 @@ def sanitized_diagnostics(value):
         "memory": r"(?:unknown|<=2|3-4|5-8|9+)",
         "theme": r"(?:dark|light)",
         "motion": r"(?:reduced|normal)",
-        "pixelRatio": r"(?:1|2|3+)",
+        "pixelRatio": r"(?:1|2|3\+)",
+        "deviceType": r"(?:mobile|tablet|desktop)",
+        "screenPixels": r"[0-9]{2,5}x[0-9]{2,5}",
+        "viewportPixels": r"[0-9]{2,5}x[0-9]{2,5}",
+        "colorDepth": r"(?:16|24|30|32|other)",
+        "orientation": r"(?:landscape|portrait)",
+        "connection": r"(?:slow-2g|2g|3g|4g|unknown)",
+        "features": r"(?:webgl|wasm|service-worker|touch-events)(?:,(?:webgl|wasm|service-worker|touch-events)){0,3}|",
     }
     return {k: v for k, rule in allowed.items()
             if isinstance((v := value.get(k)), str) and re.fullmatch(rule, v)}

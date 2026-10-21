@@ -411,7 +411,7 @@ async function readTestStudio() {
         signature:/^[a-f0-9]{20}$/.test(String(s.signature||"")) ? s.signature : "",
         diagnostics:Object.fromEntries(Object.entries(s.diagnostics && typeof s.diagnostics === "object" &&
           !Array.isArray(s.diagnostics) ? s.diagnostics : {}).filter(([k,v]) =>
-          ["timezone","screen","viewport","touch","cpu","memory","theme","motion","pixelRatio"].includes(k) &&
+          ["timezone","screen","viewport","touch","cpu","memory","theme","motion","pixelRatio","deviceType","screenPixels","viewportPixels","colorDepth","orientation","connection","features"].includes(k) &&
           typeof v==="string" && v.length<=70)),
         started:s.started, last:s.last,
         active:Boolean(s.active) && Date.now()-Date.parse(s.last)<40_000,

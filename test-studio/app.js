@@ -25,7 +25,21 @@ function capabilities(){
     memory:memory===0?'unknown':memory<=2?'<=2':memory<=4?'3-4':memory<=8?'5-8':'9+',
     theme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light',
     motion:matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'normal',
-    pixelRatio:ratio<=1?'1':ratio===2?'2':'3+'
+    pixelRatio:ratio<=1?'1':ratio===2?'2':'3+',
+    deviceType:/iPad|Tablet/i.test(navigator.userAgent)?'tablet':
+      /iPhone|Android.*Mobile|Mobile/i.test(navigator.userAgent)?'mobile':'desktop',
+    screenPixels:Math.round(screen.width)+'x'+Math.round(screen.height),
+    viewportPixels:Math.round(innerWidth)+'x'+Math.round(innerHeight),
+    colorDepth:[16,24,30,32].includes(screen.colorDepth)?String(screen.colorDepth):'other',
+    orientation:screen.width>=screen.height?'landscape':'portrait',
+    connection:['slow-2g','2g','3g','4g'].includes(navigator.connection?.effectiveType)?
+      navigator.connection.effectiveType:'unknown',
+    features:[
+      'WebGLRenderingContext' in window?'webgl':'',
+      typeof WebAssembly==='object'?'wasm':'',
+      'serviceWorker' in navigator?'service-worker':'',
+      'ontouchstart' in window?'touch-events':''
+    ].filter(Boolean).join(',')
   };
 }
 $('start').onclick=async()=>{

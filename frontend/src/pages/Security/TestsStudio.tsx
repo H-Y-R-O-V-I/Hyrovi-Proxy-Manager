@@ -136,9 +136,9 @@ export default function TestsStudio({onOverview,onVisitors,initialBrowserId}:{
         </div>
         <p className="text-secondary small mt-2">
           Aktivitätspunkte: Testbutton ×4, Bereichswechsel ×2, Seitenaufruf ×1, Scrollereignis ×1.
-          Heartbeats erhöhen den Rang nicht. Sitzungen mit identischen, auf tests.hyrovi.com
-          begrenzten Header-Signaturen werden zu einem wahrscheinlichen Browser-Profil zusammengefasst.
-          Gleiche Merkmale beweisen keine gemeinsame Person oder dasselbe physische Gerät.
+          Heartbeats erhöhen den Rang nicht. Neue Testsitzungen bleiben voneinander getrennt,
+          auch wenn sie von demselben Gerät kommen. Für neue Tests wird kein Header-Fingerprint erzeugt.
+          Eventuelle ältere Signaturen verschwinden mit der 24-Stunden-Aufbewahrung.
         </p>
       </div>
       <div className="col-lg-7">
@@ -156,9 +156,9 @@ export default function TestsStudio({onOverview,onVisitors,initialBrowserId}:{
               </div>
               <div className="small text-secondary text-break">Browser-Gruppen-ID: {session.id.slice(0,16)}…</div>
               <div className="small text-secondary mt-2">
-                Browser-Fingerprint (nur tests.hyrovi.com): <strong>{session.signature || "—"}</strong>
+                Keine geräteübergreifende Identifizierung.
                 <div>{session.browser || "Unbekannt"} · {session.platform || "Unbekannt"} · Sprache {session.language || "—"}</div>
-                <div>Abgeleitet aus beim Teststart gesendeten HTTP-Headern. Mehrere Geräte können dieselbe Signatur haben.</div>
+                <div>Neue Testsitzungen erhalten nur eine zufällige, auf diese Sitzung begrenzte Kennung.</div>
                 <div className="mt-1">Weitere Testsitzungsnamen: {session.aliases.join(", ") || "—"}</div>
               </div>
               <dl className="row mt-3 mb-0">
