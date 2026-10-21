@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { IconArrowLeft, IconRefresh, IconChartBar, IconExternalLink } from "@tabler/icons-react";
+import { IconRefresh, IconChartBar, IconExternalLink } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 import { getTestStudioOverview, getTestStudioDetail } from "src/api/backend/securityVisitors";
 
@@ -17,8 +17,8 @@ const displayName: Record<string,string> = {
   orientation:"Ausrichtung", connection:"Verbindungsqualität",
   features:"Unterstützte Browserfunktionen",
 };
-export default function SmartAnalyticsStudio({ onBack, onSecurity }: {
-  onBack:()=>void; onSecurity:()=>void;
+export default function SmartAnalyticsStudio({ onSecurity }: {
+  onSecurity:()=>void;
 }) {
   const [query,setQuery] = useState("");
   const [selected,setSelected] = useState<string|null>(null);
@@ -42,12 +42,11 @@ export default function SmartAnalyticsStudio({ onBack, onSecurity }: {
   return <div>
     <div className="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-3">
       <div>
-        <div className="small text-secondary">HYROVI SEC / USERS / SMART / ANALYTICS</div>
+        <div className="small text-secondary">HYROVI SEC / HYROVI SMART / ANALYTICS</div>
         <h2 className="mb-1"><IconChartBar className="me-2"/>HYROVI Smart · Analytics</h2>
         <p className="text-secondary mb-0">Gerätedetails und Aktionen für bewusst gestartete Testsitzungen – ohne Fingerprint-Matching.</p>
       </div>
       <div className="d-flex gap-2 flex-wrap">
-        <button className="btn btn-outline-secondary" type="button" onClick={onBack}><IconArrowLeft size={16}/> Alle Hosts</button>
         <button className="btn btn-outline-secondary" type="button" onClick={onSecurity}>Sicherheitsanalyse</button>
         <button className="btn btn-primary" type="button" onClick={()=>{void report.refetch();if(selected)void detail.refetch();}}><IconRefresh size={16}/> Aktualisieren</button>
       </div>

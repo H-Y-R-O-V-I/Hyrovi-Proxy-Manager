@@ -52,6 +52,7 @@ import SecurityDashboard from "./Dashboard";
 import SecurityBlocks from "./Blocks";
 import SecurityGroups from "./Groups";
 import UsersStudio from "./UsersStudio";
+import SmartHub from "./SmartHub";
 import styles from "./Security.module.css";
 
 const POLL_MS = 20_000;
@@ -2772,7 +2773,7 @@ const SecuritySettings = () => {
 	);
 };
 
-type SecurityTab = "dashboard" | "users" | "blocks" | "groups" | "settings";
+type SecurityTab = "dashboard" | "users" | "smart" | "blocks" | "groups" | "settings";
 
 const Security = () => {
 	const [tab, setTab] = useState<SecurityTab>("dashboard");
@@ -2790,7 +2791,10 @@ const Security = () => {
 					</button>
 					<button type="button"
 						className={styles.tab + (tab === "users" ? " " + styles.tabActive : "")}
-						onClick={() => setTab("users")}>Users · Fingerprint Studio</button>
+						onClick={() => setTab("users")}>Users</button>
+					<button type="button"
+						className={styles.tab + (tab === "smart" ? " " + styles.tabActive : "")}
+						onClick={() => setTab("smart")} aria-current={tab === "smart" ? "page" : undefined}>HYROVI Smart</button>
 					<button
 						type="button"
 						className={`${styles.tab} ${tab === "blocks" ? styles.tabActive : ""}`}
@@ -2817,6 +2821,7 @@ const Security = () => {
 				<div className="mt-3">
 					{tab === "dashboard" ? <SecurityDashboard /> : null}
 					{tab === "users" ? <UsersStudio /> : null}
+					{tab === "smart" ? <SmartHub /> : null}
 					{tab === "blocks" ? <SecurityBlocks /> : null}
 					{tab === "groups" ? <SecurityGroups /> : null}
 					{tab === "settings" ? <SecuritySettings /> : null}

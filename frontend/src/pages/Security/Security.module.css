@@ -1,7 +1,7 @@
 .shell { display: flex; flex-direction: column; gap: 18px; }
 .shell [hidden] { display: none !important; }
-.tabs { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--tblr-border-color); border-radius: 6px; width: fit-content; background: var(--tblr-bg-surface); }
-.tab { border: 0; background: transparent; color: var(--tblr-secondary); padding: 8px 14px; border-radius: 4px; font-weight: 600; }
+.tabs { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--tblr-border-color); border-radius: 6px; width: fit-content; max-width: 100%; overflow-x: auto; scrollbar-width: thin; background: var(--tblr-bg-surface); }
+.tab { border: 0; background: transparent; color: var(--tblr-secondary); padding: 8px 14px; border-radius: 4px; font-weight: 600; white-space: nowrap; flex: 0 0 auto; }
 .tabActive { background: var(--tblr-bg-surface-secondary); color: var(--tblr-body-color); }
 .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .hero h1 { margin: 0; font-size: 1.55rem; }

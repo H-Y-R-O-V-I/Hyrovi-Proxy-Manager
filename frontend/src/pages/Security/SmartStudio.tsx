@@ -29,12 +29,12 @@ export default function SmartStudio({ report, loading, error, onBack, onRefresh 
   return <div>
     <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
       <div>
-        <div className="small text-secondary">HYROVI SEC / USERS / SMART</div>
+        <div className="small text-secondary">HYROVI SEC / HYROVI SMART / SECURITY</div>
         <h2 className="mb-1"><IconShieldCheck className="me-2"/>HYROVI Smart</h2>
         <p className="text-secondary mb-0">Automatische, erklärbare Sicherheitsanalyse der Proxy-Hosts auf Pi und VPS.</p>
       </div>
       <div className="d-flex gap-2 flex-wrap">
-        <button type="button" className="btn btn-outline-secondary" onClick={onBack}><IconArrowLeft size={16}/> Alle Hosts</button>
+        <button type="button" className="btn btn-outline-secondary" onClick={onBack}><IconArrowLeft size={16}/> Zur Analytics</button>
         <button type="button" className="btn btn-primary" onClick={onRefresh}><IconRefresh size={16}/> Aktualisieren</button>
       </div>
     </div>
