@@ -33,17 +33,18 @@ function client(hostname, cookies = new Map(), privacy = {}) {
     language:"de-DE",userAgent:"Safari/17.0",
     sendBeacon(){return false;}
   };
+  const storage=new MapStorage();
   const context={
     document:browserDocument,navigator,window:{},
     crypto:{randomUUID},location:{hostname,pathname:privacy.path||"/home"},
     history:{pushState(){},replaceState(){}},console,
-    sessionStorage:new MapStorage(), Intl, URL,
+    sessionStorage:storage, Intl, URL,
     innerWidth:1024,innerHeight:768,scrollY:0,
     setInterval(){},addEventListener(){},queueMicrotask:fn=>fn(),
     fetch:async (endpoint, options)=>{sent.push({endpoint,body:JSON.parse(options.body)});return {ok:true}},
   };
   vm.runInNewContext(visitorScript(),context);
-  return {cookies,buttons,elements,sent,writes,api:context.window.hyroviAnalytics};
+  return {cookies,buttons,elements,sent,writes,storage,api:context.window.hyroviAnalytics};
 }
 class MapStorage {
   data=new Map();
@@ -55,6 +56,7 @@ const jar=new Map();
 const a=client("stoneapp.hyrovi.com",jar);
 assert.equal(a.elements.length,1,"notice only before activation");
 assert.equal(jar.size,0,"no tracking cookie before opt-in");
+assert.equal(a.storage.data.size,0,"no session identifier before opt-in");
 assert.equal(a.sent.length,0,"no events before opt-in");
 a.buttons.find(x=>x.node.textContent==="Erlauben").fn();
 assert.equal(jar.get("hyrovi_analytics_consent"),"1");
@@ -79,4 +81,5 @@ assert.equal(login.sent.length,1);
 assert.equal(login.sent[0].body.path,"/[restricted]","login details must not leak into cross-site analytics");
 b.api.revokeConsent();
 assert.equal(jar.has("hyrovi_visitor_id"),false);
+assert.equal(b.storage.data.size,0,"revocation clears this tab session id");
 console.log("PASS: opted-in shared .hyrovi.com cookie across sites/sessions, no pre-consent collection, decline/GPC, and revocation");

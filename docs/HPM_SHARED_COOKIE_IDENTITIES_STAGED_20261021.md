@@ -1,5 +1,8 @@
 # HPM shared browser cookie identity — STAGED, NOT LIVE (2026-10-21)
 
+Historical snapshot only: this change was subsequently deployed live on 2026-10-21. Current status is in HPM_SHARED_COOKIE_LIVE_20261021.md.
+
+
 User requested a small text cookie connecting repeat browser sessions on all
 *.hyrovi.com hosts. Existing Pi analytics already wrote
 hyrovi_visitor_id to Domain=.hyrovi.com for expressly activated clients,
