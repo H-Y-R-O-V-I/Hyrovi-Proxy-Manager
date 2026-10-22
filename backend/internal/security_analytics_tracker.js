@@ -147,7 +147,7 @@ const collect = async ({ headers, body }) => {
 	if (!secret) await prepare();
 	const context = proxyContext(headers);
 	const payload = normalizeBody(body);
-	const fingerprint = fingerprintFromHeaders(headers);
+	// Consent-based cookie IDs only; do not derive a visitor fingerprint from headers.
 	const now = new Date();
 	const event = {
 		id: randomUUID(),
@@ -158,8 +158,8 @@ const collect = async ({ headers, body }) => {
 		referrerHost: payload.referrerHost || null,
 		sessionKey: payload.sessionId ? hmac("session-v1", context.host, payload.sessionId) : null,
 		deviceKey: payload.consent ? sharedDeviceKey(payload.deviceId) : null,
-		clientFingerprint: fingerprint,
-		ipHash: hmac("ip-day-v1", now.toISOString().slice(0, 10), context.ip),
+		clientFingerprint: null,
+		ipHash: null,
 		consent: payload.consent,
 		visibleSeconds: payload.visibleSeconds,
 		scrollDepth: payload.scrollDepth,

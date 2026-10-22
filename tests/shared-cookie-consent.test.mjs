@@ -55,55 +55,86 @@ class MapStorage {
 const jar=new Map();
 const a=client("test-login.hyrovi.com",jar);
 assert.equal(a.elements.length,1,"footer notice renders before activation");
-assert.equal(a.elements[0].tag,"footer");
-assert.match(a.elements[0].style.cssText,/position:static/);
-assert.doesNotMatch(a.elements[0].style.cssText,/position:fixed/);
+assert.equal(a.elements[0].tag,"section");
+assert.match(a.elements[0].style.cssText,/position:fixed/);
+assert.equal(a.elements[0].children[0].textContent,"Datenschutz & Nutzungsanalyse");
 assert.equal(jar.size,0,"no tracking cookie before opt-in");
 assert.equal(a.storage.data.size,0,"no session identifier before opt-in");
 assert.equal(a.sent.length,0,"no events before opt-in");
-assert.equal(a.buttons.length,0,"no allow/decline buttons in footer");
-a.api.grantConsent();
+assert.equal(a.buttons.length,2,"two equally visible consent buttons");
+assert.equal(a.buttons[0].node.textContent,"Ablehnen");
+assert.equal(a.buttons[1].node.textContent,"Akzeptieren");
+a.buttons[1].fn(); // explicit click on accept
 assert.equal(jar.get("hyrovi_analytics_consent"),"1");
 assert.match(jar.get("hyrovi_visitor_id"),/^[a-f0-9-]{16,64}$/);
 assert.equal(a.sent.length,1);
+assert.equal(a.elements.length,1,"banner removed, only small settings control remains");
+assert.equal(a.elements[0].textContent,"Cookie-Einstellungen");
 assert.ok(a.writes.every(s=>s.includes("Domain=.hyrovi.com")));
 const id=jar.get("hyrovi_visitor_id");
 const b=client("ai.hyrovi.com",jar);
-assert.equal(b.elements.length,1,"same top-level domain footer remains visible");
-assert.equal(b.buttons.length,0,"no visitor choice dialog on second domain");
-assert.ok(b.elements[0].children.some(x=>x.textContent==="Besucherstatistik widerrufen"),"consented visitors can revoke via footer");
+assert.equal(b.elements.length,1,"no consent banner on another subdomain");
+assert.equal(b.elements[0].textContent,"Cookie-Einstellungen");
+assert.equal(b.buttons.filter(b=>["Akzeptieren","Ablehnen"].includes(b.node.textContent)).length,0,"no repeat choice on second domain");
 assert.equal(b.sent.length,1,"new domain emits a new page view for same opted-in browser");
 assert.equal(b.sent[0].body.deviceId,id,"same id across Pi and VPS sites");
 assert.notEqual(b.sent[0].body.sessionId,a.sent[0].body.sessionId,"new independent browsing session");
 const c=client("test-login.hyrovi.com",new Map());
-assert.equal(c.buttons.length,0,"no consent buttons for first-time visitor");
+assert.equal(c.buttons.length,2,"first-time visitor sees choices");
 c.api.revokeConsent();
 assert.equal(c.sent.length,0);
 assert.equal(c.cookies.has("hyrovi_visitor_id"),false);
-assert.equal(c.elements.length,1,"footer remains after rejection");
+assert.equal(c.elements.length,1,"after revocation only settings link remains");
 const d=client("test-login.hyrovi.com",new Map(),{gpc:true});
 assert.equal(d.sent.length,0);
-assert.equal(d.elements.length,1,"informational footer remains visible under GPC");
-assert.equal(d.buttons.length,0,"no consent toggle while GPC is active");
+assert.equal(d.elements.length,1,"consent banner shown under GPC");
+assert.equal(d.buttons.length,2);
+assert.equal(d.buttons[1].node.disabled,true,"accept disabled under GPC");
 const login = client("test-login.hyrovi.com",jar,{path:"/login"});
 assert.equal(login.sent.length,1);
 assert.equal(login.sent[0].body.path,"/[restricted]","login details must not leak into cross-site analytics");
 b.api.revokeConsent();
 assert.equal(jar.has("hyrovi_visitor_id"),false);
-assert.equal(b.elements.length,1,"footer remains after revocation");
+assert.equal(b.elements.length,1,"settings link remains after revocation");
 assert.equal(b.storage.data.size,0,"revocation clears this tab session id");
-console.log("PASS: informational cookie footer without consent buttons, opted-in shared identity, no pre-consent tracking, GPC, and revocation");
+console.log("PASS: neutral banner, accept + decline, subdomain cookie, no pre-consent tracking, GPC, and revocation");
 
-// Stoneapp analytics runs ONLY on server logs; no visitor-side tracker.
-for(const jar of [
-  new Map(),
-  new Map([["hyrovi_analytics_consent","1"],["hyrovi_visitor_id",randomUUID()]]),
-  new Map([["hyrovi_stoneapp_analytics_consent","1"],["hyrovi_stoneapp_visitor_id",randomUUID()]])
-]){
-  const stoneapp=client("stoneapp.hyrovi.com",jar);
-  assert.equal(stoneapp.elements.length,0,"no banner on Stoneapp");
-  assert.equal(stoneapp.sent.length,0,"no per-visitor JS requests on Stoneapp");
-  assert.equal(stoneapp.writes.length,0,"no cookies read/write for analytics on Stoneapp");
-  assert.equal(stoneapp.storage.data.size,0,"no analytics session on Stoneapp");
-}
-console.log("PASS: Stoneapp server-log analytics, no JS tracking, no banners, no cookies");
+// A visitor who rejects is NOT tracked on any managed HYROVI domain.
+const refusedCookies=new Map();
+const refused=client("stoneapp.hyrovi.com",refusedCookies);
+assert.equal(refused.elements[0].tag,"section","Stoneapp receives HPM banner");
+assert.equal(refused.buttons.length,2);
+refused.buttons[0].fn(); // decline
+assert.equal(refusedCookies.get("hyrovi_analytics_consent"),"0");
+assert.ok(refused.writes.some(v=>v.includes("Max-Age=7776000") &&
+  v.includes("Domain=.hyrovi.com") && v.includes("SameSite=Lax") && v.includes("Secure")),
+  "declined decision persists for 90 days across the domain");
+assert.equal(refusedCookies.has("hyrovi_visitor_id"),false);
+assert.equal(refused.sent.length,0);
+assert.equal(refused.elements.length,1,"banner is gone after reject");
+assert.equal(refused.elements[0].textContent,"Cookie-Einstellungen");
+const refusedAgain=client("ai.hyrovi.com",refusedCookies);
+assert.equal(refusedAgain.sent.length,0);
+assert.equal(refusedAgain.elements.length,1);
+assert.equal(refusedAgain.elements[0].textContent,"Cookie-Einstellungen");
+assert.equal(refusedAgain.buttons.filter(b=>b.node.textContent==="Akzeptieren").length,0);
+
+const stoneappAfterAccepted=client("stoneapp.hyrovi.com",jar);
+assert.equal(stoneappAfterAccepted.sent.length,0,"rejected cookie after revocation prevents new tracking");
+assert.equal(stoneappAfterAccepted.elements.length,1,"Stoneapp remembers cross-domain choice");
+
+const freshJar=new Map();
+const stoneappFirst=client("stoneapp.hyrovi.com",freshJar);
+stoneappFirst.buttons[1].fn();
+assert.equal(stoneappFirst.sent.length,1,"Stoneapp tracks after deliberate consent");
+assert.equal(stoneappFirst.elements[0].textContent,"Cookie-Einstellungen");
+const nextSubdomain=client("feedback.hyrovi.com",freshJar);
+assert.equal(nextSubdomain.sent.length,1,"same opted-in pseudonymous browser across domains");
+assert.equal(nextSubdomain.elements[0].textContent,"Cookie-Einstellungen");
+assert.equal(nextSubdomain.sent[0].body.deviceId,stoneappFirst.sent[0].body.deviceId);
+
+const settingsAfterConsent=client("hyrovi.com",freshJar);
+settingsAfterConsent.api.settings();
+assert.equal(settingsAfterConsent.buttons.filter(b=>b.node.textContent==="Ablehnen").length,1,
+  "explicit settings reopens both choices");
+console.log("PASS: Stoneapp plus other HYROVI websites share accepted/rejected preference; settings reopens choices");
