@@ -53,7 +53,7 @@ class MapStorage {
   removeItem(k){this.data.delete(k)}
 }
 const jar=new Map();
-const a=client("stoneapp.hyrovi.com",jar);
+const a=client("test-login.hyrovi.com",jar);
 assert.equal(a.elements.length,1,"footer notice renders before activation");
 assert.equal(a.elements[0].tag,"footer");
 assert.match(a.elements[0].style.cssText,/position:static/);
@@ -75,17 +75,17 @@ assert.ok(b.elements[0].children.some(x=>x.textContent==="Besucherstatistik wide
 assert.equal(b.sent.length,1,"new domain emits a new page view for same opted-in browser");
 assert.equal(b.sent[0].body.deviceId,id,"same id across Pi and VPS sites");
 assert.notEqual(b.sent[0].body.sessionId,a.sent[0].body.sessionId,"new independent browsing session");
-const c=client("stoneapp.hyrovi.com",new Map());
+const c=client("test-login.hyrovi.com",new Map());
 assert.equal(c.buttons.length,0,"no consent buttons for first-time visitor");
 c.api.revokeConsent();
 assert.equal(c.sent.length,0);
 assert.equal(c.cookies.has("hyrovi_visitor_id"),false);
 assert.equal(c.elements.length,1,"footer remains after rejection");
-const d=client("stoneapp.hyrovi.com",new Map(),{gpc:true});
+const d=client("test-login.hyrovi.com",new Map(),{gpc:true});
 assert.equal(d.sent.length,0);
 assert.equal(d.elements.length,1,"informational footer remains visible under GPC");
 assert.equal(d.buttons.length,0,"no consent toggle while GPC is active");
-const login = client("stoneapp.hyrovi.com",jar,{path:"/login"});
+const login = client("test-login.hyrovi.com",jar,{path:"/login"});
 assert.equal(login.sent.length,1);
 assert.equal(login.sent[0].body.path,"/[restricted]","login details must not leak into cross-site analytics");
 b.api.revokeConsent();
@@ -93,3 +93,35 @@ assert.equal(jar.has("hyrovi_visitor_id"),false);
 assert.equal(b.elements.length,1,"footer remains after revocation");
 assert.equal(b.storage.data.size,0,"revocation clears this tab session id");
 console.log("PASS: informational cookie footer without consent buttons, opted-in shared identity, no pre-consent tracking, GPC, and revocation");
+
+// Stoneapp is deliberately silent. Device registration happens in authenticated
+// HPM Smart via explicit user action; the proxy merely reads that preference.
+const unregistered=client("stoneapp.hyrovi.com",new Map());
+assert.equal(unregistered.elements.length,0,"Stoneapp must not display a footer or consent banner");
+assert.equal(unregistered.sent.length,0,"No individualized tracking before HPM registration");
+assert.equal(unregistered.cookies.size,0,"No ID created before registration");
+const globalConsent=new Map([
+  ["hyrovi_analytics_consent","1"],["hyrovi_visitor_id",randomUUID()]
+]);
+const scopeTest=client("stoneapp.hyrovi.com",globalConsent);
+assert.equal(scopeTest.sent.length,0,"Other HYROVI consent must not enroll Stoneapp");
+const stoneappId=randomUUID();
+const registeredJar=new Map([
+  ["hyrovi_stoneapp_analytics_consent","1"],
+  ["hyrovi_stoneapp_visitor_id",stoneappId]
+]);
+const registeredStoneapp=client("stoneapp.hyrovi.com",registeredJar);
+assert.equal(registeredStoneapp.elements.length,0,"Enrolled Stoneapp still has no banner");
+assert.equal(registeredStoneapp.sent.length,1,"Registered browser emits page view");
+assert.equal(registeredStoneapp.sent[0].body.deviceId,stoneappId);
+assert.equal(registeredStoneapp.sent[0].body.consent,true);
+assert.equal(registeredStoneapp.sent[0].body.path,"/home");
+const registeredLogin=client("stoneapp.hyrovi.com",registeredJar,{path:"/login"});
+assert.equal(registeredLogin.sent[0].body.path,"/[restricted]","Never collect Stoneapp login path");
+const registeredDnt=client("stoneapp.hyrovi.com",registeredJar,{dnt:true});
+assert.equal(registeredDnt.sent.length,0,"Do Not Track must suppress enrollment");
+registeredStoneapp.api.revokeConsent();
+assert.equal(registeredJar.has("hyrovi_stoneapp_visitor_id"),false);
+assert.equal(registeredJar.has("hyrovi_stoneapp_analytics_consent"),true);
+assert.equal(client("stoneapp.hyrovi.com",registeredJar).sent.length,0,"Revocation stops future events");
+console.log("PASS: Stoneapp zero banners, isolated admin enrollment, sensitive path excluded, privacy opts respected");

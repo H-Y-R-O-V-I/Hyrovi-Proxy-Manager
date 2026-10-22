@@ -4,7 +4,8 @@ export default function script() {
   return [
     '(function() { "use strict";',
     'const endpoint="/.well-known/hyrovi-analytics/collect";',
-    'const consentName="hyrovi_analytics_consent", idName="hyrovi_visitor_id", sessionName="hyrovi_sid";',
+    'const isStoneapp=location.hostname==="stoneapp.hyrovi.com";',
+    'const consentName=isStoneapp?"hyrovi_stoneapp_analytics_consent":"hyrovi_analytics_consent", idName=isStoneapp?"hyrovi_stoneapp_visitor_id":"hyrovi_visitor_id", sessionName=isStoneapp?"hyrovi_stoneapp_sid":"hyrovi_sid";',
     'const cookieDays=90,cookieSeconds=cookieDays*86400;',
     'const shared=location.hostname==="hyrovi.com"||location.hostname.endsWith(".hyrovi.com");',
     'const cookieScope=shared?"; Domain=.hyrovi.com":"";',
@@ -48,7 +49,7 @@ export default function script() {
     'const dismiss=()=>{const node=document.getElementById("hyrovi-analytics-choice");if(node)node.remove()};',
     'const choose=allowed=>{put(consentName,allowed?"1":"0",cookieSeconds);if(!allowed){put(idName,"",0);try{sessionStorage.removeItem(sessionName)}catch{}}dismiss();if(allowed&&granted()){device();send("page_view")}showNotice()};',
     'const showNotice=()=>{',
-    ' if(!shared||!document.body||document.getElementById("hyrovi-analytics-choice"))return;',
+    ' if(isStoneapp||!shared||!document.body||document.getElementById("hyrovi-analytics-choice"))return;',
     ' const choice=preference(),disabled=navigator.doNotTrack==="1"||navigator.globalPrivacyControl===true;',
     ' const wrapper=document.createElement("footer");wrapper.id="hyrovi-analytics-choice";',
     ' wrapper.setAttribute("role","contentinfo");wrapper.setAttribute("aria-label","HYROVI Cookie-Hinweis");',

@@ -6,6 +6,24 @@ import {
   type SmartTrafficBreakdown,
 } from "src/api/backend/securityVisitors";
 
+// First-party browser enrollment initiated on the authenticated HPM dashboard.
+// These names are only consumed by the Stoneapp proxy-injected script.
+const STONEAPP_CONSENT="hyrovi_stoneapp_analytics_consent";
+const STONEAPP_DEVICE="hyrovi_stoneapp_visitor_id";
+const expires=90*86400;
+const readCookie=(key:string)=>{
+  try {return decodeURIComponent(document.cookie.split(";").map(s=>s.trim())
+    .find(s=>s.startsWith(key+"="))?.slice(key.length+1)||"");}
+  catch{return "";}
+};
+const registered=()=>readCookie(STONEAPP_CONSENT)==="1"&&
+  /^[a-f0-9-]{16,64}$/.test(readCookie(STONEAPP_DEVICE));
+const privacyBlocked=()=>navigator.doNotTrack==="1"||
+  (navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl===true;
+function setEnrollmentCookie(name:string,value:string,age:number){
+  document.cookie=name+"="+encodeURIComponent(value)+"; Max-Age="+age+
+    "; Domain=.hyrovi.com; Path=/; SameSite=Lax; Secure";
+}
 const format = (time: string) => new Date(time).toLocaleString("de-DE");
 const botLabel:Record<string,string> = {
   bot:"Wahrscheinlich Bot",interactive:"Interaktionssignal",unknown:"Nicht bestimmbar",
@@ -27,6 +45,24 @@ export default function SmartHostsStudio() {
   const [selected,setSelected] = useState<string|null>(null);
   const [selectedVisitor,setSelectedVisitor] = useState<string|null>(null);
   const [botFilter,setBotFilter] = useState<"hide"|"all"|"only">("hide");
+  const [myDeviceRegistered,setMyDeviceRegistered]=useState(registered);
+  const [deviceMessage,setDeviceMessage]=useState("");
+  const enroll=()=>{
+    if(privacyBlocked()){setDeviceMessage("Dein Browser deaktiviert individuelle Statistiken (DNT/GPC).");return;}
+    const existing=readCookie(STONEAPP_DEVICE);
+    const id=/^[a-f0-9-]{16,64}$/.test(existing)?existing:crypto.randomUUID();
+    setEnrollmentCookie(STONEAPP_DEVICE,id,expires);
+    setEnrollmentCookie(STONEAPP_CONSENT,"1",expires);
+    const active=registered();setMyDeviceRegistered(active);
+    setDeviceMessage(active?"Dieses Browserprofil ist registriert. Öffne Stoneapp im selben Browser, damit es in HPM erscheint.":
+      "Browserregistrierung nicht möglich – prüfe, ob Cookies in diesem Browser zugelassen sind.");
+  };
+  const unenroll=()=>{
+    setEnrollmentCookie(STONEAPP_CONSENT,"",0);
+    setEnrollmentCookie(STONEAPP_DEVICE,"",0);
+    setMyDeviceRegistered(registered());
+    setDeviceMessage("Die Registrierung für zukünftige Besuche wurde in diesem Browser deaktiviert. Bereits gespeicherte Protokolle werden dadurch nicht rückwirkend gelöscht.");
+  };
   const config = useQuery({queryKey:["hyrovi-smart-hosts"],queryFn:getSmartHosts,
     staleTime:10000,refetchInterval:30000,retry:false});
   const activity = useQuery({queryKey:["security-visitors"],queryFn:getSecurityVisitors,
@@ -144,6 +180,35 @@ export default function SmartHostsStudio() {
         <a className="btn btn-outline-secondary btn-sm" href={"https://"+selected}
           target="_blank" rel="noopener noreferrer">Website öffnen <IconExternalLink size={14}/></a>
       </div>
+      {selected==="stoneapp.hyrovi.com"&&<div className="card mb-3">
+        <div className="card-header"><h3 className="card-title">Eigenen Browser registrieren · Stoneapp</h3></div>
+        <div className="card-body">
+          <p className="text-secondary mb-2">
+            Damit du deine eigenen späteren Seitenaufrufe und allgemeinen Aktionen in HPM
+            wiederfindest, kannst du <strong>dieses Browserprofil</strong> einmal hier aktivieren.
+            Es erscheint kein Banner auf Stoneapp. Die Registrierung gilt bis zu 90 Tage für Stoneapp;
+            Login-Daten, Formulare und Passwörter werden nicht mitprotokolliert.
+          </p>
+          <div className="d-flex flex-wrap align-items-center gap-2">
+            <span className={"badge "+(myDeviceRegistered?"bg-green-lt":"bg-secondary-lt")}>
+              {myDeviceRegistered?"Dieser Browser registriert":"Nicht registriert"}
+            </span>
+            {!myDeviceRegistered?<button type="button" className="btn btn-primary" onClick={enroll}>
+              Diesen Browser registrieren
+            </button>:<button type="button" className="btn btn-outline-secondary" onClick={unenroll}>
+              Registrierung deaktivieren
+            </button>}
+            <a href="https://stoneapp.hyrovi.com" target="_blank" rel="noopener noreferrer"
+              className="btn btn-outline-primary">Stoneapp öffnen</a>
+          </div>
+          {deviceMessage&&<p className="small mt-2 mb-0" role="status">{deviceMessage}</p>}
+          <p className="small text-secondary mt-2 mb-0">
+            Nur derselbe Browser auf diesem Gerät wird registriert. Andere Besucher werden
+            weiterhin nur anonymisiert ausgewertet. Die Registrierung erfasst keine
+            verifizierte persönliche Identität oder den Stoneapp-Accountnamen.
+          </p>
+        </div>
+      </div>}
       <div className="row g-2 mb-3">
         {[
           ["Proxy-Anfragen",totals.requests],["Browser-Seitenereignisse",totals.views],
