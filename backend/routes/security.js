@@ -4,6 +4,7 @@ import internalSecurityAppEvents from "../internal/security_app_events.js";
 import internalSecurityAlerts from "../internal/security_alerts.js";
 import internalSecurityAnalyticsTracker from "../internal/security_analytics_tracker.js";
 import internalSecurityVisitors from "../internal/security_visitors.js";
+import internalSmartHosts, {SmartHostValidationError} from "../internal/security_smart_hosts.js";
 import internalSecurityChallenge from "../internal/security_challenge.js";
 import internalSecurityDevices from "../internal/security_devices.js";
 import internalSecurityDetectionRules from "../internal/security_detection_rules.js";
@@ -11,6 +12,8 @@ import internalSecurityHostGroups from "../internal/security_host_groups.js";
 import internalSecurityRuleReviews from "../internal/security_rule_reviews.js";
 import jwtdecode from "../lib/express/jwt-decode.js";
 import { debug, express as logger } from "../logger.js";
+
+import errs from "../lib/error.js";
 
 const router = express.Router({
 	caseSensitive: true,
@@ -179,6 +182,42 @@ router.post("/analytics/collect", async (req, res, next) => {
 });
 
 router.use(jwtdecode());
+
+// Operator-controlled Smart host scope. This selects hosts for the dedicated
+// Smart dashboard; it never bypasses existing tracking consent mechanisms.
+router.get("/smart/hosts", async (req, res, next) => {
+    try {
+        await res.locals.access.can("logs:list");
+        const [hosts, traffic] = await Promise.all([
+            internalSmartHosts.list(), internalSecurityVisitors.list()
+        ]);
+        const available = [...new Set(traffic.automaticActivity.websites
+            .filter(site => site.configured && site.host && site.host !== "tests.hyrovi.com" &&
+                site.host !== "hpm.hyrovi.com")
+            .map(site => site.host))].sort();
+        res.set("Cache-Control","no-store");
+        res.status(200).send({hosts, available, scope:"smart-dashboard-only"});
+    } catch(err) { next(err); }
+});
+
+router.post("/smart/hosts", async (req, res, next) => {
+    try {
+        await res.locals.access.can("users:list");
+        const traffic = await internalSecurityVisitors.list();
+        const available = [...new Set(traffic.automaticActivity.websites
+            .filter(site => site.configured).map(site => site.host))];
+        res.set("Cache-Control","no-store");
+        res.status(200).send(await internalSmartHosts.change(req.body?.host, true, available));
+    } catch(err) { next(err instanceof SmartHostValidationError ? new errs.ValidationError(err.message) : err); }
+});
+
+router.delete("/smart/hosts/:host", async (req, res, next) => {
+    try {
+        await res.locals.access.can("users:list");
+        res.set("Cache-Control","no-store");
+        res.status(200).send(await internalSmartHosts.change(req.params.host, false));
+    } catch(err) { next(err instanceof SmartHostValidationError ? new errs.ValidationError(err.message) : err); }
+});
 
 // Only HPM operators with the security logs permission can see test-session details.
 router.get("/test-studio", async (req, res, next) => {

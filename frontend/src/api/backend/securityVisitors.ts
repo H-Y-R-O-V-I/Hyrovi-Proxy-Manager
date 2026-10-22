@@ -101,6 +101,18 @@ function boundedRequest<T>(run: (controller: AbortController) => Promise<T>, sec
   });
 }
 
+export interface SmartHostConfig {
+  hosts: string[];
+  available: string[];
+  scope: "smart-dashboard-only";
+}
+export const getSmartHosts = (): Promise<SmartHostConfig> =>
+  boundedRequest(controller => api.get({url:"/security/smart/hosts"},controller));
+export const addSmartHost = (host:string): Promise<{hosts:string[]}> =>
+  api.post({url:"/security/smart/hosts",data:{host}});
+export const removeSmartHost = (host:string): Promise<{hosts:string[]}> =>
+  api.del({url:"/security/smart/hosts/"+encodeURIComponent(host)});
+
 export const getSecurityVisitors = (): Promise<{visitors: SecurityVisitor[]; totalEvents: number; note: string; automaticActivity: AutomaticSiteActivity}> =>
   boundedRequest((controller) => api.get({ url: "/security/visitors" }, controller));
 export const getSecurityVisitor = (id: string): Promise<{visitor: SecurityVisitor; timeline: SecurityVisitorEvent[]}> =>
