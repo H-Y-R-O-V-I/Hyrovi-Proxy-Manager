@@ -1,5 +1,6 @@
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useEffect, useMemo, useState} from "react";
+import SmartClientDetails from "./SmartClientDetails";
 import {IconPlus, IconRefresh, IconTrash, IconWorld, IconExternalLink, IconFilter} from "@tabler/icons-react";
 import {
   getSecurityVisitors, getSecurityVisitor, getSmartHosts, addSmartHost, removeSmartHost,
@@ -51,6 +52,9 @@ export default function SmartHostsStudio() {
     scroll:a.scroll+b.browserScroll,errors:a.errors+b.failures,
   }),{requests:0,views:0,actions:0,scroll:0,errors:0});
   const consented=(activity.data?.visitors||[]).filter(v=>v.sites.some(s=>s.host===selected));
+  useEffect(()=>{
+    if(!selectedVisitor&&consented.length===1)setSelectedVisitor(consented[0].id);
+  },[selectedVisitor,consented.length,selected]);
   const filterCount=(all:number,bots:number)=>botFilter==="all"?all:
     botFilter==="only"?Math.min(all,bots):Math.max(0,all-bots);
   const hourlyByTime=new Map<string,{pages:number;requests:number}>();
@@ -106,7 +110,6 @@ export default function SmartHostsStudio() {
     (botFilter==="hide"&&e.classification!=="bot") ||
     (botFilter==="only"&&e.classification==="bot")).slice(0,150);
   const selectedProfile=details.data?.visitor;
-  const filteredTimeline=(details.data?.timeline||[]).filter(e=>e.host===selected).slice(0,100);
   return <div>
     <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
       <div>
@@ -292,25 +295,16 @@ export default function SmartHostsStudio() {
               lassen sich nicht zuverlässig einem konkreten Gerät zuordnen.
             </div>}
           </div>
-          {selectedVisitor&&<div className="card-body border-top">
-            {details.isLoading&&<p className="text-secondary">Lade Profil…</p>}
-            {details.isError&&<p className="text-danger">Profil derzeit nicht abrufbar.</p>}
-            {selectedProfile&&<>
-              <strong>{selectedProfile.name||"Freigegebenes Browserprofil"}</strong>
-              <p className="small text-secondary mb-2">
-                {selectedProfile.browsers.join(", ")} · {selectedProfile.platforms.join(", ")}
-                {" · "}{selectedProfile.languages.join(", ")}
-              </p>
-              <div style={{maxHeight:250,overflowY:"auto"}}>
-                {filteredTimeline.map(e=><div className="border-bottom py-1 small" key={e.id}>
-                  {format(e.timestamp)} · {kind[e.type]||e.type} · {e.path}
-                </div>)}
-                {!filteredTimeline.length&&<p className="text-secondary">Keine Ereignisse für diesen Host.</p>}
-              </div>
-            </>}
-          </div>}
         </div></div>
       </div>
+      {selectedVisitor&&<div className="card mt-3">
+        <div className="card-body">
+          {details.isLoading&&<p className="text-secondary">Lade alle gespeicherten Client-Informationen…</p>}
+          {details.isError&&<p className="text-danger">Client-Details derzeit nicht abrufbar.</p>}
+          {selectedProfile&&<SmartClientDetails visitor={selectedProfile} host={selected}
+            timeline={details.data?.timeline||[]} loading={details.isLoading} error={details.isError}/>}
+        </div>
+      </div>}
     </>}
   </div>;
 }
