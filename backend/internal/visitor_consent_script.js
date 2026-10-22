@@ -3,6 +3,8 @@
 export default function script() {
   return [
     '(function() { "use strict";',
+    'if(location.hostname==="stoneapp.hyrovi.com") return; // Stoneapp: server-log analytics only',
+
     'const endpoint="/.well-known/hyrovi-analytics/collect";',
     'const isStoneapp=location.hostname==="stoneapp.hyrovi.com";',
     'const consentName=isStoneapp?"hyrovi_stoneapp_analytics_consent":"hyrovi_analytics_consent", idName=isStoneapp?"hyrovi_stoneapp_visitor_id":"hyrovi_visitor_id", sessionName=isStoneapp?"hyrovi_stoneapp_sid":"hyrovi_sid";',

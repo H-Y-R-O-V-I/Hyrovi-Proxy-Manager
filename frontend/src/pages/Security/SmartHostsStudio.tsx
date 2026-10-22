@@ -6,24 +6,6 @@ import {
   type SmartTrafficBreakdown,
 } from "src/api/backend/securityVisitors";
 
-// First-party browser enrollment initiated on the authenticated HPM dashboard.
-// These names are only consumed by the Stoneapp proxy-injected script.
-const STONEAPP_CONSENT="hyrovi_stoneapp_analytics_consent";
-const STONEAPP_DEVICE="hyrovi_stoneapp_visitor_id";
-const expires=90*86400;
-const readCookie=(key:string)=>{
-  try {return decodeURIComponent(document.cookie.split(";").map(s=>s.trim())
-    .find(s=>s.startsWith(key+"="))?.slice(key.length+1)||"");}
-  catch{return "";}
-};
-const registered=()=>readCookie(STONEAPP_CONSENT)==="1"&&
-  /^[a-f0-9-]{16,64}$/.test(readCookie(STONEAPP_DEVICE));
-const privacyBlocked=()=>navigator.doNotTrack==="1"||
-  (navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl===true;
-function setEnrollmentCookie(name:string,value:string,age:number){
-  document.cookie=name+"="+encodeURIComponent(value)+"; Max-Age="+age+
-    "; Domain=.hyrovi.com; Path=/; SameSite=Lax; Secure";
-}
 const format = (time: string) => new Date(time).toLocaleString("de-DE");
 const botLabel:Record<string,string> = {
   bot:"Wahrscheinlich Bot",interactive:"Interaktionssignal",unknown:"Nicht bestimmbar",
@@ -45,24 +27,6 @@ export default function SmartHostsStudio() {
   const [selected,setSelected] = useState<string|null>(null);
   const [selectedVisitor,setSelectedVisitor] = useState<string|null>(null);
   const [botFilter,setBotFilter] = useState<"hide"|"all"|"only">("hide");
-  const [myDeviceRegistered,setMyDeviceRegistered]=useState(registered);
-  const [deviceMessage,setDeviceMessage]=useState("");
-  const enroll=()=>{
-    if(privacyBlocked()){setDeviceMessage("Dein Browser deaktiviert individuelle Statistiken (DNT/GPC).");return;}
-    const existing=readCookie(STONEAPP_DEVICE);
-    const id=/^[a-f0-9-]{16,64}$/.test(existing)?existing:crypto.randomUUID();
-    setEnrollmentCookie(STONEAPP_DEVICE,id,expires);
-    setEnrollmentCookie(STONEAPP_CONSENT,"1",expires);
-    const active=registered();setMyDeviceRegistered(active);
-    setDeviceMessage(active?"Dieses Browserprofil ist registriert. Öffne Stoneapp im selben Browser, damit es in HPM erscheint.":
-      "Browserregistrierung nicht möglich – prüfe, ob Cookies in diesem Browser zugelassen sind.");
-  };
-  const unenroll=()=>{
-    setEnrollmentCookie(STONEAPP_CONSENT,"",0);
-    setEnrollmentCookie(STONEAPP_DEVICE,"",0);
-    setMyDeviceRegistered(registered());
-    setDeviceMessage("Die Registrierung für zukünftige Besuche wurde in diesem Browser deaktiviert. Bereits gespeicherte Protokolle werden dadurch nicht rückwirkend gelöscht.");
-  };
   const config = useQuery({queryKey:["hyrovi-smart-hosts"],queryFn:getSmartHosts,
     staleTime:10000,refetchInterval:30000,retry:false});
   const activity = useQuery({queryKey:["security-visitors"],queryFn:getSecurityVisitors,
@@ -87,6 +51,27 @@ export default function SmartHostsStudio() {
     scroll:a.scroll+b.browserScroll,errors:a.errors+b.failures,
   }),{requests:0,views:0,actions:0,scroll:0,errors:0});
   const consented=(activity.data?.visitors||[]).filter(v=>v.sites.some(s=>s.host===selected));
+  const filterCount=(all:number,bots:number)=>botFilter==="all"?all:
+    botFilter==="only"?Math.min(all,bots):Math.max(0,all-bots);
+  const hourlyByTime=new Map<string,{pages:number;requests:number}>();
+  const routeBySection=new Map<string,{pages:number;requests:number}>();
+  for(const site of sites){
+    for(const h of site.smartHours||[]){
+      const old=hourlyByTime.get(h.hour)||{pages:0,requests:0};
+      old.pages+=filterCount(h.pages,h.botPages);
+      old.requests+=filterCount(h.requests,h.bots);
+      hourlyByTime.set(h.hour,old);
+    }
+    for(const route of site.smartRoutes||[]){
+      const old=routeBySection.get(route.section)||{pages:0,requests:0};
+      old.pages+=filterCount(route.pages,route.botPages);
+      old.requests+=filterCount(route.requests,route.bots);
+      routeBySection.set(route.section,old);
+    }
+  }
+  const hours=[...hourlyByTime].sort((a,b)=>a[0].localeCompare(b[0])).slice(-24);
+  const peak=Math.max(1,...hours.map(([,x])=>x.pages));
+  const topPages=[...routeBySection].sort((a,b)=>b[1].pages-a[1].pages).slice(0,8);
   const aggregate = sites.reduce((a,site)=>{
     const breakdown=site.smartBreakdown;
     if(!breakdown)return a;
@@ -135,10 +120,11 @@ export default function SmartHostsStudio() {
       </button>
     </div>
     <div className="alert alert-info">
-      Diese Auswahl begrenzt die <strong>HYROVI-Smart-Ansicht</strong>. Sie installiert keine neuen Tracker
-      und ändert nicht die bestehenden HPM-Proxy-Logs. Browserbasierte Besucherprofile
-      entstehen nur bei freigegebener individueller Analyse; reine HTTP-Anfragen werden
-      nicht als Personen oder Geräte ausgegeben.
+      HYROVI Smart wertet die vorhandenen HPM-Proxy-Logs für deine ausgewählten Hosts aus.
+      Nur angemeldete HPM-Berechtigte können die Statistiken abrufen. Für die
+      allgemeine Auswertung müssen sich Besucher nicht registrieren und es werden
+      keine individuellen Geräteprofile aus HTTP-Headern erzeugt. Ohne Freigabe
+      werden Besuche nicht zu wiederkehrenden Personen zusammengeführt.
     </div>
     {config.isError&&<div className="alert alert-danger" role="alert">Host-Verwaltung nicht erreichbar: {String(config.error)}</div>}
     {activity.isError&&<div className="alert alert-danger" role="alert">Analytics nicht erreichbar: {String(activity.error)}</div>}
@@ -180,38 +166,9 @@ export default function SmartHostsStudio() {
         <a className="btn btn-outline-secondary btn-sm" href={"https://"+selected}
           target="_blank" rel="noopener noreferrer">Website öffnen <IconExternalLink size={14}/></a>
       </div>
-      {selected==="stoneapp.hyrovi.com"&&<div className="card mb-3">
-        <div className="card-header"><h3 className="card-title">Eigenen Browser registrieren · Stoneapp</h3></div>
-        <div className="card-body">
-          <p className="text-secondary mb-2">
-            Damit du deine eigenen späteren Seitenaufrufe und allgemeinen Aktionen in HPM
-            wiederfindest, kannst du <strong>dieses Browserprofil</strong> einmal hier aktivieren.
-            Es erscheint kein Banner auf Stoneapp. Die Registrierung gilt bis zu 90 Tage für Stoneapp;
-            Login-Daten, Formulare und Passwörter werden nicht mitprotokolliert.
-          </p>
-          <div className="d-flex flex-wrap align-items-center gap-2">
-            <span className={"badge "+(myDeviceRegistered?"bg-green-lt":"bg-secondary-lt")}>
-              {myDeviceRegistered?"Dieser Browser registriert":"Nicht registriert"}
-            </span>
-            {!myDeviceRegistered?<button type="button" className="btn btn-primary" onClick={enroll}>
-              Diesen Browser registrieren
-            </button>:<button type="button" className="btn btn-outline-secondary" onClick={unenroll}>
-              Registrierung deaktivieren
-            </button>}
-            <a href="https://stoneapp.hyrovi.com" target="_blank" rel="noopener noreferrer"
-              className="btn btn-outline-primary">Stoneapp öffnen</a>
-          </div>
-          {deviceMessage&&<p className="small mt-2 mb-0" role="status">{deviceMessage}</p>}
-          <p className="small text-secondary mt-2 mb-0">
-            Nur derselbe Browser auf diesem Gerät wird registriert. Andere Besucher werden
-            weiterhin nur anonymisiert ausgewertet. Die Registrierung erfasst keine
-            verifizierte persönliche Identität oder den Stoneapp-Accountnamen.
-          </p>
-        </div>
-      </div>}
       <div className="row g-2 mb-3">
         {[
-          ["Proxy-Anfragen",totals.requests],["Browser-Seitenereignisse",totals.views],
+          ["HTTP-Anfragen",totals.requests],["Geschätzte HTML-Seitenaufrufe",sites.reduce((n,s)=>n+s.pages,0)],
           ["Browser-Aktionen",totals.actions],["Scroll-Ereignisse",totals.scroll],
           ["HTTP-Fehler",totals.errors],["Erkannte Bot-Anfragen",aggregate.botRequests],
           ["Ohne eindeutiges Bot-Signal",aggregate.unknownRequests],
@@ -224,7 +181,8 @@ export default function SmartHostsStudio() {
       </div>
       <p className="small text-secondary">
         Pi: begrenzter jüngster Proxy-Log-Ausschnitt · VPS: bis zu 24 Stunden verfügbarer Log-Ausschnitt.
-        Zahlen sind keine Anzahl verschiedener Geräte oder Menschen.
+        Zahlen sind keine Anzahl verschiedener Geräte oder Menschen. Diese Statistiken basieren
+        auf lokalen Serverlogs, nicht auf einer Besucherregistrierung.
       </p>
       <div className="card mb-3">
         <div className="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -241,6 +199,34 @@ export default function SmartHostsStudio() {
           </label>
         </div>
         <div className="card-body">
+          <div className="row g-3 mb-3">
+            <div className="col-lg-7">
+              <h4>Seitenaufrufe nach Stunde · Proxy-Logs</h4>
+              {hours.length ? <div className="d-flex align-items-end gap-1"
+                style={{height:155,overflowX:"auto"}} aria-label="Zeitlicher Verlauf der HTML-Seitenaufrufe">
+                {hours.map(([hour,x])=><div key={hour} className="d-flex flex-column align-items-center flex-shrink-0"
+                  style={{width:23,height:"100%",justifyContent:"flex-end"}}
+                  title={new Date(hour).toLocaleString("de-DE")+": "+x.pages+" geschätzte Seitenaufrufe"}>
+                  <div className="small text-secondary">{x.pages||""}</div>
+                  <div className="bg-primary rounded-top w-100" style={{
+                    minHeight:x.pages?3:0,height:(x.pages/peak*100)+"%",maxHeight:100}}/>
+                  <div className="small text-secondary" style={{fontSize:10}}>
+                    {new Date(hour).getHours().toString().padStart(2,"0")}
+                  </div>
+                </div>)}
+              </div>:<p className="small text-secondary">Noch keine auswertbaren Stundenwerte.</p>}
+              <p className="small text-secondary mt-1">Stundenwerte sind Anfragen mit HTML-Antwort, keine einzelnen Besucher.</p>
+            </div>
+            <div className="col-lg-5">
+              <h4>Top-Seitenbereiche</h4>
+              {topPages.length?topPages.map(([page,x])=><div key={page}
+                className="d-flex justify-content-between border-bottom py-1 small gap-2">
+                <span className="text-break">{page}</span>
+                <strong>{x.pages} Aufrufe</strong>
+              </div>):<p className="small text-secondary">Keine HTML-Aufrufe im vorhandenen Ausschnitt.</p>}
+            </div>
+          </div>
+          <hr/>
           <div className="row g-3">
             {breakdownRows.map(({label,values})=><div className="col-md-6" key={label}>
               <h4>{label}</h4>

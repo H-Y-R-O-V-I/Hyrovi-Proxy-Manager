@@ -52,6 +52,8 @@ export interface SecuritySiteActivity {
   host: string;
   smartBreakdown?:SmartTrafficBreakdown;
   smartRequestEvents?:SmartRequestEvent[];
+  smartHours?:Array<{hour:string;requests:number;bots:number;pages:number;botPages:number}>;
+  smartRoutes?:Array<{section:string;requests:number;bots:number;pages:number;botPages:number}>;
   configured?: boolean;
   source: "Pi" | "VPS";
   browserViews: number;

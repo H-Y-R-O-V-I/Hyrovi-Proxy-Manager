@@ -115,12 +115,28 @@ async function readTraffic() {
     if (!w) {
       w = { host, requests: 0, pages: 0, writes: 0, failures: 0,
         latest: null, sections: new Map(), signatureTypes: new Set(), automationSignals: 0,
-        smartBreakdown:emptySmartBreakdown(), smartRequestEvents:[] };
+        smartBreakdown:emptySmartBreakdown(), smartRequestEvents:[],
+        smartHours:new Map(),smartRoutes:new Map() };
       websites.set(host, w);
     }
     w.requests++;
     const requestDescription=describeRequest(e);
     addSmartBreakdown(w.smartBreakdown,requestDescription);
+    const requestTime=Date.parse(e.ts||"");
+    if(Number.isFinite(requestTime)){
+      const hour=new Date(Math.floor(requestTime/3600000)*3600000).toISOString();
+      const safeSegment=String(e.path||"/").split(/[?#]/,1)[0].match(/^\/([a-zA-Z][a-zA-Z0-9_-]{0,35})(?:\/|$)/)?.[1]||"";
+      const safeSection=/^(auth|login|identity|oauth|token|session|account|user|admin|private|secret|password|vault|api|payment|billing)$/i.test(safeSegment)
+        ? "/[restricted]" : safeSegment ? "/"+safeSegment : "/";
+      const isHtml=method==="GET"&&((String(e.accept||"").toLowerCase().includes("text/html"))||e.path==="/");
+      for(const [map,key] of [[w.smartHours,hour],[w.smartRoutes,safeSection]]){
+        if(!map.has(key))map.set(key,{requests:0,bots:0,pages:0,botPages:0});
+        const x=map.get(key);x.requests++;
+        if(requestDescription.classification==="bot")x.bots++;
+        if(isHtml)x.pages++;
+        if(isHtml&&requestDescription.classification==="bot")x.botPages++;
+      }
+    }
     const sample=smartRequestEvent(e,requestDescription,"Pi");
     if(sample){
       w.smartRequestEvents.push(sample);
@@ -153,7 +169,8 @@ async function readTraffic() {
     if (!websites.has(host)) {
       websites.set(host, {host,requests:0,pages:0,writes:0,failures:0,
         latest:null,sections:new Map(),signatureTypes:new Set(),automationSignals:0,
-        smartBreakdown:emptySmartBreakdown(),smartRequestEvents:[]});
+        smartBreakdown:emptySmartBreakdown(),smartRequestEvents:[],
+        smartHours:new Map(),smartRoutes:new Map()});
     }
   }
   const value = {
@@ -163,6 +180,10 @@ async function readTraffic() {
       requests: w.requests, pages: w.pages, writes: w.writes,
       failures: w.failures, latest: w.latest,
       smartBreakdown:w.smartBreakdown,smartRequestEvents:w.smartRequestEvents,
+      smartHours:[...w.smartHours.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-24)
+        .map(([hour,x])=>({hour,...x})),
+      smartRoutes:[...w.smartRoutes.entries()].sort((a,b)=>b[1].pages-a[1].pages)
+        .slice(0,12).map(([section,x])=>({section,...x})),
       clientSignatures: w.signatureTypes.size, automationSignals: w.automationSignals,
       sections: [...w.sections].sort((a,b)=>b[1]-a[1]).slice(0, 6)
         .map(([section, count]) => ({section, count}))
@@ -245,6 +266,15 @@ function mergeTraffic(local, remote, piEvents) {
       browserEngagementSeconds: site.browserEngagementSeconds || 0,
       browserLastSeen: site.browserLastSeen || null,
       smartBreakdown:site.smartBreakdown || emptySmartBreakdown(),
+      smartHours:(Array.isArray(site.smartHours)?site.smartHours:[]).slice(-24)
+        .filter(x=>x&&Number.isFinite(Date.parse(x.hour)))
+        .map(x=>({hour:x.hour,requests:Math.max(0,Number(x.requests)||0),
+          bots:Math.max(0,Number(x.bots)||0),pages:Math.max(0,Number(x.pages)||0),
+          botPages:Math.max(0,Number(x.botPages)||0)})),
+      smartRoutes:(Array.isArray(site.smartRoutes)?site.smartRoutes:[]).slice(0,12)
+        .map(x=>({section:safeString(x.section,45),
+          requests:Math.max(0,Number(x.requests)||0), bots:Math.max(0,Number(x.bots)||0),
+          pages:Math.max(0,Number(x.pages)||0),botPages:Math.max(0,Number(x.botPages)||0)})),
       smartRequestEvents: (Array.isArray(site.smartRequestEvents)?site.smartRequestEvents:[])
         .slice(-35).filter(e => e && e.source==="VPS" && e.origin==="proxy" &&
           ["bot","unknown"].includes(e.classification) && Number.isFinite(Date.parse(e.time)))

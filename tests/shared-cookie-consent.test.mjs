@@ -94,34 +94,16 @@ assert.equal(b.elements.length,1,"footer remains after revocation");
 assert.equal(b.storage.data.size,0,"revocation clears this tab session id");
 console.log("PASS: informational cookie footer without consent buttons, opted-in shared identity, no pre-consent tracking, GPC, and revocation");
 
-// Stoneapp is deliberately silent. Device registration happens in authenticated
-// HPM Smart via explicit user action; the proxy merely reads that preference.
-const unregistered=client("stoneapp.hyrovi.com",new Map());
-assert.equal(unregistered.elements.length,0,"Stoneapp must not display a footer or consent banner");
-assert.equal(unregistered.sent.length,0,"No individualized tracking before HPM registration");
-assert.equal(unregistered.cookies.size,0,"No ID created before registration");
-const globalConsent=new Map([
-  ["hyrovi_analytics_consent","1"],["hyrovi_visitor_id",randomUUID()]
-]);
-const scopeTest=client("stoneapp.hyrovi.com",globalConsent);
-assert.equal(scopeTest.sent.length,0,"Other HYROVI consent must not enroll Stoneapp");
-const stoneappId=randomUUID();
-const registeredJar=new Map([
-  ["hyrovi_stoneapp_analytics_consent","1"],
-  ["hyrovi_stoneapp_visitor_id",stoneappId]
-]);
-const registeredStoneapp=client("stoneapp.hyrovi.com",registeredJar);
-assert.equal(registeredStoneapp.elements.length,0,"Enrolled Stoneapp still has no banner");
-assert.equal(registeredStoneapp.sent.length,1,"Registered browser emits page view");
-assert.equal(registeredStoneapp.sent[0].body.deviceId,stoneappId);
-assert.equal(registeredStoneapp.sent[0].body.consent,true);
-assert.equal(registeredStoneapp.sent[0].body.path,"/home");
-const registeredLogin=client("stoneapp.hyrovi.com",registeredJar,{path:"/login"});
-assert.equal(registeredLogin.sent[0].body.path,"/[restricted]","Never collect Stoneapp login path");
-const registeredDnt=client("stoneapp.hyrovi.com",registeredJar,{dnt:true});
-assert.equal(registeredDnt.sent.length,0,"Do Not Track must suppress enrollment");
-registeredStoneapp.api.revokeConsent();
-assert.equal(registeredJar.has("hyrovi_stoneapp_visitor_id"),false);
-assert.equal(registeredJar.has("hyrovi_stoneapp_analytics_consent"),true);
-assert.equal(client("stoneapp.hyrovi.com",registeredJar).sent.length,0,"Revocation stops future events");
-console.log("PASS: Stoneapp zero banners, isolated admin enrollment, sensitive path excluded, privacy opts respected");
+// Stoneapp analytics runs ONLY on server logs; no visitor-side tracker.
+for(const jar of [
+  new Map(),
+  new Map([["hyrovi_analytics_consent","1"],["hyrovi_visitor_id",randomUUID()]]),
+  new Map([["hyrovi_stoneapp_analytics_consent","1"],["hyrovi_stoneapp_visitor_id",randomUUID()]])
+]){
+  const stoneapp=client("stoneapp.hyrovi.com",jar);
+  assert.equal(stoneapp.elements.length,0,"no banner on Stoneapp");
+  assert.equal(stoneapp.sent.length,0,"no per-visitor JS requests on Stoneapp");
+  assert.equal(stoneapp.writes.length,0,"no cookies read/write for analytics on Stoneapp");
+  assert.equal(stoneapp.storage.data.size,0,"no analytics session on Stoneapp");
+}
+console.log("PASS: Stoneapp server-log analytics, no JS tracking, no banners, no cookies");

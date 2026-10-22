@@ -86,7 +86,9 @@ def grouped_site(host: str):
                            browserViews=0, browserActions=0, browserScroll=0,
                            browserEngagementSeconds=0, browserLastSeen=None,
                            clientSignatures=set(), automationSignals=0,
-                           smartBreakdown=new_breakdown(),smartRequestEvents=[])
+                           smartBreakdown=new_breakdown(),smartRequestEvents=[],
+                           smartHours=collections.defaultdict(lambda: {"requests":0,"bots":0,"pages":0,"botPages":0}),
+                           smartRoutes=collections.defaultdict(lambda: {"requests":0,"bots":0,"pages":0,"botPages":0}))
     return sites[host]
 
 
@@ -159,6 +161,15 @@ for row in file_tail(VPS_LOGS / "hyrovi-sec.log", 2 * 1024 * 1024):
     w["requests"] += 1
     desc=classify(e)
     tally(w["smartBreakdown"],desc)
+    is_bot=desc["classification"]=="bot"
+    is_html=method=="GET" and ("text/html" in str(e.get("accept") or "").lower() or e.get("path")=="/")
+    hour=when.replace(minute=0,second=0,microsecond=0).isoformat()
+    section=safe_section(e.get("path"))
+    for value in (w["smartHours"][hour], w["smartRoutes"][section]):
+        value["requests"]+=1
+        if is_bot:value["bots"]+=1
+        if is_html:value["pages"]+=1
+        if is_html and is_bot:value["botPages"]+=1
     sample=safe_event(e,desc,host,when,safe_section)
     w["smartRequestEvents"].append(sample)
     if len(w["smartRequestEvents"])>35:
@@ -253,6 +264,11 @@ for site in sites.values():
         {"section": name, "count": count}
         for name, count in site["sections"].most_common(6)
     ]
+    site["smartHours"]=[{"hour":hour,**counts}
+        for hour,counts in sorted(site["smartHours"].items())[-24:]]
+    site["smartRoutes"]=[{"section":section,**counts}
+        for section,counts in sorted(site["smartRoutes"].items(),
+            key=lambda kv: (-kv[1]["pages"],-kv[1]["requests"]))[:12]]
     all_sites.append(site)
 all_sites.sort(key=lambda x: (-x["requests"], -x["browserViews"], x["host"]))
 payload = {
