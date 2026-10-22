@@ -1,11 +1,21 @@
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useEffect, useMemo, useState} from "react";
-import {IconPlus, IconRefresh, IconTrash, IconWorld, IconExternalLink} from "@tabler/icons-react";
+import {IconPlus, IconRefresh, IconTrash, IconWorld, IconExternalLink, IconFilter} from "@tabler/icons-react";
 import {
   getSecurityVisitors, getSecurityVisitor, getSmartHosts, addSmartHost, removeSmartHost,
+  type SmartTrafficBreakdown,
 } from "src/api/backend/securityVisitors";
 
 const format = (time: string) => new Date(time).toLocaleString("de-DE");
+const botLabel:Record<string,string> = {
+  bot:"Wahrscheinlich Bot",interactive:"Interaktionssignal",unknown:"Nicht bestimmbar",
+};
+const summaryKeys = [
+  ["devices","botDevices","Geräteklassen"],
+  ["browsers","botBrowsers","Browser"],
+  ["platforms","botPlatforms","Betriebssysteme"],
+  ["languageRegions","botLanguageRegions","Sprachregionen (kein Standort)"],
+] as const;
 const kind: Record<string,string> = {
   page_view:"Seitenaufruf",route_change:"Seitenwechsel",
   action:"Aktion",scroll:"Scrolltiefe",engagement:"Aktivität",
@@ -16,6 +26,7 @@ export default function SmartHostsStudio() {
   const [newHost,setNewHost] = useState("");
   const [selected,setSelected] = useState<string|null>(null);
   const [selectedVisitor,setSelectedVisitor] = useState<string|null>(null);
+  const [botFilter,setBotFilter] = useState<"hide"|"all"|"only">("hide");
   const config = useQuery({queryKey:["hyrovi-smart-hosts"],queryFn:getSmartHosts,
     staleTime:10000,refetchInterval:30000,retry:false});
   const activity = useQuery({queryKey:["security-visitors"],queryFn:getSecurityVisitors,
@@ -40,8 +51,39 @@ export default function SmartHostsStudio() {
     scroll:a.scroll+b.browserScroll,errors:a.errors+b.failures,
   }),{requests:0,views:0,actions:0,scroll:0,errors:0});
   const consented=(activity.data?.visitors||[]).filter(v=>v.sites.some(s=>s.host===selected));
-  const events=(activity.data?.automaticActivity.anonymousBrowserEvents||[])
-    .filter(e=>e.host===selected).slice(0,100);
+  const aggregate = sites.reduce((a,site)=>{
+    const breakdown=site.smartBreakdown;
+    if(!breakdown)return a;
+    a.botRequests+=breakdown.botRequests||0;
+    a.unknownRequests+=breakdown.unknownRequests||0;
+    for(const [map] of summaryKeys){
+      const botMap=("bot"+map.charAt(0).toUpperCase()+map.slice(1)) as keyof SmartTrafficBreakdown;
+      for(const key of [map,botMap]){
+        const target=a[key] as Record<string,number>;
+        const data=breakdown[key] as Record<string,number>;
+        for(const [label,count] of Object.entries(data||{})) target[label]=(target[label]||0)+count;
+      }
+    }
+    return a;
+  },{botRequests:0,unknownRequests:0,devices:{},browsers:{},platforms:{},languageRegions:{},
+     botDevices:{},botBrowsers:{},botPlatforms:{},botLanguageRegions:{}} as SmartTrafficBreakdown);
+  const breakdownRows = summaryKeys.map(([allKey,botKey,label])=>{
+    const all=aggregate[allKey],bots=aggregate[botKey];
+    const values=Object.entries(all).map(([name,total])=>({
+      name, count:botFilter==="hide"?Math.max(0,total-(bots[name]||0))
+        :botFilter==="only"?(bots[name]||0):total,
+    })).filter(x=>x.count>0).sort((a,b)=>b.count-a.count).slice(0,8);
+    return {label,values};
+  });
+  const browserEvents=(activity.data?.automaticActivity.anonymousBrowserEvents||[])
+    .filter(e=>e.host===selected).map(e=>({...e,origin:"browser" as const,
+      classification:e.classification||((e.type==="scroll"||e.type==="action"||
+        (e.type==="engagement"&&e.visibleSeconds>0))?"interactive" as const:"unknown" as const)}));
+  const httpEvents=sites.flatMap(s=>s.smartRequestEvents||[]);
+  const allEvents=[...browserEvents,...httpEvents].sort((a,b)=>Date.parse(b.time)-Date.parse(a.time));
+  const events=allEvents.filter(e=>botFilter==="all" ||
+    (botFilter==="hide"&&e.classification!=="bot") ||
+    (botFilter==="only"&&e.classification==="bot")).slice(0,150);
   const selectedProfile=details.data?.visitor;
   const filteredTimeline=(details.data?.timeline||[]).filter(e=>e.host===selected).slice(0,100);
   return <div>
@@ -106,7 +148,9 @@ export default function SmartHostsStudio() {
         {[
           ["Proxy-Anfragen",totals.requests],["Browser-Seitenereignisse",totals.views],
           ["Browser-Aktionen",totals.actions],["Scroll-Ereignisse",totals.scroll],
-          ["HTTP-Fehler",totals.errors],["Freigegebene Besucherprofile",consented.length]
+          ["HTTP-Fehler",totals.errors],["Erkannte Bot-Anfragen",aggregate.botRequests],
+          ["Ohne eindeutiges Bot-Signal",aggregate.unknownRequests],
+          ["Freigegebene Browserprofile",consented.length]
         ].map(([label,value])=><div className="col-6 col-lg-4" key={label}>
           <div className="card h-100"><div className="card-body">
             <div className="small text-secondary">{label}</div><h2 className="mb-0">{activity.isLoading?"—":value}</h2>
@@ -117,19 +161,66 @@ export default function SmartHostsStudio() {
         Pi: begrenzter jüngster Proxy-Log-Ausschnitt · VPS: bis zu 24 Stunden verfügbarer Log-Ausschnitt.
         Zahlen sind keine Anzahl verschiedener Geräte oder Menschen.
       </p>
+      <div className="card mb-3">
+        <div className="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <h3 className="card-title">Zusammenfassung · {selected}</h3>
+          <label className="d-flex align-items-center gap-2 small">
+            <IconFilter size={17}/> Bot-Filter
+            <select className="form-select form-select-sm" value={botFilter}
+              aria-label="Bot-Filter für Zusammenfassung und Ereignisse"
+              onChange={e=>setBotFilter(e.target.value as "hide"|"all"|"only")}>
+              <option value="hide">Bots ausblenden</option>
+              <option value="all">Alle anzeigen</option>
+              <option value="only">Nur Bots</option>
+            </select>
+          </label>
+        </div>
+        <div className="card-body">
+          <div className="row g-3">
+            {breakdownRows.map(({label,values})=><div className="col-md-6" key={label}>
+              <h4>{label}</h4>
+              {values.length? <div className="d-flex flex-column gap-1">
+                {values.map(v=><div className="d-flex justify-content-between border-bottom gap-2 py-1"
+                  key={v.name}><span className="text-break">{v.name}</span>
+                  <strong>{v.count} Anfragen</strong></div>)}
+              </div>:<p className="text-secondary small">Keine erkennbaren Angaben.</p>}
+            </div>)}
+          </div>
+          <div className="border-top pt-3 mt-3 small text-secondary">
+            <strong>Woher kommen die Anfragen?</strong> Über {sites.map(s=>s.source).join(" und ")||"unbekannten Proxy-Knoten"}.
+            Ein echter geografischer Standort oder ein Herkunftsland ist in diesen Logs
+            nicht verlässlich erfasst. Sprachregionen beschreiben Browser-Einstellungen,
+            nicht den Aufenthaltsort. Die Geräte-/Browser-Verteilung zählt HTTP-Anfragen,
+            keine einzigartigen Geräte.
+          </div>
+          <div className="small text-secondary mt-2">
+            Die Bot-Erkennung verwendet eindeutige Automationshinweise im HTTP-User-Agent.
+            Anfragen ohne solche Hinweise gelten <strong>nicht</strong> als bewiesene Menschen;
+            Bots können Browser imitieren und interaktive Events simulieren.
+            Ausblenden filtert nur die Ansicht, nicht die gespeicherten Logs.
+          </div>
+        </div>
+      </div>
       <div className="row g-3">
         <div className="col-lg-6"><div className="card">
-          <div className="card-header"><h3 className="card-title">Browser-Ereignisse (anonymisiert)</h3></div>
+          <div className="card-header"><h3 className="card-title">Ereignisse · {botFilter==="hide"?"ohne erkannte Bots":botFilter==="only"?"nur Bots":"alle"} ({events.length})</h3></div>
           <div className="table-responsive" style={{maxHeight:540,overflowY:"auto"}}>
             <table className="table table-vcenter card-table">
-              <thead><tr><th>Zeit</th><th>Aktion / Bereich</th></tr></thead>
-              <tbody>{events.map(e=><tr key={e.id}>
+              <thead><tr><th>Zeit</th><th>Aktion / Bereich / Bewertung</th></tr></thead>
+              <tbody>{events.map((e,index)=><tr key={e.origin+":"+e.time+":"+index}>
                 <td className="small text-secondary" style={{whiteSpace:"nowrap"}}>{format(e.time)}</td>
-                <td>{kind[e.type]||e.type} · {e.section}
-                  {e.type==="scroll"?" · "+e.scrollDepth+"%":""}</td>
+                <td>
+                  {e.origin==="proxy"?<><strong>{e.method} · HTTP {e.status}</strong>
+                    <div className="small text-secondary">{e.browser} · {e.device} · {e.source}</div></>:
+                    <strong>{kind[e.type]||e.type}{e.type==="scroll"?" · "+e.scrollDepth+"%":""}</strong>}
+                  <div className="small text-secondary">{e.section}</div>
+                  <span className={"badge "+(e.classification==="bot"?"bg-orange-lt":e.classification==="interactive"?"bg-blue-lt":"bg-secondary-lt")}>
+                    {botLabel[e.classification]||"Unbekannt"}
+                  </span>
+                </td>
               </tr>)}
               {!events.length&&<tr><td colSpan={2} className="text-secondary">
-                Keine anonymisierten Browser-Einzelereignisse im aktuellen Export.
+                Keine Ereignisse für diesen Filter im verfügbaren Ausschnitt.
               </td></tr>}
               </tbody>
             </table>

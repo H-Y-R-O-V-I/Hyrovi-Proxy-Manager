@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { analyzeAutomaticActivity } from "./security_smart.js";
+import {describeRequest, emptySmartBreakdown, addSmartBreakdown, smartRequestEvent, smartBrowserClassification} from "./security_smart_traffic.js";
 
 const EVENT_FILE = "/data/logs/hyrovi-analytics-events.log";
 const LABEL_FILE = "/data/nginx/hyrovi-security/visitor-labels.json";
@@ -113,10 +114,18 @@ async function readTraffic() {
     let w = websites.get(host);
     if (!w) {
       w = { host, requests: 0, pages: 0, writes: 0, failures: 0,
-        latest: null, sections: new Map(), signatureTypes: new Set(), automationSignals: 0 };
+        latest: null, sections: new Map(), signatureTypes: new Set(), automationSignals: 0,
+        smartBreakdown:emptySmartBreakdown(), smartRequestEvents:[] };
       websites.set(host, w);
     }
     w.requests++;
+    const requestDescription=describeRequest(e);
+    addSmartBreakdown(w.smartBreakdown,requestDescription);
+    const sample=smartRequestEvent(e,requestDescription,"Pi");
+    if(sample){
+      w.smartRequestEvents.push(sample);
+      if(w.smartRequestEvents.length>35) w.smartRequestEvents.shift();
+    }
     const headerTuple = ["user_agent", "accept_language", "sec_ch_ua", "sec_ch_ua_mobile", "sec_ch_ua_platform"]
       .map(k => safeString(e[k], 320).toLowerCase());
     if (headerTuple.some(Boolean)) {
@@ -143,7 +152,8 @@ async function readTraffic() {
   for (const host of configured) {
     if (!websites.has(host)) {
       websites.set(host, {host,requests:0,pages:0,writes:0,failures:0,
-        latest:null,sections:new Map(),signatureTypes:new Set(),automationSignals:0});
+        latest:null,sections:new Map(),signatureTypes:new Set(),automationSignals:0,
+        smartBreakdown:emptySmartBreakdown(),smartRequestEvents:[]});
     }
   }
   const value = {
@@ -152,6 +162,7 @@ async function readTraffic() {
       host: w.host, configured: configured.has(w.host),
       requests: w.requests, pages: w.pages, writes: w.writes,
       failures: w.failures, latest: w.latest,
+      smartBreakdown:w.smartBreakdown,smartRequestEvents:w.smartRequestEvents,
       clientSignatures: w.signatureTypes.size, automationSignals: w.automationSignals,
       sections: [...w.sections].sort((a,b)=>b[1]-a[1]).slice(0, 6)
         .map(([section, count]) => ({section, count}))
@@ -188,7 +199,8 @@ async function readVpsActivity() {
         host: safeString(e.host, 253), type: e.type,
         time: e.time, section: safeString(e.section, 56),
         visibleSeconds: Math.max(0, Math.min(3600, Number(e.visibleSeconds) || 0)),
-        scrollDepth: Math.max(0, Math.min(100, Number(e.scrollDepth) || 0))
+        scrollDepth: Math.max(0, Math.min(100, Number(e.scrollDepth) || 0)),
+        classification: smartBrowserClassification(e)
       })).reverse(),
     consentedEvents: (Array.isArray(data.consentedEvents) ? data.consentedEvents : [])
       .filter((e) => e && e.consent === true && safeId(e.deviceKey) && Number.isFinite(Date.parse(e.timestamp))),
@@ -231,7 +243,19 @@ function mergeTraffic(local, remote, piEvents) {
       sections: site.sections || [], browserViews: site.browserViews || 0,
       browserActions: site.browserActions || 0, browserScroll: site.browserScroll || 0,
       browserEngagementSeconds: site.browserEngagementSeconds || 0,
-      browserLastSeen: site.browserLastSeen || null
+      browserLastSeen: site.browserLastSeen || null,
+      smartBreakdown:site.smartBreakdown || emptySmartBreakdown(),
+      smartRequestEvents: (Array.isArray(site.smartRequestEvents)?site.smartRequestEvents:[])
+        .slice(-35).filter(e => e && e.source==="VPS" && e.origin==="proxy" &&
+          ["bot","unknown"].includes(e.classification) && Number.isFinite(Date.parse(e.time)))
+        .map(e=>({
+          source:"VPS",host:site.host,origin:"proxy",type:"request",time:e.time,
+          section:safeString(e.section,56),method:safeString(e.method,8),
+          status:Math.max(0,Math.min(599,Number(e.status)||0)),
+          browser:safeString(e.browser,32),platform:safeString(e.platform,32),
+          device:safeString(e.device,32),languageRegion:safeString(e.languageRegion,18),
+          classification:e.classification,reason:safeString(e.reason,80)
+        }))
     }));
   const websites = [...localSites, ...remoteSites].sort((a,b) =>
     (b.browserViews - a.browserViews) || (b.requests - a.requests));

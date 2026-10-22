@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from smart_activity_traffic import classify, safe_event, new_breakdown, tally
 
 VPS_LOGS = Path("/opt/nginx-proxy-manager/data/logs")
 DEST = "/opt/hyrovi-hpm/runtime/vps-hpm-sync/vps-hpm-activity.json"
@@ -84,7 +85,8 @@ def grouped_site(host: str):
                            failures=0, latest=None, sections=collections.Counter(),
                            browserViews=0, browserActions=0, browserScroll=0,
                            browserEngagementSeconds=0, browserLastSeen=None,
-                           clientSignatures=set(), automationSignals=0)
+                           clientSignatures=set(), automationSignals=0,
+                           smartBreakdown=new_breakdown(),smartRequestEvents=[])
     return sites[host]
 
 
@@ -155,6 +157,12 @@ for row in file_tail(VPS_LOGS / "hyrovi-sec.log", 2 * 1024 * 1024):
         w["automationSignals"] += 1
     requests += 1
     w["requests"] += 1
+    desc=classify(e)
+    tally(w["smartBreakdown"],desc)
+    sample=safe_event(e,desc,host,when,safe_section)
+    w["smartRequestEvents"].append(sample)
+    if len(w["smartRequestEvents"])>35:
+        del w["smartRequestEvents"][:-35]
     if method == "GET" and (str(e.get("accept") or "").lower().find("text/html") >= 0 or e.get("path") == "/"):
         w["pages"] += 1
     if method in {"POST", "PUT", "PATCH", "DELETE"}:
@@ -206,6 +214,9 @@ for row in file_tail(VPS_LOGS / "hyrovi-analytics-events.log", 4 * 1024 * 1024):
             "section": safe_section(e.get("path")),
             "visibleSeconds": max(0, min(3600, int(e.get("visibleSeconds") or 0))),
             "scrollDepth": max(0, min(100, int(e.get("scrollDepth") or 0))),
+            "classification": ("interactive" if kind in {"action","scroll"} or
+                (kind=="engagement" and int(e.get("visibleSeconds") or 0)>0)
+                else "unknown"),
         })
 
     # Individual browser records exist ONLY after explicit consent; remote

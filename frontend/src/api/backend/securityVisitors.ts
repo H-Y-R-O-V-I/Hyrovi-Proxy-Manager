@@ -30,8 +30,28 @@ export interface SecurityVisitorEvent {
   action: string; referrerHost: string; scrollDepth: number; visibleSeconds: number;
   language: string; viewport: string;
 }
+export interface SmartTrafficBreakdown {
+  botRequests:number;
+  unknownRequests:number;
+  devices:Record<string,number>;
+  browsers:Record<string,number>;
+  platforms:Record<string,number>;
+  languageRegions:Record<string,number>;
+  botDevices:Record<string,number>;
+  botBrowsers:Record<string,number>;
+  botPlatforms:Record<string,number>;
+  botLanguageRegions:Record<string,number>;
+}
+export interface SmartRequestEvent {
+  origin:"proxy"; type:"request"; source:"Pi"|"VPS";host:string;
+  time:string;section:string;method:string;status:number;
+  browser:string;platform:string;device:string;languageRegion:string;
+  classification:"bot"|"unknown";reason:string;
+}
 export interface SecuritySiteActivity {
   host: string;
+  smartBreakdown?:SmartTrafficBreakdown;
+  smartRequestEvents?:SmartRequestEvent[];
   configured?: boolean;
   source: "Pi" | "VPS";
   browserViews: number;
@@ -52,6 +72,7 @@ export interface AnonymousBrowserEvent {
   id: string; source: "VPS" | "Pi"; host: string;
   type: "page_view" | "route_change" | "scroll" | "engagement" | "action";
   time: string; section: string; scrollDepth: number; visibleSeconds: number;
+  classification?:"interactive"|"unknown";
 }
 export interface SmartSecuritySite {
   host: string;
