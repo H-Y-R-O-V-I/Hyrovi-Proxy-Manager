@@ -57,7 +57,9 @@ const a=client("test-login.hyrovi.com",jar);
 assert.equal(a.elements.length,1,"footer notice renders before activation");
 assert.equal(a.elements[0].tag,"section");
 assert.match(a.elements[0].style.cssText,/position:fixed/);
-assert.equal(a.elements[0].children[0].textContent,"Datenschutz & Nutzungsanalyse");
+assert.equal(a.elements[0].children[0].textContent,"Cookies & Tracking");
+assert.match(a.elements[0].children.find(x=>x.tag==="p")?.textContent||"",/hyrovi_visitor_id/);
+assert.match(a.elements[0].children.find(x=>x.tag==="p")?.textContent||"",/Sicherheitsprotokolle/);
 assert.ok(a.elements[0].children.some(x=>x.tag==="a" && x.href==="https://hyrovi.com/datenschutz"),
   "first-time consent banner links to real privacy notice");
 assert.equal(jar.size,0,"no tracking cookie before opt-in");

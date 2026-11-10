@@ -246,6 +246,15 @@ router.get("/test-studio/:id", async (req, res, next) => {
     } catch (err) { next(err); }
 });
 
+// One account/session metadata needs users:list, beyond proxy log permissions.
+router.get("/one-auth-devices", async (req, res, next) => {
+    try {
+        await res.locals.access.can("users:list");
+        res.set("Cache-Control", "no-store");
+        res.status(200).send(await internalSecurityVisitors.oneAuthDevices());
+    } catch(err) { next(err); }
+});
+
 router.get("/visitors", async (req, res, next) => {
     try {
         await res.locals.access.can("logs:list");

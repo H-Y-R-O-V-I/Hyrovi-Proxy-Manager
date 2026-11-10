@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 from smart_activity_traffic import classify, safe_event, new_breakdown, tally
+from one_auth_device_summary import read_one_auth_devices
 
 VPS_LOGS = Path("/opt/nginx-proxy-manager/data/logs")
 DEST = "/opt/hyrovi-hpm/runtime/vps-hpm-sync/vps-hpm-activity.json"
@@ -280,6 +281,9 @@ payload = {
     "websites": all_sites[:100],
     "consentedEvents": consented[-1000:],
     "anonymousBrowserEvents": anonymous_browser_events[-240:],
+    # One login validity is kept separate from anonymous HPM traffic.
+    # No raw auth secrets or network identity correlation.
+    "oneAuth": read_one_auth_devices(),
 }
 data = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 if len(data) > 1_500_000:

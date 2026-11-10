@@ -211,6 +211,21 @@ async function readVpsActivity() {
     generatedAt: data.generatedAt,
     requests: Number(data.requests) || 0,
     websites: Array.isArray(data.websites) ? data.websites.slice(0, 100) : [],
+    oneAuth: {
+      available: data.oneAuth?.available === true,
+      devices: (Array.isArray(data.oneAuth?.devices) ? data.oneAuth.devices : [])
+        .slice(0, 200).filter(d => d && /^[a-f0-9]{24}$/.test(String(d.id || "")))
+        .map(d => ({
+          id: d.id,
+          account: safeString(d.account, 60),
+          label: safeString(d.label, 80),
+          firstLogin: Math.max(0, Number(d.firstLogin) || 0),
+          lastUsed: Math.max(0, Number(d.lastUsed) || 0),
+          trustedUntil: Math.max(0, Number(d.trustedUntil) || 0),
+          validSessions: Math.max(0, Math.min(100, Number(d.validSessions) || 0)),
+          accountEnabled: d.accountEnabled === true
+        }))
+    },
     anonymousBrowserEvents: (Array.isArray(data.anonymousBrowserEvents) ? data.anonymousBrowserEvents : [])
       .filter(e => e && e.source === "VPS" && HOST.test(String(e.host || "")) &&
         ["page_view","route_change","scroll","engagement","action"].includes(e.type) &&
@@ -553,4 +568,10 @@ async function testStudioBrowserDetail(id) {
     timelineTruncated:browser.eventsCount>timeline.length};
 }
 
-export default { list, detail, update, testStudioList, testStudioDetail, testStudioBrowserDetail };
+// Only exposed through the users:list-protected authentication inventory route.
+async function oneAuthDevices() {
+  const remote = await readVpsActivity();
+  return remote?.oneAuth || { available: false, devices: [] };
+}
+
+export default { list, detail, update, oneAuthDevices, testStudioList, testStudioDetail, testStudioBrowserDetail };

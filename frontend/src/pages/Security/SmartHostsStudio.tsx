@@ -1,6 +1,7 @@
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useEffect, useMemo, useState} from "react";
 import SmartClientDetails from "./SmartClientDetails";
+import SmartDevicesOverview from "./SmartDevicesOverview";
 import {IconPlus, IconRefresh, IconTrash, IconWorld, IconExternalLink, IconFilter} from "@tabler/icons-react";
 import {
   getSecurityVisitors, getSecurityVisitor, getSmartHosts, addSmartHost, removeSmartHost,
@@ -129,6 +130,8 @@ export default function SmartHostsStudio() {
       keine individuellen Geräteprofile aus HTTP-Headern erzeugt. Ohne Freigabe
       werden Besuche nicht zu wiederkehrenden Personen zusammengeführt.
     </div>
+    <SmartDevicesOverview activity={activity.data?.automaticActivity}
+      visitors={activity.data?.visitors||[]} loading={activity.isLoading}/>
     {config.isError&&<div className="alert alert-danger" role="alert">Host-Verwaltung nicht erreichbar: {String(config.error)}</div>}
     {activity.isError&&<div className="alert alert-danger" role="alert">Analytics nicht erreichbar: {String(activity.error)}</div>}
     <div className="card mb-3">

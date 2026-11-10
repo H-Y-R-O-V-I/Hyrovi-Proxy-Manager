@@ -97,6 +97,14 @@ export interface SmartSecurityReport {
   coverage: string; totalHosts: number; analyzedHosts: number; hostsToReview: number;
   sites: SmartSecuritySite[];
 }
+export interface OneAuthInventory {
+  available: boolean;
+  devices: Array<{
+    id:string; account:string; label:string;
+    firstLogin:number; lastUsed:number; trustedUntil:number;
+    validSessions:number; accountEnabled:boolean;
+  }>;
+}
 export interface AutomaticSiteActivity {
   smart?: SmartSecurityReport;
   anonymousBrowserEvents: AnonymousBrowserEvent[];
@@ -136,6 +144,8 @@ export const addSmartHost = (host:string): Promise<{hosts:string[]}> =>
 export const removeSmartHost = (host:string): Promise<{hosts:string[]}> =>
   api.del({url:"/security/smart/hosts/"+encodeURIComponent(host)});
 
+export const getOneAuthDevices = (): Promise<OneAuthInventory> =>
+  boundedRequest((controller) => api.get({url:"/security/one-auth-devices"},controller));
 export const getSecurityVisitors = (): Promise<{visitors: SecurityVisitor[]; totalEvents: number; note: string; automaticActivity: AutomaticSiteActivity}> =>
   boundedRequest((controller) => api.get({ url: "/security/visitors" }, controller));
 export const getSecurityVisitor = (id: string): Promise<{visitor: SecurityVisitor; timeline: SecurityVisitorEvent[]}> =>
